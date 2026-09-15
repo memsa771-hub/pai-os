@@ -25,6 +25,9 @@ services:
       PAI_API_KEY: ${PAI_API_KEY:-}
       PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
       PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
+      WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
+      WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
       # openagents://workspace is the Workspace bundled into the desktop
       # launcher (packages/launcher/src/main/workspace-bundle.ts).
       CORS_ORIGINS: ${CORS_ORIGINS:-https://workspace.openagents.org,openagents://workspace}

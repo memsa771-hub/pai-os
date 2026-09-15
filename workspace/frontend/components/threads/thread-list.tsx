@@ -611,14 +611,6 @@ export function ThreadList() {
   // Candidates: online agents plus the workspace's human members (fetched
   // lazily on first open; token-only sessions may not have team access, in
   // which case the picker just shows agents).
-  const [dmHumans, setDmHumans] = useState<string[] | null>(null);
-  const loadDmHumans = () => {
-    if (dmHumans !== null) return;
-    workspaceApi
-      .getTeam()
-      .then((team) => setDmHumans(team.map((m) => m.email).filter(Boolean)))
-      .catch(() => setDmHumans([]));
-  };
   const startDM = (address: string) => {
     // Canonical DM id: sorted pair, matching the backend's (lesser, greater)
     // conversation normalization — so opening the same counterpart always
@@ -628,12 +620,11 @@ export function ThreadList() {
   };
   const renderNewDmButton = () => {
     const onlineAgents = agents.filter((a) => a.status === 'online');
-    const humans = dmHumans ?? [];
     return (
       <div className="flex px-1 py-2">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="sm" className="gap-1.5" onClick={loadDmHumans}>
+            <Button variant="outline" size="sm" className="gap-1.5">
               <MessageSquarePlus className="size-3.5" />
               {t('threads.newDm')}
             </Button>
@@ -652,21 +643,7 @@ export function ThreadList() {
                 ))}
               </>
             )}
-            {humans.length > 0 && (
-              <>
-                {onlineAgents.length > 0 && <DropdownMenuSeparator />}
-                <DropdownMenuLabel className="text-xs text-muted-foreground">
-                  {t('threads.dmPeople')}
-                </DropdownMenuLabel>
-                {humans.map((email) => (
-                  <DropdownMenuItem key={email} onClick={() => startDM(`human:${email}`)}>
-                    <AgentAvatar name={email} size={16} />
-                    <span className="truncate">{email}</span>
-                  </DropdownMenuItem>
-                ))}
-              </>
-            )}
-            {onlineAgents.length === 0 && humans.length === 0 && (
+            {onlineAgents.length === 0 && (
               <div className="px-2 py-2 text-xs text-muted-foreground">{t('threads.noDmCandidates')}</div>
             )}
           </DropdownMenuContent>

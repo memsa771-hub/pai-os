@@ -2,11 +2,11 @@ import type { TranslateFn } from './i18n';
 import type { WorkspaceRole } from './types';
 
 /**
- * Role names, in the reader's language.
+ * Human-readable role names.
  *
- * The API speaks `owner`/`admin`/`member`/`viewer` and every surface used to
- * print those verbatim — a Chinese settings page with four English words in it,
- * in a picker, a badge and a sentence.
+ * The API speaks `owner`/`admin`/`member`/`viewer`; this maps each onto its
+ * display label via the message catalogue rather than printing the raw value
+ * verbatim in a picker, a badge and a sentence.
  *
  * An unknown value comes through untranslated rather than blank: a role the UI
  * has not heard of is still information, and hiding it would leave a member row

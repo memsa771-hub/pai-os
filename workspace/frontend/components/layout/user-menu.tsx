@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Check, KeyRound, LayoutGrid, LogIn, LogOut, Monitor, Moon, Settings, Shield, Sun, User, UserPlus, MessageSquarePlus } from 'lucide-react';
+  Check, KeyRound, LayoutGrid, LogIn, LogOut, Monitor, Moon, Settings, Shield, Sun, User, MessageSquarePlus } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import {
@@ -25,7 +25,6 @@ import { useWorkspace } from '@/lib/workspace-context';
 import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { goToCentralLogin, goToCentralLogout } from '@/lib/auth-redirects';
 import { useT } from '@/lib/i18n';
-import { LanguageMenuSub } from './language-menu';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
 interface UserMenuProps {
@@ -173,26 +172,12 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
             </DropdownMenuPortal>
           </DropdownMenuSub>
 
-          <LanguageMenuSub />
-
           {token && (
             <DropdownMenuItem onSelect={(e) => { e.preventDefault(); handleCopyToken(); }}>
               {tokenCopied ? <Check /> : <KeyRound />}
               {tokenCopied ? t('userMenu.tokenCopied') : t('userMenu.copyToken')}
             </DropdownMenuItem>
           )}
-
-          {/* Straight to the Members section's invite box — the most common
-              admin action gets its own entry. */}
-          <DropdownMenuItem
-            onClick={() => {
-              if (!workspace) return;
-              router.push(`/${workspace.slug}/settings/members${window.location.search}`);
-            }}
-          >
-            <UserPlus />
-            {t('userMenu.inviteMembers')}
-          </DropdownMenuItem>
 
           {/* Feedback goes to POST /v1/feedback (stored + forwarded to the
               team) — the cheapest possible path from an annoyed user to us. */}
@@ -201,7 +186,7 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
             {t('userMenu.sendFeedback')}
           </DropdownMenuItem>
 
-          {/* Full-page admin dashboard (general / members / security / devices /
+          {/* Full-page admin dashboard (general / security / devices /
               integrations / preferences). window.location.search carries an
               incoming ?token= through so token-link visitors keep access. */}
           <DropdownMenuItem

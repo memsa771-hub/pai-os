@@ -41,7 +41,7 @@ class Config:
     SUPABASE_ANON_KEY: str = os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_W_ITKg52Rr3G0eeoi4wPLQ_AdSTiKPD")
 
     # Blast-radius cap for POST /v1/auth/sign-in-username (per process, sliding
-    # hour, keyed by client IP) — mirrors PILOT_MAX_GRANTS_PER_HOUR below.
+    # hour, keyed by client IP).
     SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR: int = int(
         os.environ.get("SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR", "20")
     )
@@ -135,6 +135,11 @@ class Config:
     PAI_MODEL: str = os.environ.get("PAI_MODEL", "gpt-5.4-mini")
     # Safety cap on the tool-calling loop per user message.
     PAI_MAX_TOOL_ITERATIONS: int = int(os.environ.get("PAI_MAX_TOOL_ITERATIONS", "6"))
+    # Provider-neutral web search. Disabled unless both fields are configured;
+    # credentials remain backend-only and are never included in tool results.
+    WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")
+    WEB_SEARCH_API_KEY: str = os.environ.get("WEB_SEARCH_API_KEY", "")
+    WEB_SEARCH_BASE_URL: str = os.environ.get("WEB_SEARCH_BASE_URL", "")
 
     # Google OAuth (for "Sign in with Google" Gemini integration)
     GOOGLE_OAUTH_CLIENT_ID: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
@@ -144,13 +149,11 @@ class Config:
         "https://workspace-endpoint.openagents.org/v1/cloud-agents/google/callback",
     )
 
-    # Invitations & transactional email. Invite links point at the workspace
-    # frontend; email delivery goes through Resend when a key is configured
-    # (otherwise invites are created but the email step is skipped).
+    # Transactional email. Delivery goes through Resend when a key is
+    # configured (otherwise sends are logged no-ops).
     FRONTEND_BASE_URL: str = os.environ.get("FRONTEND_BASE_URL", "https://workspace.openagents.org")
     RESEND_API_KEY: str = os.environ.get("RESEND_API_KEY", "")
     EMAIL_FROM: str = os.environ.get("EMAIL_FROM", "OpenAgents <noreply@openagents.org>")
-    INVITE_TTL_DAYS: int = int(os.environ.get("INVITE_TTL_DAYS", "7"))
 
     # Chat-platform integrations (Slack / Telegram bridges). The public base
     # URL is what external platforms call back to — Telegram setWebhook and
@@ -164,30 +167,6 @@ class Config:
     SLACK_CLIENT_ID: str = os.environ.get("SLACK_CLIENT_ID", "")
     SLACK_CLIENT_SECRET: str = os.environ.get("SLACK_CLIENT_SECRET", "")
     SLACK_SIGNING_SECRET: str = os.environ.get("SLACK_SIGNING_SECRET", "")
-
-    # API credits campaign — grants free model-gateway credits as users hit
-    # onboarding milestones (see app/services/campaign.py). DISABLED by
-    # default: self-hosted deployments have no gateway master key and should
-    # never see the campaign UI. The official deployment enables it via env.
-    CAMPAIGN_ENABLED: bool = os.environ.get("CAMPAIGN_ENABLED", "false").lower() in ("true", "1", "yes")
-    CAMPAIGN_GATEWAY_URL: str = os.environ.get("CAMPAIGN_GATEWAY_URL", "https://api-gateway.openagents.org")
-    CAMPAIGN_GATEWAY_MASTER_KEY: str = os.environ.get("CAMPAIGN_GATEWAY_MASTER_KEY", "")
-    CAMPAIGN_TOTAL_CAP_USD: float = float(os.environ.get("CAMPAIGN_TOTAL_CAP_USD", "100"))
-    CAMPAIGN_DAILY_GRANT_USD: float = float(os.environ.get("CAMPAIGN_DAILY_GRANT_USD", "10"))
-
-    # Pilot User Program admin console (internal.openagents.org/pages/pilot-console).
-    # Endpoints under /v1/admin/pilot are enabled ONLY when PILOT_ADMIN_SECRET is
-    # set; every call must present it in X-Admin-Secret. Amount is fixed
-    # server-side (never client-supplied). Eligibility = a launcher/CLI agent
-    # connected + >= PILOT_MIN_ACTIVE_DAYS distinct UTC days (not necessarily
-    # consecutive) with a human message AND a qualifying agent reply in the
-    # same owned workspace, within the last PILOT_WINDOW_DAYS.
-    PILOT_ADMIN_SECRET: str = os.environ.get("PILOT_ADMIN_SECRET", "")
-    PILOT_GRANT_USD: float = float(os.environ.get("PILOT_GRANT_USD", "300"))
-    PILOT_MIN_ACTIVE_DAYS: int = int(os.environ.get("PILOT_MIN_ACTIVE_DAYS", "3"))
-    PILOT_WINDOW_DAYS: int = int(os.environ.get("PILOT_WINDOW_DAYS", "30"))
-    # Blast-radius cap for the grant endpoint (per process, sliding hour).
-    PILOT_MAX_GRANTS_PER_HOUR: int = int(os.environ.get("PILOT_MAX_GRANTS_PER_HOUR", "30"))
 
     # In-app feedback forwarding. Feedback rows always land in the DB; when
     # this is set they are also emailed (via Resend) to the team.

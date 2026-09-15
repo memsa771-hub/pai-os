@@ -14,29 +14,6 @@ export interface Workspace {
 
 export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer';
 
-export interface TeamMember {
-  email: string;
-  displayName: string | null;
-  avatarUrl: string | null;
-  role: WorkspaceRole;
-  joinedAt: string | null;
-}
-
-/** A pending/issued invitation link (admin view, GET /invites). The `url`
- * carries only the invite token — never the workspace machine token. */
-export interface TeamInvite {
-  inviteId: string;
-  /** Bound address (lowercased), or null for an open shareable link. */
-  email: string | null;
-  role: WorkspaceRole;
-  url: string;
-  status: 'pending' | 'accepted' | 'expired' | 'revoked';
-  createdBy: string | null;
-  createdAt: string | null;
-  expiresAt: string | null;
-  acceptedBy: string | null;
-}
-
 /** The caller's identity + effective role in this workspace (GET /me).
  * `role` is the identity-based membership role (null for token-only or
  * anonymous access); `effectiveRole` folds in owner-equivalent machine/token

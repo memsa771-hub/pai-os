@@ -2,9 +2,9 @@
  * Locale-aware formatting built on `Intl`.
  *
  * Relative times, dates, numbers and byte sizes deliberately go through `Intl`
- * rather than the message catalogue: the platform already knows that English
- * says "5 minutes ago" and Chinese says "5分钟前", and hand-written strings for
- * these drift out of sync with every locale added.
+ * rather than the message catalogue: the platform already knows the correct
+ * phrasing for each locale, and hand-written strings for these drift out of
+ * sync the moment a locale is added.
  */
 
 import type { Locale } from './locales';

@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """Tests for enforced-login v1.0: users, memberships, access rules,
 reconciliation and auto-provision (Phase 1).
 
@@ -206,67 +206,14 @@ class TestRequireLoginToggle:
         assert r.status_code == 200
         assert r.json()["data"]["requireLogin"] is False
 
-    def test_member_cannot_toggle(self, client, monkeypatch):
+    def test_member_cannot_toggle(self, client, db, monkeypatch):
         _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "bob": _claims("bob@x.com")})
         wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "bob@x.com", "role": "member"}, headers=_auth("al"))
+        u = User(email="bob@x.com"); db.add(u); db.flush()
+        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="member"))
+        db.commit()
         r = client.patch(f"/v1/workspaces/{wid}", json={"require_login": False}, headers=_auth("bob"))
         assert r.status_code == 403
-
-
-class TestTeamApi:
-    def _make_ws(self, client, monkeypatch_map):
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        return wid
-
-    def test_add_list_update_remove(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "bob": _claims("bob@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-
-        # owner sees themselves
-        team = client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]
-        assert [(m["email"], m["role"]) for m in team] == [("al@x.com", "owner")]
-
-        # add bob as member
-        assert client.post(f"/v1/workspaces/{wid}/team", json={"email": "bob@x.com", "role": "member"}, headers=_auth("al")).status_code == 200
-        roles = {m["email"]: m["role"] for m in client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]}
-        assert roles == {"al@x.com": "owner", "bob@x.com": "member"}
-
-        # promote bob to admin
-        assert client.patch(f"/v1/workspaces/{wid}/team/bob@x.com", json={"role": "admin"}, headers=_auth("al")).status_code == 200
-        # remove bob
-        assert client.delete(f"/v1/workspaces/{wid}/team/bob@x.com", headers=_auth("al")).status_code == 200
-        roles = {m["email"]: m["role"] for m in client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]}
-        assert "bob@x.com" not in roles
-
-    def test_member_cannot_add(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "bob": _claims("bob@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "bob@x.com", "role": "member"}, headers=_auth("al"))
-        r = client.post(f"/v1/workspaces/{wid}/team", json={"email": "eve@x.com", "role": "member"}, headers=_auth("bob"))
-        assert r.status_code == 403
-
-    def test_cannot_remove_last_owner(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        r = client.delete(f"/v1/workspaces/{wid}/team/al@x.com", headers=_auth("al"))
-        assert r.status_code == 400
-
-    def test_self_join_via_token_link(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"bob": _claims("bob@x.com")})
-        # Anonymous workspace with a token (a shared ?token= link).
-        data = client.post("/v1/workspaces", json={"name": "WS", "creator_email": "a@x.com"}).json()["data"]
-        wid, tok = data["workspaceId"], data["token"]
-        # Logged-in bob arrives via the token link → self-join.
-        r = client.post(
-            f"/v1/workspaces/{wid}/team/self",
-            headers={**_auth("bob"), "X-Workspace-Token": tok},
-        )
-        assert r.status_code == 200
-        assert r.json()["data"] == {"email": "bob@x.com", "role": "member"}
-        # Now shows up on bob's Membership Home.
-        mine = client.get("/v1/account/workspaces", headers=_auth("bob")).json()["data"]
-        assert any(w["workspaceId"] == wid for w in mine)
 
 
 class TestProfile:
@@ -307,22 +254,6 @@ class TestProfile:
         p = client.get("/v1/account/profile", headers=_auth("al")).json()["data"]
         assert p["welcomeSeen"] is True
 
-    def test_profile_name_shows_in_team_and_invites(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        client.patch(
-            "/v1/account/profile",
-            json={"display_name": "Ada L.", "avatar_url": "https://cdn.example.com/a.png"},
-            headers=_auth("al"),
-        )
-        team = client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]
-        assert team[0]["displayName"] == "Ada L."
-        assert team[0]["avatarUrl"] == "https://cdn.example.com/a.png"
-        # Invite peek shows the custom name.
-        inv = client.post(f"/v1/workspaces/{wid}/invites", json={"role": "member"}, headers=_auth("al")).json()["data"]
-        token = inv["url"].rsplit("/", 1)[-1]
-        assert client.get(f"/v1/invites/{token}").json()["data"]["invitedBy"] == "Ada L."
-
     def test_profile_validation(self, client, monkeypatch):
         _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
         assert client.get("/v1/account/profile").status_code == 401
@@ -353,10 +284,12 @@ class TestMeEndpoint:
         assert me["effectiveRole"] == "owner"
         assert me["tokenAccess"] is False
 
-    def test_viewer_effective_role_is_viewer(self, client, monkeypatch):
+    def test_viewer_effective_role_is_viewer(self, client, db, monkeypatch):
         _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "v": _claims("v@x.com")})
         wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "v@x.com", "role": "viewer"}, headers=_auth("al"))
+        u = User(email="v@x.com"); db.add(u); db.flush()
+        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="viewer"))
+        db.commit()
         me = client.get(f"/v1/workspaces/{wid}/me", headers=_auth("v")).json()["data"]
         assert me["role"] == "viewer"
         assert me["effectiveRole"] == "viewer"
@@ -376,106 +309,6 @@ class TestMeEndpoint:
         _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
         wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
         assert client.get(f"/v1/workspaces/{wid}/me").status_code == 401
-
-
-class TestInvites:
-    """Tokenized invitation links: create/list/revoke (admin side) and the
-    public peek + login-gated accept (invitee side). The invite URL never
-    contains the workspace machine token."""
-
-    def _ws(self, client, monkeypatch, extra_ids=None):
-        ids = {"al": _claims("al@x.com")}
-        ids.update(extra_ids or {})
-        _stub_identity(monkeypatch, ids)
-        return client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-
-    def test_email_invite_lifecycle(self, client, monkeypatch):
-        wid = self._ws(client, monkeypatch, {"bob": _claims("bob@x.com")})
-        inv = client.post(
-            f"/v1/workspaces/{wid}/invites",
-            json={"email": "Bob@X.com", "role": "member"},
-            headers=_auth("al"),
-        ).json()["data"]
-        assert inv["status"] == "pending"
-        assert inv["email"] == "bob@x.com"
-        assert inv["emailSent"] is False  # no RESEND_API_KEY in tests
-        assert "/invite/" in inv["url"]
-        token = inv["url"].rsplit("/", 1)[-1]
-
-        # Public peek — no auth, masked email, no workspace credentials leaked.
-        peek = client.get(f"/v1/invites/{token}")
-        assert peek.status_code == 200
-        data = peek.json()["data"]
-        assert data["workspaceName"] == "WS"
-        assert data["invitedEmail"] == "b***@x.com"
-        assert "token" not in {k.lower() for k in data}
-        # The inviter's display name is shown, never their email address.
-        assert data["invitedBy"] == "Test User"
-        assert "al@x.com" not in str(data)
-
-        # Accept requires a signed-in identity...
-        assert client.post(f"/v1/invites/{token}/accept").status_code == 401
-        # ...and the matching email.
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "bob": _claims("bob@x.com"),
-                                     "eve": _claims("eve@x.com")})
-        assert client.post(f"/v1/invites/{token}/accept", headers=_auth("eve")).status_code == 403
-
-        r = client.post(f"/v1/invites/{token}/accept", headers=_auth("bob"))
-        assert r.status_code == 200
-        assert r.json()["data"]["role"] == "member"
-        roles = {m["email"]: m["role"] for m in client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]}
-        assert roles["bob@x.com"] == "member"
-
-        # Email-bound invites are single-use.
-        assert client.post(f"/v1/invites/{token}/accept", headers=_auth("bob")).status_code == 400
-
-    def test_open_link_multi_use_and_revoke(self, client, monkeypatch):
-        wid = self._ws(client, monkeypatch, {"bob": _claims("bob@x.com"), "cy": _claims("cy@x.com")})
-        inv = client.post(
-            f"/v1/workspaces/{wid}/invites", json={"role": "viewer"}, headers=_auth("al"),
-        ).json()["data"]
-        assert inv["email"] is None
-        token = inv["url"].rsplit("/", 1)[-1]
-
-        assert client.post(f"/v1/invites/{token}/accept", headers=_auth("bob")).status_code == 200
-        assert client.post(f"/v1/invites/{token}/accept", headers=_auth("cy")).status_code == 200
-        roles = {m["email"]: m["role"] for m in client.get(f"/v1/workspaces/{wid}/team", headers=_auth("al")).json()["data"]}
-        assert roles["bob@x.com"] == "viewer" and roles["cy@x.com"] == "viewer"
-
-        # Revoke kills the link.
-        assert client.delete(f"/v1/workspaces/{wid}/invites/{inv['inviteId']}", headers=_auth("al")).status_code == 200
-        _stub_identity(monkeypatch, {"dan": _claims("dan@x.com")})
-        assert client.post(f"/v1/invites/{token}/accept", headers=_auth("dan")).status_code == 400
-
-    def test_accept_never_downgrades(self, client, monkeypatch):
-        wid = self._ws(client, monkeypatch, {"bob": _claims("bob@x.com")})
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "bob@x.com", "role": "admin"}, headers=_auth("al"))
-        inv = client.post(
-            f"/v1/workspaces/{wid}/invites", json={"email": "bob@x.com", "role": "viewer"}, headers=_auth("al"),
-        ).json()["data"]
-        token = inv["url"].rsplit("/", 1)[-1]
-        r = client.post(f"/v1/invites/{token}/accept", headers=_auth("bob"))
-        assert r.status_code == 200
-        assert r.json()["data"]["role"] == "admin"
-
-    def test_peek_inviter_without_name_falls_back_to_email_local_part(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("raphael@uaca.com", name=None)})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        inv = client.post(
-            f"/v1/workspaces/{wid}/invites", json={"role": "member"}, headers=_auth("al"),
-        ).json()["data"]
-        token = inv["url"].rsplit("/", 1)[-1]
-        data = client.get(f"/v1/invites/{token}").json()["data"]
-        assert data["invitedBy"] == "raphael"
-        assert "raphael@uaca.com" not in str(data)
-
-    def test_member_cannot_manage_invites(self, client, monkeypatch):
-        wid = self._ws(client, monkeypatch, {"bob": _claims("bob@x.com")})
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "bob@x.com", "role": "member"}, headers=_auth("al"))
-        assert client.post(
-            f"/v1/workspaces/{wid}/invites", json={"role": "member"}, headers=_auth("bob"),
-        ).status_code == 403
-        assert client.get(f"/v1/workspaces/{wid}/invites", headers=_auth("bob")).status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -524,10 +357,12 @@ class TestViewerEnforcement:
 
 
 class TestViewerToken:
-    def test_viewer_gets_null_token_owner_gets_token(self, client, monkeypatch):
+    def test_viewer_gets_null_token_owner_gets_token(self, client, db, monkeypatch):
         _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "vv": _claims("vv@x.com")})
         wid = client.post("/v1/workspaces", json={"name": "W"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        client.post(f"/v1/workspaces/{wid}/team", json={"email": "vv@x.com", "role": "viewer"}, headers=_auth("al"))
+        u = User(email="vv@x.com"); db.add(u); db.flush()
+        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="viewer"))
+        db.commit()
 
         vv = [w for w in client.get("/v1/account/workspaces", headers=_auth("vv")).json()["data"] if w["workspaceId"] == wid][0]
         assert vv["role"] == "viewer" and vv["token"] is None

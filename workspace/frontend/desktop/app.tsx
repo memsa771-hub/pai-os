@@ -4,22 +4,19 @@ import { ThemeProvider, useTheme } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
 import { DialogsProvider } from '@/components/ui/dialogs-provider';
 import { OpenAgentsAuthProvider } from '@/lib/openagents-auth-context';
-import { I18nProvider, isLocale, useI18n, detectBrowserLocale } from '@/lib/i18n';
+import { DEFAULT_LOCALE, I18nProvider } from '@/lib/i18n';
 
 import Home from '@/app/page';
 import NotFound from '@/app/not-found';
 import WorkspacePage from '@/app/[workspaceId]/page';
 import SettingsLayout from '@/app/[workspaceId]/settings/layout';
 import SettingsIndex from '@/app/[workspaceId]/settings/page';
-import SettingsApiCredits from '@/app/[workspaceId]/settings/api-credits/page';
 import SettingsGeneral from '@/app/[workspaceId]/settings/general/page';
 import SettingsIntegrations from '@/app/[workspaceId]/settings/integrations/page';
-import SettingsMembers from '@/app/[workspaceId]/settings/members/page';
 import SettingsModelAccess from '@/app/[workspaceId]/settings/model-access/page';
 import SettingsPreferences from '@/app/[workspaceId]/settings/preferences/page';
 import SettingsProfile from '@/app/[workspaceId]/settings/profile/page';
 import SettingsSecurity from '@/app/[workspaceId]/settings/security/page';
-import InvitePage from '@/app/invite/[token]/page';
 import SharePage from '@/app/share/[token]/page';
 
 import { DesktopRouter, type RouteTable } from './router';
@@ -121,14 +118,6 @@ function settingsRoute(
 const ROUTES: RouteTable = [
   { pattern: '/', render: () => <Home /> },
   {
-    pattern: '/invite/:token',
-    render: (params) => (
-      <Page params={params}>
-        {(promise) => <InvitePage params={promise as Promise<{ token: string }>} />}
-      </Page>
-    ),
-  },
-  {
     pattern: '/share/:token',
     render: (params) => (
       <Page params={params}>
@@ -137,10 +126,8 @@ const ROUTES: RouteTable = [
     ),
   },
   settingsRoute('/:workspaceId/settings', SettingsIndex),
-  settingsRoute('/:workspaceId/settings/api-credits', SettingsApiCredits),
   settingsRoute('/:workspaceId/settings/general', SettingsGeneral),
   settingsRoute('/:workspaceId/settings/integrations', SettingsIntegrations),
-  settingsRoute('/:workspaceId/settings/members', SettingsMembers),
   settingsRoute('/:workspaceId/settings/model-access', SettingsModelAccess),
   settingsRoute('/:workspaceId/settings/preferences', SettingsPreferences),
   settingsRoute('/:workspaceId/settings/profile', SettingsProfile),
@@ -158,23 +145,9 @@ const ROUTES: RouteTable = [
 ];
 
 export default function App(): React.JSX.Element {
-  const host = useHostAppearance();
-
-  // The host's language when there is one; otherwise the machine's, since
-  // there is no server here to resolve it from a cookie and Accept-Language.
-  // `undefined` lets the provider fall back to its own default.
-  const initialLocale = useMemo(() => {
-    const fromHost = host?.locale;
-    if (fromHost && isLocale(fromHost)) return fromHost;
-    return detectBrowserLocale() ?? undefined;
-    // Deliberately only the first value: this is an INITIAL locale, and later
-    // changes are applied by AppearanceSync rather than by remounting the tree.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   return (
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-      <I18nProvider initialLocale={initialLocale} hasStoredLocale={!!host}>
+      <I18nProvider>
         <AppearanceSync />
         <OpenAgentsAuthProvider>
           <DialogsProvider>
@@ -195,29 +168,27 @@ function HostNotices(): null {
 }
 
 /**
- * Keeps the two halves of the window agreeing about theme and language.
+ * Keeps the launcher's theme in step with this app's.
  *
- * Both directions, so a change made in the launcher's menu and one made in
- * this app's own menu have the same effect. Each side only acts on a value
- * that differs from what it already holds, which is what stops the two from
- * handing a change back and forth forever.
+ * Only acts on a value that differs from what it already holds, which is
+ * what stops the two from handing a change back and forth forever.
  *
  * Renders nothing; it exists for the effects. On the web `useHostAppearance`
  * returns null and every branch here is skipped.
+ *
+ * Language is not synced: the workspace is English-only, so there is nothing
+ * for the host to hand this app, and nothing for this app to report back
+ * beyond the fixed `DEFAULT_LOCALE`.
  */
 function AppearanceSync(): null {
   const host = useHostAppearance();
   const { theme, setTheme } = useTheme();
-  const { locale, setLocale } = useI18n();
 
   // Host → app.
   useEffect(() => {
     if (!host) return;
     if (host.theme && host.theme !== theme) setTheme(host.theme);
-    if (host.locale && host.locale !== locale && isLocale(host.locale)) {
-      setLocale(host.locale);
-    }
-  }, [host, theme, locale, setTheme, setLocale]);
+  }, [host, theme, setTheme]);
 
   // App → host. `theme` is undefined until next-themes has read storage.
   useEffect(() => {
@@ -226,9 +197,9 @@ function AppearanceSync(): null {
   }, [host, theme]);
 
   useEffect(() => {
-    if (!host || locale === host.locale) return;
-    reportLocale(locale);
-  }, [host, locale]);
+    if (!host || host.locale === DEFAULT_LOCALE) return;
+    reportLocale(DEFAULT_LOCALE);
+  }, [host]);
 
   return null;
 }

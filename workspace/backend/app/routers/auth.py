@@ -126,8 +126,7 @@ def claim_username(
 
 _GENERIC_SIGN_IN_ERROR = "Invalid username or password"
 
-# Sign-in attempts by client IP in the last hour (per process, sliding
-# window) — mirrors the pilot-grant rate limiter in app/routers/pilot.py.
+# Sign-in attempts by client IP in the last hour (per process, sliding window).
 _recent_attempts: dict = defaultdict(deque)
 
 

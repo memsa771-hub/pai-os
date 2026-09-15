@@ -9,7 +9,6 @@ import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { goToCentralLogin } from '@/lib/auth-redirects';
 import { LogIn } from 'lucide-react';
 import { useT } from '@/lib/i18n';
-import { CampaignMilestoneToasts } from '@/components/campaign/campaign-feedback';
 
 function WorkspaceLoadingSplash() {
   const t = useT();
@@ -119,7 +118,6 @@ function BearerWorkspace({ workspaceId, idToken }: { workspaceId: string; idToke
       <WorkspaceProvider workspaceId={workspaceId} token={state.token} bearerToken={idToken}>
         <IdentityGate>
           <LayoutProvider>
-            <CampaignMilestoneToasts idToken={idToken} />
             <Wrapper />
           </LayoutProvider>
         </IdentityGate>
@@ -172,23 +170,12 @@ function WorkspaceContent({ workspaceId }: { workspaceId: string }) {
     }
   }, [workspaceId, token]);
 
-  // "Add this workspace to my account": a signed-in user who opened a shared
-  // ?token= link is persisted as a member so it shows on their Membership Home.
-  useEffect(() => {
-    if (token && idToken) {
-      import('@/lib/account-api').then(({ joinWorkspaceSelf }) =>
-        joinWorkspaceSelf(workspaceId, idToken, token),
-      );
-    }
-  }, [workspaceId, token, idToken]);
-
   // Has workspace token in URL — use it directly
   if (token) {
     return (
       <WorkspaceProvider workspaceId={workspaceId} token={token} bearerToken={idToken || undefined}>
         <IdentityGate>
           <LayoutProvider>
-            {idToken && <CampaignMilestoneToasts idToken={idToken} />}
             <Wrapper />
           </LayoutProvider>
         </IdentityGate>

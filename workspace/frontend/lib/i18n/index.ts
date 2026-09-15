@@ -5,20 +5,7 @@
  * and must only be pulled in from Server Components.
  */
 
-export {
-  DEFAULT_LOCALE,
-  LOCALES,
-  LOCALE_COOKIE,
-  LOCALE_COOKIE_MAX_AGE,
-  LOCALE_LABELS,
-  detectBrowserLocale,
-  isLocale,
-  localeFromAcceptLanguage,
-  localeFromRegion,
-  localeFromTimeZone,
-  matchLocale,
-  type Locale,
-} from './locales';
+export { DEFAULT_LOCALE, LOCALES, isLocale, type Locale } from './locales';
 
 export { I18nProvider, useFormatters, useI18n, useT, type TranslateFn } from './i18n-context';
 

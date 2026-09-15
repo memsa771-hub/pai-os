@@ -491,7 +491,7 @@ async def _static_fetch(url: str) -> dict:
         url,
         max_bytes=MAX_RESPONSE_BYTES,
         timeout=STATIC_TIMEOUT_SECONDS,
-        headers={"User-Agent": USER_AGENT, "Accept-Language": "en,zh;q=0.8"},
+        headers={"User-Agent": USER_AGENT, "Accept-Language": "en"},
         truncate=True,  # a partial page is fine for a text read
     )
     content_type = result.content_type

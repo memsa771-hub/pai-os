@@ -255,7 +255,20 @@ async def _invoke_assistant_agent(
 
     system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
     system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
-    tools = pai.build_tools()
+    from app.tools import ToolContext, get_tool_executor, get_tool_registry
+    allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)
+    tool_context = ToolContext(
+        workspace_id=workspace_id,
+        agent_name=agent_name,
+        agent_id=str(cloud_config.id) if getattr(cloud_config, "id", None) else None,
+        conversation=channel_target.removeprefix("channel/"),
+        user_id=(event_data.get("source") or "").removeprefix("human:") or None,
+        api=api,
+        allowed_tools=allowed_tools,
+    )
+    tool_registry = get_tool_registry()
+    tool_executor = get_tool_executor()
+    tools = tool_registry.openai_tools_for_agent(allowed_tools)
     max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
     logger.info(
@@ -299,9 +312,7 @@ async def _invoke_assistant_agent(
                 args = _json.loads(fn.get("arguments") or "{}")
             except Exception:
                 args = {}
-            result = await pai.execute_tool(
-                api, agent_name, fn.get("name", ""), args,
-            )
+            result = await tool_executor.execute(fn.get("name", ""), args, tool_context)
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id"),

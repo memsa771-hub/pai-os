@@ -51,14 +51,6 @@ export const messages = {
     justNow: 'just now',
   },
 
-  language: {
-    label: 'Language',
-    description: 'Display language for the workspace.',
-    auto: 'Auto',
-    autoHint: 'Detected from your region',
-    useAuto: 'Match my region',
-  },
-
   /** View names. Shared by the sidebar, the nav rail and the app header. */
   views: {
     threads: 'Threads',
@@ -689,7 +681,6 @@ export const messages = {
     tokenMissing: 'No management token available',
     tokenCopyFailed: 'Failed to copy token',
     switchWorkspace: 'Switch workspace',
-    inviteMembers: 'Invite members',
     sendFeedback: 'Send feedback',
     workspaceSettings: 'Workspace settings',
     signIn: 'Sign in',
@@ -791,7 +782,6 @@ export const messages = {
     modelAccessDeleteFailed: 'Could not delete model access',
     navIntegrations: 'Integrations',
     navPreferences: 'Preferences',
-    navApiCredits: 'API credits',
 
     generalTitle: 'General',
     generalDescription: 'Workspace name, language and display options.',
@@ -1256,11 +1246,6 @@ export const messages = {
     byokLoadModels: 'Load models',
     byokAddAccess: 'New key',
     byokNoAccessHint: 'No saved model access yet — add a provider API key once and reuse it for every agent. Also manageable in Settings → Model access.',
-    byokPromoHint: 'Free OpenAgents API credits — your promo key works with this agent.',
-    byokPromoHintRemaining: 'Free OpenAgents API credits — ${remaining} left on your promo key, and it works with this agent.',
-    byokPromoCta: 'Use free credits',
-    byokPromoAdded: 'OpenAgents promo key added — now pick a model',
-    byokPromoFailed: 'Couldn’t add the promo key. You can add it manually with “New key” (find it in Settings → API credits).',
     byokLoadingModels: 'Loading the models this key can use…',
     byokChooseModel: 'Choose a model…',
     byokModelsLive: '{count} models available to this key',
@@ -1587,8 +1572,6 @@ export const messages = {
     },
   },
 
-  // API credits campaign (official deployment; hidden when disabled)
-
   // In-app feedback dialog
   feedback: {
     title: 'Send feedback',
@@ -1600,44 +1583,6 @@ export const messages = {
     contextNote: 'Your page and workspace are attached automatically.',
     submit: 'Send',
     thanks: 'Thank you — feedback sent!',
-  },
-
-  campaign: {
-    connectFirstAgent: 'Connect your first local agent with the launcher or CLI to unlock +$20 in free API credits.',
-    connectSecondAgent: 'Connect a different agent type via the launcher or CLI to unlock +$10 more in API credits.',
-    sidebarTitle: 'Onboarding rewards',
-    sidebarProgress: '{done} of {total} missions',
-    sidebarCta: 'Earn free API credits',
-    sidebarDaily: 'Come back daily for more',
-    sidebarDismiss: 'Hide this box (find it again under Settings → API credits)',
-    pageTitle: 'API credits',
-    pageDescription: 'Complete onboarding missions to earn free model-inference credits on your personal API key.',
-    missionsTitle: 'Missions',
-    dailyTitle: 'Daily bonus',
-    dailyBody: '+${amount} for every day you chat with your agents, until you reach ${cap} total.',
-    dailyProgress: '{days} active day(s) so far',
-    unlocked: '${total} of ${cap} unlocked',
-    keyTitle: 'Your API key',
-    keyHint: 'Click the key to reveal it. Treat it like a password.',
-    usageTitle: 'Usage',
-    usageBody: '${used} used · ${remaining} remaining',
-    usageOf: '${used} used of ${limit} available',
-    usageTokens: '{input} input · {output} output tokens',
-    usageExhausted: 'Credits used up — complete more missions to keep going.',
-    howtoTitle: 'How to use your credits',
-    howtoBody: 'Your key works with any OpenAI-compatible client or agent. Point the client at the base URL below and pick a model.',
-    howtoBaseUrl: 'Base URL',
-    howtoModels: 'Popular models: deepseek-4-flash, deepseek-v4-pro, alibaba-qwen3-32b, kimi-k2.6, glm-5.2',
-    showAllModels: 'Show all supported models',
-    hideModels: 'Hide models',
-    modelsCount: '{count} models available — click one to copy its id',
-    notAvailable: 'The credits campaign is not available on this deployment.',
-    complete: 'All missions complete 🎉',
-    msSignup: 'Create your account',
-    msFirstAgent: 'Connect your first agent (launcher or CLI)',
-    msFirstConversation: 'Have your first conversation',
-    msSecondAgent: 'Connect a second agent type (launcher or CLI)',
-    msSecondAgentResponse: 'Get a reply from the second agent',
   },
 };
 

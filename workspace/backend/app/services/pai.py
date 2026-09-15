@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """
 PAI Counselor — Placement AI's built-in education counselor.
-
 PAI Counselor is a *cloud agent* (runs in-process on the backend, see
 ``services/cloud_agent.py``) but differs from user-added cloud agents in three
 ways:
@@ -25,6 +24,7 @@ frontend gating).
 """
 
 import logging
+import base64
 from typing import Any, Optional
 
 import httpx
@@ -47,6 +47,13 @@ PAI_CATEGORY = "assistant"                    # triggers the tool loop
 # resolved from config at call time so it can be rotated in one place.
 PAI_KEY_PLACEHOLDER = "__server_managed__"
 PAI_PRIMARY_CHANNEL = "pai-counselor"
+PAI_ALLOWED_TOOLS = (
+    "workspace.agents.list", "workspace.threads.list", "workspace.thread.create",
+    "tasks.list", "tasks.create", "files.list", "files.read", "files.write",
+    "web.search", "web.fetch", "browser.tabs.list", "browser.open",
+    "browser.navigate", "browser.read", "browser.click", "browser.type",
+    "browser.screenshot", "browser.close", "browser.contexts.list",
+)
 
 
 def is_builtin_agent_type(agent_type: Optional[str]) -> bool:
@@ -354,11 +361,42 @@ class WorkspaceApi:
             "status": resp.status_code,
         }
 
+    async def _raw_request(self, method: str, path: str, **kwargs):
+        from app.main import app
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://pai.internal", timeout=30) as client:
+            return await client.request(method, path, headers={"X-Workspace-Token": self.token}, **kwargs)
+
     async def get(self, path: str, **params: Any) -> dict:
         return await self.request("GET", path, params=params or None)
 
     async def post(self, path: str, json: Optional[dict] = None) -> dict:
         return await self.request("POST", path, json=json)
+
+    async def delete(self, path: str) -> dict:
+        return await self.request("DELETE", path)
+
+    async def get_text(self, path: str, max_chars: int = 50000) -> dict:
+        try:
+            response = await self._raw_request("GET", path)
+            if response.status_code != 200:
+                return {"ok": False, "error": f"HTTP {response.status_code}"}
+            return {"ok": True, "content": response.text[:max(1, min(max_chars, 100000))], "content_type": response.headers.get("content-type")}
+        except Exception as exc:
+            logger.exception("pai api text request failed path=%s", path)
+            return {"ok": False, "error": str(exc)[:200]}
+
+    async def get_base64(self, path: str, max_bytes: int) -> dict:
+        try:
+            response = await self._raw_request("GET", path)
+            if response.status_code != 200:
+                return {"ok": False, "error": f"HTTP {response.status_code}"}
+            if len(response.content) > max_bytes:
+                return {"ok": False, "error": "Response is too large"}
+            return {"ok": True, "content_base64": base64.b64encode(response.content).decode("ascii"), "content_type": response.headers.get("content-type")}
+        except Exception as exc:
+            logger.exception("pai api binary request failed path=%s", path)
+            return {"ok": False, "error": str(exc)[:200]}
 
 
 # ---------------------------------------------------------------------------
@@ -423,160 +461,24 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
 # ---------------------------------------------------------------------------
 
 def build_tools() -> list[dict]:
-    """OpenAI-style tool schemas PAI Counselor may call."""
-    empty = {"type": "object", "properties": {}}
-    return [
-        {"type": "function", "function": {
-            "name": "list_agents",
-            "description": "List agents in this workspace and their status.",
-            "parameters": empty,
-        }},
-        {"type": "function", "function": {
-            "name": "list_threads",
-            "description": "List existing workspace threads.",
-            "parameters": empty,
-        }},
-        {"type": "function", "function": {
-            "name": "create_task",
-            "description": "Create a task card when the user requests one.",
-            "parameters": {"type": "object", "properties": {
-                "title": {"type": "string"},
-                "description": {"type": "string"},
-                "priority": {"type": "string", "enum": ["low", "normal", "high"]},
-                "assignee": {"type": "string"},
-            }, "required": ["title"]},
-        }},
-        {"type": "function", "function": {
-            "name": "list_tasks",
-            "description": "List workspace task cards.",
-            "parameters": empty,
-        }},
-        {"type": "function", "function": {
-            "name": "create_thread",
-            "description": "Create a thread when the user explicitly requests one.",
-            "parameters": {"type": "object", "properties": {
-                "title": {"type": "string"},
-                "agents": {"type": "array", "items": {"type": "string"}},
-            }, "required": ["title"]},
-        }},
-    ]
+    """Compatibility facade; schemas are owned by the shared ToolRegistry."""
+    from app.tools import get_tool_registry
+    return get_tool_registry().openai_tools_for_agent(PAI_ALLOWED_TOOLS)
 
 
 
 async def execute_tool(
     api: WorkspaceApi, agent_name: str, name: str, args: dict,
 ) -> dict:
-    """Execute one tool call via the workspace API; JSON-serialisable result."""
-    try:
-        if name == "list_agents":
-            return await _tool_list_agents(api)
-        if name == "list_threads":
-            return await _tool_list_threads(api)
-        if name == "create_task":
-            return await _tool_create_task(api, agent_name, args)
-        if name == "list_tasks":
-            return await _tool_list_tasks(api)
-        if name == "create_thread":
-            return await _tool_create_thread(api, agent_name, args)
-        return {"ok": False, "error": f"Unknown tool: {name}"}
-    except Exception as exc:  # never let a tool crash the loop
-        logger.exception("pai: tool %s failed", name)
-        return {"ok": False, "error": str(exc)[:200]}
-
-
-async def _tool_list_agents(api: WorkspaceApi) -> dict:
-    res = await api.get("/v1/discover", network=api.workspace_id)
-    if not res["ok"]:
-        return res
-    agents = []
-    for a in (res["data"] or {}).get("agents") or []:
-        skills = a.get("enabled_skills") or {}
-        agents.append({
-            "name": (a.get("address") or "").removeprefix("openagents:"),
-            "type": a.get("agent_type"),
-            "status": a.get("status"),
-            "builtin": bool(a.get("builtin")),
-            "description": a.get("description"),
-            "host": a.get("server_host"),
-            "working_dir": a.get("working_dir"),
-            "installed_skills": skills.get("installed") or [],
-            "last_heartbeat_at": a.get("last_heartbeat_at"),
-        })
-    return {"ok": True, "agents": agents}
-
-
-async def _tool_list_threads(api: WorkspaceApi) -> dict:
-    res = await api.get("/v1/discover", network=api.workspace_id)
-    if not res["ok"]:
-        return res
-    threads = []
-    for c in (res["data"] or {}).get("channels") or []:
-        threads.append({
-            "name": (c.get("address") or "").removeprefix("channel/"),
-            "title": c.get("title"),
-            "leader": c.get("master"),
-        })
-    return {"ok": True, "threads": threads}
-
-
-
-
-async def _tool_create_task(api: WorkspaceApi, agent_name: str, args: dict) -> dict:
-    title = (args.get("title") or "").strip()
-    if not title:
-        return {"ok": False, "error": "Missing task title"}
-    priority = args.get("priority") if args.get("priority") in ("low", "normal", "high") else "normal"
-    payload: dict = {
-        "network": api.workspace_id,
-        "title": title,
-        "description": (args.get("description") or "").strip(),
-        "priority": priority,
-        "source": f"openagents:{agent_name}",
+    """Compatibility facade; execution is owned by the shared ToolExecutor."""
+    from app.tools import ToolContext, get_tool_executor
+    aliases = {
+        "list_agents": "workspace.agents.list", "list_threads": "workspace.threads.list",
+        "create_thread": "workspace.thread.create", "list_tasks": "tasks.list",
+        "create_task": "tasks.create",
     }
-    if args.get("assignee"):
-        payload["assignee"] = args["assignee"]
-    res = await api.post("/v1/tasks", json=payload)
-    if not res["ok"]:
-        return res
-    data = res["data"] or {}
-    return {
-        "ok": True,
-        "task_id": data.get("id"),
-        "title": data.get("title"),
-        "status": data.get("status"),
-        "note": "Created in the Backlog column of the Tasks board.",
-    }
-
-
-async def _tool_list_tasks(api: WorkspaceApi) -> dict:
-    res = await api.get("/v1/tasks", network=api.workspace_id)
-    if not res["ok"]:
-        return res
-    tasks = [
-        {
-            "title": t.get("title"),
-            "status": t.get("status"),
-            "priority": t.get("priority"),
-            "assignee": t.get("assignee"),
-        }
-        for t in (res["data"] or {}).get("tasks") or []
-    ]
-    return {"ok": True, "tasks": tasks}
-
-
-async def _tool_create_thread(api: WorkspaceApi, agent_name: str, args: dict) -> dict:
-    title = (args.get("title") or "").strip() or "New thread"
-    participants = [a for a in (args.get("agents") or []) if isinstance(a, str) and a]
-
-    res = await api.post("/v1/events", json={
-        "type": "network.channel.create",
-        "source": f"openagents:{agent_name}",
-        "target": "core",
-        "payload": {"title": title, "participants": participants},
-        "metadata": {},
-        "network": api.workspace_id,
-    })
-    if not res["ok"]:
-        return res
-    metadata = (res["data"] or {}).get("metadata") or {}
-    return {"ok": True, "channel_name": metadata.get("channel_name"), "title": title}
+    context = ToolContext(
+        workspace_id=api.workspace_id, agent_name=agent_name, api=api,
+        allowed_tools=frozenset(PAI_ALLOWED_TOOLS),
+    )
+    return await get_tool_executor().execute(aliases.get(name, name), args, context)

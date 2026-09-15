@@ -5,8 +5,8 @@ import { ThemeProvider } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
 import { OpenAgentsAuthProvider } from '@/lib/openagents-auth-context';
 import { DialogsProvider } from '@/components/ui/dialogs-provider';
-import { I18nProvider } from '@/lib/i18n';
-import { getServerTranslations, resolveLocale } from '@/lib/i18n/server';
+import { DEFAULT_LOCALE, I18nProvider } from '@/lib/i18n';
+import { getServerTranslations } from '@/lib/i18n/server';
 import '@/styles/globals.css';
 
 const inter = Inter({ subsets: ['latin'] });
@@ -53,14 +53,8 @@ export default async function RootLayout({
 }: {
   children: React.ReactNode;
 }) {
-  // Resolved per request from the persisted cookie, then `Accept-Language`,
-  // then the edge geo header. Doing it here — rather than detecting in the
-  // browser — means the first paint is already in the right language and SSR
-  // and hydration agree on the markup.
-  const { locale, hasStoredLocale } = await resolveLocale();
-
   return (
-    <html lang={locale} suppressHydrationWarning>
+    <html lang={DEFAULT_LOCALE} suppressHydrationWarning>
       <head>
         {POSTHOG_KEY && (
         <Script id="posthog-init" strategy="afterInteractive">{`
@@ -99,7 +93,7 @@ export default async function RootLayout({
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
-          <I18nProvider initialLocale={locale} hasStoredLocale={hasStoredLocale}>
+          <I18nProvider>
             {/* Legacy email/password AuthProvider was removed in v1.0 —
                 OpenAgentsAuthProvider supplies the canonical identity path. */}
             <OpenAgentsAuthProvider>

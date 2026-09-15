@@ -86,7 +86,7 @@ class TestNotifyFilesAndPushes:
 
         record = notify(
             db, workspace["id"],
-            source="system:campaign", title="credits", message="m", push=False,
+            source="system:test", title="t", message="m", push=False,
         )
         db.commit()
 
