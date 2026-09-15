@@ -61,9 +61,9 @@ def test_eligible_then_grant_once(client, db, pilot_on, gateway):  # noqa: F811
     user = _mk_user(db, "pilot@example.com")
     ws = _mk_workspace(db, user)
     _mk_member(db, ws, "claude-1", "claude")
-    _mk_member(db, ws, "yumi", "cloud:openagents")
+    _mk_member(db, ws, "cloud-helper", "cloud:openai")
     _conversation_days(db, ws, "claude-1", [0, 2, 5])          # 3 non-consecutive active days
-    _msg(db, ws, "human:alice", _ms(9)); _msg(db, ws, "openagents:yumi", _ms(9))  # cloud reply: human-only day
+    _msg(db, ws, "human:alice", _ms(9)); _msg(db, ws, "openagents:cloud-helper", _ms(9))  # cloud reply: human-only day
 
     r = client.get("/v1/admin/pilot/eligibility?email=Pilot@Example.com", headers=H)  # case-insensitive
     d = r.json()["data"]
@@ -104,9 +104,9 @@ def test_not_eligible_without_three_days_unless_forced(client, db, pilot_on, gat
 def test_no_agent_is_not_eligible(client, db, pilot_on, gateway):  # noqa: F811
     user = _mk_user(db, "cloudonly@example.com")
     ws = _mk_workspace(db, user)
-    _mk_member(db, ws, "yumi", "cloud:openagents")
+    _mk_member(db, ws, "cloud-helper", "cloud:openai")
     for d in (0, 1, 2):
-        _msg(db, ws, "human:alice", _ms(d)); _msg(db, ws, "openagents:yumi", _ms(d))
+        _msg(db, ws, "human:alice", _ms(d)); _msg(db, ws, "openagents:cloud-helper", _ms(d))
     d = client.get("/v1/admin/pilot/eligibility?email=cloudonly@example.com", headers=H).json()["data"]
     assert d["agents"]["connected"] is False and d["activity"]["activeDayCount"] == 0
     assert d["pilot"]["eligible"] is False and len(d["pilot"]["reasons"]) == 2

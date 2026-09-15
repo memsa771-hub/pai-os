@@ -13,8 +13,11 @@ vi.mock("electron", () => ({ net: {} }))
  *
  * session-store is mocked because the real one writes through Electron's
  * userData path; everything else here is the real thing, loopback server
- * included, with fetch standing in for the browser.
+ * included, with fetch standing in for the browser and for Supabase.
  */
+
+const SUPABASE_URL = "https://qhrzlmfzdeulhdzpadtn.supabase.co"
+const API_BASE = "https://workspace-endpoint.openagents.org"
 
 let stored: AccountSession | null = null
 
@@ -33,11 +36,11 @@ vi.mock("./session-store", async () => {
   }
 })
 
-const SESSION = {
-  token: "session-jwt",
-  email: "a@example.com",
-  displayName: "A",
-  expiresAt: Math.floor(Date.now() / 1000) + 30 * 86400,
+const SUPABASE_SESSION_BODY = {
+  access_token: "access-1",
+  refresh_token: "refresh-1",
+  expires_in: 3600,
+  user: { id: "u1", email: "a@example.com", user_metadata: { username: "abby" } },
 }
 
 beforeEach(() => {
@@ -65,7 +68,8 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals())
 
-/** Stand in for the browser: read the opened URL, answer the loopback port. */
+/** Stand in for the browser: read the opened authorize URL, POST a code back
+ * to the loopback port, as the /auth/desktop page would. */
 function browserThatSignsIn(respond: (target: URL) => unknown): {
   opened: string[]
   openExternal: (url: string) => void
@@ -76,8 +80,9 @@ function browserThatSignsIn(respond: (target: URL) => unknown): {
     openExternal: (url) => {
       opened.push(url)
       const target = new URL(url)
-      const port = target.searchParams.get("port")
-      const state = target.searchParams.get("state")
+      const redirectTo = new URL(target.searchParams.get("redirect_to") || "")
+      const port = redirectTo.searchParams.get("port")
+      const state = redirectTo.searchParams.get("state")
       void realFetch(`http://127.0.0.1:${port}/desktop-auth`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -88,23 +93,29 @@ function browserThatSignsIn(respond: (target: URL) => unknown): {
 }
 
 describe("AccountManager.signIn", () => {
-  it("opens the workspace's desktop landing page, not the central login", async () => {
-    const browser = browserThatSignsIn(() => ({ session: SESSION }))
+  it("opens Supabase's authorize URL with a desktop redirect_to, PKCE challenge included", async () => {
+    const browser = browserThatSignsIn(() => ({ code: "auth-code-1" }))
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("/auth/desktop")) return { ok: true, status: 200, json: async () => ({}) }
+      if (url.includes("grant_type=pkce")) return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY }
+      return { ok: true, status: 200, json: async () => ({}) }
+    }))
     const manager = new AccountManager({
       endpoint: () => undefined,
       openExternal: browser.openExternal,
       onChange: () => {},
     })
 
-    await manager.signIn()
+    await manager.signIn("google")
 
     const opened = new URL(browser.opened[0])
-    expect(opened.origin).toBe("https://workspace.openagents.org")
-    expect(opened.pathname).toBe("/auth/desktop")
-    // A returnTo aimed at /auth/callback is what made the central login skip
-    // minting a token at all — the launcher must never build that URL.
-    expect(browser.opened[0]).not.toContain("/auth/callback")
-    expect(browser.opened[0]).not.toContain("openagents.org/login")
+    expect(opened.origin).toBe(SUPABASE_URL)
+    expect(opened.pathname).toBe("/auth/v1/authorize")
+    expect(opened.searchParams.get("provider")).toBe("google")
+    expect(opened.searchParams.get("code_challenge_method")).toBe("s256")
+    const redirectTo = new URL(opened.searchParams.get("redirect_to")!)
+    expect(redirectTo.origin).toBe("https://workspace.openagents.org")
+    expect(redirectTo.pathname).toBe("/auth/desktop")
   })
 
   it("refuses before opening a browser it cannot be answered from", async () => {
@@ -121,26 +132,31 @@ describe("AccountManager.signIn", () => {
       onChange: () => {},
     })
 
-    await expect(manager.signIn()).rejects.toThrow(
+    await expect(manager.signIn("google")).rejects.toThrow(
       "SIGN_IN_BROWSER_UNAVAILABLE",
     )
     expect(opened).toHaveLength(0)
   })
 
-  it("keeps the session the page hands back, and reports the account", async () => {
+  it("exchanges the returned code for a session and reports the account", async () => {
     const seen: Array<unknown> = []
-    const browser = browserThatSignsIn(() => ({ session: SESSION }))
+    const browser = browserThatSignsIn(() => ({ code: "auth-code-1" }))
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("grant_type=pkce")) return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY }
+      return { ok: true, status: 200, json: async () => ({}) }
+    }))
     const manager = new AccountManager({
       endpoint: () => undefined,
       openExternal: browser.openExternal,
       onChange: (info) => seen.push(info),
     })
 
-    const account = await manager.signIn()
+    const account = await manager.signIn("github")
 
-    expect(account.email).toBe(SESSION.email)
-    expect(stored?.kind).toBe("workspace")
-    expect(await manager.bearer()).toBe(SESSION.token)
+    expect(account.email).toBe(SUPABASE_SESSION_BODY.user.email)
+    expect(stored?.kind).toBe("supabase")
+    expect(stored?.refreshToken).toBe("refresh-1")
+    expect(await manager.bearer()).toBe("access-1")
     expect(seen).toHaveLength(1)
   })
 
@@ -152,18 +168,20 @@ describe("AccountManager.signIn", () => {
       onChange: () => {},
     })
 
-    await expect(manager.signIn()).rejects.toThrow("SIGN_IN_REJECTED")
+    await expect(manager.signIn("google")).rejects.toThrow("SIGN_IN_REJECTED")
     expect(stored).toBeNull()
   })
 
-  it("ends a session that has outlived its thirty days rather than sending it", async () => {
+  it("ends a session whose refresh token no longer works rather than sending a stale token", async () => {
     stored = {
-      kind: "workspace",
+      kind: "supabase",
       token: "stale",
+      refreshToken: "stale-refresh",
       email: "a@example.com",
       displayName: null,
       expiresAt: Math.floor(Date.now() / 1000) - 10,
     }
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 400, json: async () => ({ error: "invalid_grant" }) })))
     const gone: Array<unknown> = []
     const manager = new AccountManager({
       endpoint: () => undefined,
@@ -177,209 +195,147 @@ describe("AccountManager.signIn", () => {
   })
 })
 
-/**
- * The in-app password form.
- *
- * The point of these cases is the route: the website keeps its email accounts
- * on the account service, not in Firebase, so a launcher that asks Google
- * about a password the website accepts is told it is wrong. Firebase is only
- * for a deployment with no account service in front of it.
- */
-describe("AccountManager email authentication", () => {
-  const ACCOUNT_API = "https://endpoint.openagents.org"
-
-  /** Answer each host with what it really returns; record who was asked. */
-  function accountService(
-    overrides: Record<
-      string,
-      { ok?: boolean; status?: number; body?: unknown }
-    > = {},
-  ): { calls: string[]; fetch: ReturnType<typeof vi.fn> } {
-    const calls: string[] = []
-    const routes: Record<string, unknown> = {
-      "/v1/auth/register": { code: 200, data: { access_token: "new-account-token" } },
-      "/v1/auth/login": { code: 200, data: { access_token: "account-token" } },
-      "/v1/auth/workspace-handoff": { data: { custom_token: "ct-1" } },
-      "/v1/auth/session": {
-        data: {
-          session_token: SESSION.token,
-          email: SESSION.email,
-          display_name: SESSION.displayName,
-          expires_at: new Date(SESSION.expiresAt * 1000).toISOString(),
-        },
-      },
-    }
-    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push(url)
-      const path = Object.keys(routes).find((p) => url.includes(p))
-      const override = path ? overrides[path] : undefined
-      if (override) {
-        return {
-          ok: override.ok ?? false,
-          status: override.status ?? 500,
-          json: async () => override.body ?? {},
-          headers: init?.headers,
-        }
-      }
-      return {
-        ok: true,
-        status: 200,
-        json: async () => (path ? routes[path] : {}),
-      }
+describe("AccountManager.signInWithPassword", () => {
+  it("signs in directly against Supabase", async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=password`)
+      return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY }
     })
-    return { calls, fetch: fetchMock as ReturnType<typeof vi.fn> }
-  }
-
-  it("signs in through the account service, never through Google", async () => {
-    const service = accountService()
-    vi.stubGlobal("fetch", service.fetch)
-    const manager = new AccountManager({
-      endpoint: () => undefined,
-      openExternal: () => {},
-      onChange: () => {},
-    })
+    vi.stubGlobal("fetch", fetchMock)
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: () => {}, onChange: () => {} })
 
     const account = await manager.signInWithPassword("a@example.com", "pw")
 
-    expect(account.email).toBe(SESSION.email)
-    expect(stored?.kind).toBe("workspace")
-    expect(service.calls[0]).toBe(`${ACCOUNT_API}/v1/auth/login`)
-    expect(service.calls[1]).toBe(`${ACCOUNT_API}/v1/auth/workspace-handoff`)
-    expect(service.calls[2]).toContain("/v1/auth/session")
-    // The whole reason this path exists: it works where Google does not.
-    expect(service.calls.some((u) => u.includes("googleapis.com"))).toBe(false)
+    expect(account.email).toBe(SUPABASE_SESSION_BODY.user.email)
+    expect(stored?.kind).toBe("supabase")
   })
 
-  it("carries the account token to the handoff as a bearer", async () => {
-    const service = accountService()
-    vi.stubGlobal("fetch", service.fetch)
-    const manager = new AccountManager({
-      endpoint: () => undefined,
-      openExternal: () => {},
-      onChange: () => {},
-    })
+  it("reports a rejected password without a raw Supabase error", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 400,
+      json: async () => ({ error: "invalid_grant", error_description: "Invalid login credentials" }),
+    })))
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: () => {}, onChange: () => {} })
 
-    await manager.signInWithPassword("a@example.com", "pw")
-
-    const handoff = service.fetch.mock.calls.find(
-      ([url]) => typeof url === "string" && url.includes("workspace-handoff"),
-    )
-    expect(
-      (handoff?.[1] as RequestInit & { headers: Record<string, string> })
-        .headers.Authorization,
-    ).toBe("Bearer account-token")
-  })
-
-  it("reports a rejected password as such, without asking Google too", async () => {
-    const service = accountService({
-      "/v1/auth/login": {
-        status: 401,
-        body: { code: 401, message: "Invalid email or password" },
-      },
-    })
-    vi.stubGlobal("fetch", service.fetch)
-    const manager = new AccountManager({
-      endpoint: () => undefined,
-      openExternal: () => {},
-      onChange: () => {},
-    })
-
-    await expect(
-      manager.signInWithPassword("a@example.com", "wrong"),
-    ).rejects.toThrow("SIGN_IN_BAD_CREDENTIALS")
-    // Retrying a wrong password against Firebase would spend an attempt there
-    // and still fail — the account is not held there.
-    expect(service.calls).toHaveLength(1)
+    await expect(manager.signInWithPassword("a@example.com", "wrong")).rejects.toThrow("SIGN_IN_BAD_CREDENTIALS")
     expect(stored).toBeNull()
   })
+})
 
-  it("does not retry against Google when the handoff is what failed", async () => {
-    const service = accountService({
-      "/v1/auth/workspace-handoff": {
-        status: 500,
-        body: { message: "handoff unavailable" },
-      },
+describe("AccountManager.signInWithUsername", () => {
+  it("asks workspace/backend, which never returns the resolved email", async () => {
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === `${API_BASE}/v1/auth/sign-in-username`) {
+        expect(JSON.parse(String(init?.body))).toEqual({ username: "abby", password: "pw" })
+        return { ok: true, status: 200, json: async () => ({ code: 200, data: {
+          access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600, token_type: "bearer",
+        } }) }
+      }
+      expect(url).toBe(`${SUPABASE_URL}/auth/v1/user`)
+      return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY.user }
     })
-    vi.stubGlobal("fetch", service.fetch)
-    const manager = new AccountManager({
-      endpoint: () => undefined,
-      openExternal: () => {},
-      onChange: () => {},
-    })
+    vi.stubGlobal("fetch", fetchMock)
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: () => {}, onChange: () => {} })
 
-    // The password was accepted; asking Firebase about it now would answer a
-    // server fault with "wrong password".
-    await expect(
-      manager.signInWithPassword("a@example.com", "pw"),
-    ).rejects.toThrow("handoff unavailable")
-    expect(service.calls.some((u) => u.includes("identitytoolkit"))).toBe(false)
+    const account = await manager.signInWithUsername("abby", "pw")
+
+    expect(account.email).toBe(SUPABASE_SESSION_BODY.user.email)
+    expect(stored?.kind).toBe("supabase")
   })
 
-  it("falls back to Firebase only where there is no account service", async () => {
-    const service = accountService({
-      "/v1/auth/login": { status: 404, body: { message: "Not Found" } },
-    })
-    vi.stubGlobal("fetch", service.fetch)
-    const manager = new AccountManager({
-      endpoint: () => undefined,
-      openExternal: () => {},
-      onChange: () => {},
-    })
+  it("gives the same generic error for an unknown username as a wrong password", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({
+      ok: false,
+      status: 401,
+      json: async () => ({ code: 401, message: "Invalid username or password" }),
+    })))
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: () => {}, onChange: () => {} })
 
-    // Firebase is stubbed by the same mock and answers nothing usable, so the
-    // assertion is that it was reached at all.
-    await expect(
-      manager.signInWithPassword("a@example.com", "pw"),
-    ).rejects.toThrow()
-    expect(service.calls.some((u) => u.includes("identitytoolkit"))).toBe(true)
+    await expect(manager.signInWithUsername("nobody", "pw")).rejects.toThrow("SIGN_IN_BAD_CREDENTIALS")
   })
 
-  it("creates an account and redeems its token into the shared Workspace session", async () => {
-    const service = accountService()
+  it("surfaces a rate limit", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false, status: 429, json: async () => ({ code: 429 }) })))
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: () => {}, onChange: () => {} })
+
+    await expect(manager.signInWithUsername("abby", "pw")).rejects.toThrow("SIGN_IN_TOO_MANY_ATTEMPTS")
+  })
+})
+
+describe("AccountManager.signUpWithPassword", () => {
+  function backend(overrides: Record<string, { ok?: boolean; status?: number; body?: unknown }> = {}) {
+    const calls: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      calls.push(url)
+      if (url.includes("/auth/v1/signup")) {
+        const override = overrides["signup"]
+        if (override) return { ok: override.ok ?? false, status: override.status ?? 500, json: async () => override.body ?? {} }
+        return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY }
+      }
+      if (url.includes("/v1/auth/username-available")) {
+        return { ok: true, status: 200, json: async () => ({ code: 200, data: { available: true } }) }
+      }
+      if (url.includes("/v1/auth/claim-username")) {
+        const override = overrides["claim"]
+        if (override) return { ok: override.ok ?? false, status: override.status ?? 500, json: async () => override.body ?? {} }
+        return { ok: true, status: 200, json: async () => ({}) }
+      }
+      return { ok: true, status: 200, json: async () => ({}) }
+    })
+    return { calls, fetch: fetchMock }
+  }
+
+  it("registers with Supabase and claims the username with the fresh session", async () => {
+    const service = backend()
     vi.stubGlobal("fetch", service.fetch)
     const onChange = vi.fn()
     const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange })
 
-    const result = await manager.signUpWithPassword(" A@EXAMPLE.COM ", "NewAccount1!", " A ")
+    const result = await manager.signUpWithPassword(" A@EXAMPLE.COM ", "NewAccount1!", " abby ")
 
-    expect(service.calls).toEqual([
-      `${ACCOUNT_API}/v1/auth/register`,
-      `${ACCOUNT_API}/v1/auth/workspace-handoff`,
-      expect.stringContaining("/v1/auth/session"),
-    ])
-    expect(JSON.parse(service.fetch.mock.calls[0][1].body)).toEqual({ email: "a@example.com", password: "NewAccount1!", display_name: "A" })
-    expect(service.fetch.mock.calls[1][1].headers.Authorization).toBe("Bearer new-account-token")
-    expect(result.email).toBe(SESSION.email)
-    expect(stored?.kind).toBe("workspace")
-    expect(onChange).toHaveBeenCalledWith(result)
+    expect(result.needsEmailConfirmation).toBe(false)
+    expect(result.account?.email).toBe(SUPABASE_SESSION_BODY.user.email)
+    expect(stored?.kind).toBe("supabase")
+    expect(onChange).toHaveBeenCalledWith(result.account)
+    const claimCall = service.calls.find((u) => u.includes("claim-username"))
+    expect(claimCall).toBeDefined()
   })
 
-  it.each([
-    { ok: false, status: 409, body: { message: "Email already exists" } },
-    { ok: true, status: 200, body: { code: 400, message: "Email already registered" } },
-  ])("keeps duplicate registration failures in the account service (%s)", async (response) => {
-    const service = accountService({ "/v1/auth/register": response })
+  it("reports needsEmailConfirmation instead of a session when Supabase requires it", async () => {
+    const service = backend({ signup: { ok: true, status: 200, body: { user: { id: "u1" } } } })
     vi.stubGlobal("fetch", service.fetch)
     const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange: vi.fn() })
-    await expect(manager.signUpWithPassword("a@example.com", "NewAccount1!")).rejects.toThrow("SIGN_UP_EMAIL_EXISTS")
-    expect(service.calls).toHaveLength(1)
+
+    const result = await manager.signUpWithPassword("a@example.com", "NewAccount1!", "abby")
+
+    expect(result.needsEmailConfirmation).toBe(true)
+    expect(result.account).toBeNull()
     expect(stored).toBeNull()
   })
 
-  it("reports an already-created account when opening Workspace fails", async () => {
-    const service = accountService({ "/v1/auth/workspace-handoff": { status: 503 } })
+  it("keeps duplicate registration as a distinct error", async () => {
+    const service = backend({ signup: { ok: false, status: 422, body: { msg: "User already registered" } } })
     vi.stubGlobal("fetch", service.fetch)
     const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange: vi.fn() })
-    await expect(manager.signUpWithPassword("a@example.com", "NewAccount1!")).rejects.toThrow("SIGN_UP_SESSION_FAILED")
-    expect(service.calls).toHaveLength(2)
+
+    await expect(manager.signUpWithPassword("a@example.com", "NewAccount1!", "abby")).rejects.toThrow("SIGN_UP_EMAIL_EXISTS")
     expect(stored).toBeNull()
   })
 
   it.each(["short1A", "lowercaseonly", "Qwerty123"])("rejects a weak registration password before submitting it: %s", async (password) => {
-    const service = accountService()
+    const service = backend()
     vi.stubGlobal("fetch", service.fetch)
     const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange: vi.fn() })
-    await expect(manager.signUpWithPassword("a@example.com", password)).rejects.toThrow("SIGN_UP_WEAK_PASSWORD")
+    await expect(manager.signUpWithPassword("a@example.com", password, "abby")).rejects.toThrow("SIGN_UP_WEAK_PASSWORD")
+    expect(service.calls).toHaveLength(0)
+  })
+
+  it("rejects an invalid email before submitting it", async () => {
+    const service = backend()
+    vi.stubGlobal("fetch", service.fetch)
+    const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange: vi.fn() })
+    await expect(manager.signUpWithPassword("not-an-email", "NewAccount1!", "abby")).rejects.toThrow("SIGN_UP_INVALID_EMAIL")
     expect(service.calls).toHaveLength(0)
   })
 })

@@ -13,8 +13,8 @@ import path from "path"
  * Motivation: driving the launcher on a remote machine over SSH. There the GUI
  * is unreachable (on Windows, processes started from an SSH session have no
  * desktop), so tests need a way to ask the running app what state it is in
- * (bootstrap, pairing, agents, daemon), trigger the few actions a remote test
- * needs (pair a node, show/hide the window), and pull evidence (screenshots,
+ * (bootstrap, agents, daemon), trigger the few actions a remote test
+ * needs, and pull evidence (screenshots,
  * logs) — without a display, a tunnel, or a Playwright install on either end.
  *
  * Auth: a per-start random token written to ~/.openagents/control.token
@@ -31,8 +31,6 @@ export interface ControlDeps {
   getStatus: () => Record<string, unknown>
   /** Agent list from the core, [] until the core has loaded. */
   getAgents: () => unknown[]
-  /** Redeem a node pairing code (agentManager.connectNode). */
-  pair: (code: string) => Promise<unknown>
   /** PNG of the main window, or null when there is no window to capture. */
   screenshot: () => Promise<Buffer | null>
   /** Create/show/hide the main window; returns whether a window now exists. */
@@ -46,12 +44,8 @@ export interface ControlDeps {
   // the renderer reaches over IPC. Each throws while the core is still
   // loading; the server answers 503 for that so a script can just retry.
 
-  /** Core info + supported types + installed types (GET /catalog). */
-  catalog: () => Promise<unknown>
-  /** The fields the Configure dialog would show (GET /agents/env-fields). */
-  envFields: (type: string) => Promise<unknown[]>
-  /** Install an agent type, streaming installer output to `onData` (POST /install). */
-  install: (type: string, onData: (chunk: string) => void) => Promise<unknown>
+  /** Core version info (GET /core). */
+  core: () => Promise<unknown>
   /** Register an agent instance (POST /agents/create). */
   createAgent: (opts: {
     name: string
@@ -64,7 +58,7 @@ export interface ControlDeps {
     type?: string
     env: Record<string, string>
   }) => Promise<unknown>
-  /** Bind an agent to a paired workspace (POST /agents/connect). */
+  /** Bind an agent to a registered workspace (POST /agents/connect). */
   connectWorkspace: (name: string, workspace: string) => Promise<unknown>
   /** Ask the daemon to start one agent (POST /agents/start). */
   startAgent: (name: string) => Promise<unknown>
@@ -168,42 +162,6 @@ function envRecord(v: unknown): Record<string, string> {
   return out
 }
 
-/**
- * An agent install runs for minutes and streams as it goes, so POST /install
- * starts it and returns immediately; GET /install?type= reports how it went.
- * One job per type (installs are per-type and idempotent), kept in memory for
- * the life of the app — a test that loses its connection can poll again.
- */
-interface InstallJob {
-  type: string
-  state: "running" | "done" | "error"
-  startedAt: number
-  endedAt: number | null
-  log: string
-  error: string | null
-}
-
-/** Installer output is unbounded; keep the tail, which is where failures are. */
-const INSTALL_LOG_MAX = 64 * 1024
-
-function appendLog(job: InstallJob, chunk: string): void {
-  job.log = (job.log + chunk).slice(-INSTALL_LOG_MAX)
-}
-
-function jobView(job: InstallJob): Record<string, unknown> {
-  return {
-    type: job.type,
-    state: job.state,
-    startedAt: new Date(job.startedAt).toISOString(),
-    endedAt: job.endedAt ? new Date(job.endedAt).toISOString() : null,
-    durationSeconds: Math.round(
-      ((job.endedAt || Date.now()) - job.startedAt) / 1000,
-    ),
-    error: job.error,
-    log: job.log,
-  }
-}
-
 /** Constant-time comparison — a control token must not be guessable byte-by-byte. */
 function tokenMatches(presented: string, expected: string): boolean {
   const a = Buffer.from(presented)
@@ -221,8 +179,6 @@ export function startControlServer(
   const tokenFile = path.join(tokenDir, "control.token")
   fs.mkdirSync(tokenDir, { recursive: true })
   fs.writeFileSync(tokenFile, token, { mode: 0o600 })
-
-  const installs = new Map<string, InstallJob>()
 
   const server = http.createServer(async (req, res) => {
     let url: URL
@@ -281,14 +237,6 @@ export function startControlServer(
           return res.end(png)
         }
 
-        case "POST /pair": {
-          const body = await readBody(req)
-          const code = typeof body.code === "string" ? body.code.trim() : ""
-          if (!code) return json(res, 400, { error: "missing 'code'" })
-          const result = await deps.pair(code)
-          return json(res, 200, { result })
-        }
-
         case "POST /window": {
           const body = await readBody(req)
           const action = body.action
@@ -301,55 +249,8 @@ export function startControlServer(
           return json(res, 200, { windowOpen })
         }
 
-        case "GET /catalog":
-          return json(res, 200, await deps.catalog())
-
-        case "GET /agents/env-fields": {
-          const type = url.searchParams.get("type") || ""
-          if (!type) return json(res, 400, { error: "missing 'type'" })
-          return json(res, 200, { type, fields: await deps.envFields(type) })
-        }
-
-        case "POST /install": {
-          const body = await readBody(req)
-          const type = str(body.type)
-          if (!type) return json(res, 400, { error: "missing 'type'" })
-          const running = installs.get(type)
-          // Already installing — hand back the job instead of starting a
-          // second installer over the top of the first.
-          if (running && running.state === "running") {
-            return json(res, 202, jobView(running))
-          }
-          const job: InstallJob = {
-            type,
-            state: "running",
-            startedAt: Date.now(),
-            endedAt: null,
-            log: "",
-            error: null,
-          }
-          installs.set(type, job)
-          deps
-            .install(type, (chunk) => appendLog(job, chunk))
-            .then(() => {
-              job.state = "done"
-              job.endedAt = Date.now()
-            })
-            .catch((err: unknown) => {
-              job.state = "error"
-              job.endedAt = Date.now()
-              job.error = (err as Error)?.message || String(err)
-            })
-          return json(res, 202, jobView(job))
-        }
-
-        case "GET /install": {
-          const type = url.searchParams.get("type") || ""
-          if (!type) return json(res, 400, { error: "missing 'type'" })
-          const job = installs.get(type)
-          if (!job) return json(res, 200, { type, state: "idle" })
-          return json(res, 200, jobView(job))
-        }
+        case "GET /core":
+          return json(res, 200, await deps.core())
 
         case "POST /agents/create": {
           const body = await readBody(req)
@@ -455,14 +356,10 @@ export function startControlServer(
               "GET /agents",
               "GET /logs?file=<name>&tail=N",
               "GET /screenshot",
-              "GET /catalog",
-              "GET /agents/env-fields?type=<type>",
-              "GET /install?type=<type>",
+              "GET /core",
               "GET /workspaces",
               "GET /chat/messages?workspace=<id>&channel=<name>&limit=N",
-              "POST /pair {code}",
               "POST /window {action}",
-              "POST /install {type}",
               "POST /agents/create {name, type, path?}",
               "POST /agents/env {name|type, env}",
               "POST /agents/connect {name, workspace}",

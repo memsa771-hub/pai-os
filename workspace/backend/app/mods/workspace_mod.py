@@ -105,7 +105,6 @@ async def _handle_agent_join(event: Event, ctx: PipelineContext) -> Optional[Eve
     server_host = event.payload.get("server_host") if event.payload else None
     working_dir = event.payload.get("working_dir") if event.payload else None
     # Set by the join router when the join authenticated with a node token.
-    node_id = event.payload.get("node_id") if event.payload else None
 
     # Rotate session on every join. Any prior client holding the old
     # session_id (ghost adapter, duplicate daemon) gets rejected when it
@@ -124,8 +123,6 @@ async def _handle_agent_join(event: Event, ctx: PipelineContext) -> Optional[Eve
             existing.server_host = server_host
         if working_dir:
             existing.working_dir = working_dir
-        if node_id:
-            existing.node_id = node_id
         if prior_session and prior_session != new_session_id:
             logger.info(
                 "workspace_mod: rotated session for %s in %s (prior session revoked)",
@@ -164,7 +161,6 @@ async def _handle_agent_join(event: Event, ctx: PipelineContext) -> Optional[Eve
             agent_type=agent_type,
             server_host=server_host,
             working_dir=working_dir,
-            node_id=node_id,
             status="online",
             last_heartbeat=now,
             session_id=new_session_id,

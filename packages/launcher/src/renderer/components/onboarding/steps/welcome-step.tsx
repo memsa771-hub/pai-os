@@ -13,10 +13,9 @@ interface ScanRow {
 }
 
 /**
- * The opening screen of the single pairing-first flow: what happens next
- * (pair this device, drive it from the workspace) plus the local runtime
- * scan. The old two-path mode choice is gone — a local agent is an optional
- * continuation after pairing, not a separate route.
+ * The opening screen of the onboarding wizard: a local runtime scan
+ * (Node/npm/core versions, credential storage, platform) before the optional
+ * continuation into picking, configuring and creating a local agent.
  */
 export function WelcomeStep(): React.JSX.Element {
   const { t } = useTranslation()

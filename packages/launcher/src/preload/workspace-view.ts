@@ -101,15 +101,13 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
 /**
  * What the hosted app can ask of the launcher.
  *
- * A narrow bridge for account actions, local device setup, and appearance.
- * Shared components use it only when present; the web app keeps its own behavior.
+ * A narrow bridge for account actions and appearance. Shared components use it
+ * only when present; the web app keeps its own behavior.
  */
 contextBridge.exposeInMainWorld("__oaHost__", {
   openComputer: () => ipcRenderer.send("workspace-view:open-computer"),
   signIn: () => ipcRenderer.send("workspace-view:sign-in"),
   signOut: () => ipcRenderer.send("workspace-view:sign-out"),
-  connectComputer: (workspaceId: string) => ipcRenderer.invoke("workspace-view:connect-computer", workspaceId),
-  getComputerStatus: (workspaceId: string) => ipcRenderer.invoke("workspace-view:computer-status", workspaceId),
   /** The account's session changed in main (a renewal). Returns an unsubscribe function. */
   onSession: (callback: (session: EmbeddedSession) => void) =>
     subscribe("workspace-view:session", callback),

@@ -205,18 +205,6 @@ def join_network(
         payload["working_dir"] = body.working_dir
     # A join authenticated with a node token is attributable to a device —
     # stamp it so "which machine runs this agent" is a column, not a guess.
-    if body.token:
-        from app.models import Node
-
-        node = db.execute(
-            select(Node).where(
-                Node.token == body.token,
-                Node.workspace_id == workspace.id,
-            )
-        ).scalar_one_or_none()
-        if node is not None:
-            payload["node_id"] = str(node.id)
-
     event = Event(
         type="network.agent.join",
         source=f"openagents:{body.agent_name}",
@@ -315,6 +303,13 @@ def remove_agent(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    from app.services.pai import PAI_AGENT_NAME
+    if body.agent_name.casefold() == PAI_AGENT_NAME:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be removed.",
+        )
 
     event = Event(
         type="network.agent.remove",
@@ -453,6 +448,20 @@ def discover(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    # Lazy, idempotent backfill for existing workspaces: discovery is the
+    # frontend's workspace-entry read, so the canonical PAI conversation is
+    # guaranteed before the session list is returned.
+    from app.services.pai import ensure_primary_conversation, PAI_AGENT_NAME
+    pai_member = db.execute(
+        select(WorkspaceMember).where(
+            WorkspaceMember.workspace_id == workspace.id,
+            WorkspaceMember.agent_name == PAI_AGENT_NAME,
+            WorkspaceMember.status != "removed",
+        )
+    ).scalar_one_or_none()
+    if pai_member and ensure_primary_conversation(db, workspace):
+        db.commit()
+
     now = datetime.now(timezone.utc)
 
     # Hide removed agents — removal is a soft-delete (status='removed') so a
@@ -493,7 +502,7 @@ def discover(
             "role": m.role,
             "status": status,
             "agent_type": m.agent_type,
-            "builtin": (m.agent_type or "") == "cloud:openagents",
+            "builtin": (m.agent_type or "") == "cloud:placement_ai",
             "server_host": m.server_host,
             "working_dir": m.working_dir,
             "description": m.description,
@@ -578,58 +587,3 @@ def network_profile(
         ],
         "agents_online": online_count,
     })
-
-
-# ── Agent catalog (supported client types) ──────────────────────────────
-# Single source of truth: per-agent JSON files under /registry, served by
-# app.services.agent_registry. (The old hand-maintained _AGENT_CATALOG list
-# is gone — edit the registry files instead.)
-
-
-@router.get("/agent-catalog")
-def agent_catalog():
-    """List supported agent client types (summaries, featured first)."""
-    from app.services import agent_registry
-    return success_response(agent_registry.list_agents())
-
-
-@router.get("/agent-catalog/{agent_type}")
-def agent_catalog_detail(agent_type: str):
-    """Full detail for one agent type — logo, per-OS install/uninstall,
-    readiness, and the (resolved) list of supported models."""
-    from app.services import agent_registry
-    entry = agent_registry.get_agent(agent_type)
-    if entry is None:
-        return json_response(ResponseCode.NOT_FOUND, "Unknown agent type")
-    return success_response(entry)
-
-
-@router.get("/agent-catalog/{agent_type}/logo")
-def agent_catalog_logo(agent_type: str):
-    """The agent type's logo as an SVG — served from /registry/icons so the
-    catalog is self-contained (no dependency on the frontend's static assets).
-    Falls back to a generic icon for types without their own artwork."""
-    from fastapi.responses import FileResponse
-
-    from app.services import agent_registry
-    path = agent_registry.logo_path(agent_type)
-    if path is None:
-        return json_response(ResponseCode.NOT_FOUND, "Unknown agent type")
-    return FileResponse(
-        path,
-        media_type="image/svg+xml",
-        headers={"Cache-Control": "public, max-age=86400"},
-    )
-
-
-@router.get("/agent-registry")
-def agent_registry_full():
-    """Full agent registry for the launcher (agn / desktop app).
-
-    Returns every registry entry with all runtime fields (install, adapter,
-    launch, check_ready, env_config, resolve_env) and models resolved — the
-    same shape as the launcher's bundled registry.json, so the launcher can
-    fetch this instead of the legacy endpoint.openagents.org registry.
-    """
-    from app.services import agent_registry
-    return success_response(agent_registry.full_registry())

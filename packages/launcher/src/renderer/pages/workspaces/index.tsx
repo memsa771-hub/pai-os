@@ -1,7 +1,7 @@
 import React, { useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { useTranslation } from "react-i18next"
-import { FilterX, Layers, Plus, SearchX } from "lucide-react"
+import { FilterX, Layers, SearchX } from "lucide-react"
 
 import { PageHeader } from "@renderer/components/layout/page-header"
 import { Button } from "@renderer/components/ui/button"
@@ -13,12 +13,9 @@ import {
 } from "@renderer/components/ui/empty"
 import { EmptyState } from "@renderer/components/ui-kit"
 import { WorkspaceCard } from "@renderer/components/workspaces/WorkspaceCard"
-import { WorkspaceQuickConnect } from "@renderer/components/workspaces/WorkspaceQuickConnect"
 import { WorkspaceRemoveDialog } from "@renderer/components/workspaces/WorkspaceRemoveDialog"
-import { WorkspaceRevokedNotice } from "@renderer/components/workspaces/WorkspaceRevokedNotice"
 import { WorkspaceRenameDialog } from "@renderer/components/workspaces/WorkspaceRenameDialog"
 import { useConnectionsStore } from "@renderer/store/connections"
-import { useUiStore } from "@renderer/store/ui"
 import { useWorkspacePrefs } from "@renderer/store/workspace-prefs"
 import { opensInApp, workspacePageUrl, workspaceUrl } from "@renderer/lib/workspace-urls"
 import { useAccountStore } from "@renderer/store/account"
@@ -46,20 +43,14 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
       markUsed: s.markUsed,
     })),
   )
-  const pendingCreate = useUiStore((s) => s.pendingCreate)
-  const clearPendingCreate = useUiStore((s) => s.clearPendingCreate)
   const [search, setSearch] = useState("")
   const [filter, setFilter] = useState<WorkspaceFilter>("all")
   const [sort, setSort] = useState<WorkspaceSort>("recent")
-  const [quickOpen, setQuickOpen] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
   // The card's own view of the pairing rides along: a workspace that already
   // dropped this device gets a different prompt, and by then the local pairing
   // record is gone, so the workspace object alone can no longer tell us.
-  const [removeTarget, setRemoveTarget] = useState<{
-    ws: Workspace
-    revoked: boolean
-  } | null>(null)
+  const [removeTarget, setRemoveTarget] = useState<Workspace | null>(null)
   const [removing, setRemoving] = useState(false)
   const [renameTarget, setRenameTarget] = useState<Workspace | null>(null)
 
@@ -71,11 +62,8 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
     stats,
     loading,
     reload,
-    notices,
   } = useWorkspacesData(search, filter, sort)
   const activity = useWorkspaceActivity(workspaces)
-
-  const openQuick = (): void => setQuickOpen(true)
 
   const runRefresh = (): void => {
     setRefreshing(true)
@@ -85,15 +73,6 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
   React.useEffect(() => {
     refreshConnections()
   }, [refreshConnections])
-
-  // "Add workspace" from anywhere else — the dashboard, the command palette —
-  // lands here with the dialog requested. Clearing the flag keeps a later tab
-  // click from re-opening it.
-  React.useEffect(() => {
-    if (pendingCreate !== "workspace") return
-    openQuick()
-    clearPendingCreate()
-  }, [pendingCreate, clearPendingCreate])
 
   const copyUrl = async (ws: Workspace): Promise<void> => {
     markUsed(ws.id)
@@ -127,7 +106,7 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
 
   const performRemove = async (deleteRemote: boolean): Promise<void> => {
     if (!removeTarget) return
-    const { ws, revoked } = removeTarget
+    const ws = removeTarget
     // Same display name the confirm dialog shows.
     const name = aliases[ws.id] || ws.name || ws.slug || ws.id
     setRemoving(true)
@@ -151,9 +130,7 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
           t(
             deleteRemote
               ? "workspaces.toast.deleted"
-              : revoked
-                ? "workspaces.toast.cleared"
-                : "workspaces.toast.removed",
+              : "workspaces.toast.removed",
             { name },
           ),
           "success",
@@ -172,15 +149,6 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
       <PageHeader
         title={t("workspaces.title")}
         subtitle={t("workspaces.subtitle")}
-        actions={
-          // Joins, never creates: the dialog takes a pairing code for a
-          // workspace that already exists. A device can hold several at once,
-          // so this stays available however many are listed.
-          <Button data-testid="workspace-join-open" onClick={openQuick}>
-            <Plus />
-            {t("workspaces.join")}
-          </Button>
-        }
       />
 
       {/* No stats row: the toolbar chips already carry each bucket's count, and
@@ -198,13 +166,6 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
           refreshing={refreshing}
         />
 
-        <WorkspaceRevokedNotice
-          notices={notices}
-          onRejoin={openQuick}
-          onDismiss={(id) => {
-            void window.api.dismissNodeRevocation(id).then(() => reload())
-          }}
-        />
 
         {loading ? (
           <Empty>
@@ -224,11 +185,6 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
               icon={<Layers />}
               title={t("workspaces.emptyNoneTitle")}
               description={t("workspaces.emptyNone")}
-              action={{
-                label: t("workspaces.join"),
-                icon: <Plus />,
-                onClick: openQuick,
-              }}
             />
           ) : search.trim() ? (
             <EmptyState
@@ -268,25 +224,12 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
                 onOpen={() => openWorkspace(c.ws)}
                 onOpenInBrowser={() => openInBrowser(c.ws)}
                 onRename={() => setRenameTarget(c.ws)}
-                onRemove={() =>
-                  setRemoveTarget({
-                    ws: c.ws,
-                    revoked: c.health === "revoked",
-                  })
-                }
-                onRepair={openQuick}
+                onRemove={() => setRemoveTarget(c.ws)}
               />
             ))}
           </div>
         )}
       </div>
-
-      <WorkspaceQuickConnect
-        open={quickOpen}
-        onClose={() => setQuickOpen(false)}
-        onCreated={reload}
-        showToast={showToast}
-      />
 
       <WorkspaceRenameDialog
         open={!!renameTarget}
@@ -311,16 +254,15 @@ export default function Workspaces({ showToast }: Props): React.JSX.Element {
       />
 
       <WorkspaceRemoveDialog
-        workspace={removeTarget?.ws ?? null}
+        workspace={removeTarget}
         displayName={
           removeTarget
-            ? aliases[removeTarget.ws.id] ||
-              removeTarget.ws.name ||
-              removeTarget.ws.slug ||
-              removeTarget.ws.id
+            ? aliases[removeTarget.id] ||
+              removeTarget.name ||
+              removeTarget.slug ||
+              removeTarget.id
             : ""
         }
-        revoked={removeTarget?.revoked}
         busy={removing}
         onConfirm={(deleteRemote) => void performRemove(deleteRemote)}
         onCancel={() => setRemoveTarget(null)}

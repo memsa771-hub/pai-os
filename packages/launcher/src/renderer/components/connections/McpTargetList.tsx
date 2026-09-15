@@ -30,6 +30,14 @@ export function McpTargetList({
     )
   }
 
+  if (targets.length === 0) {
+    return (
+      <p className="rounded-sm bg-muted px-3 py-2 text-xs text-muted-foreground">
+        {t("connections.mcp.noTargets")}
+      </p>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       {targets.map((target) => {

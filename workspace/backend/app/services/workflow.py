@@ -51,7 +51,7 @@ def _spawn(fn, *args) -> None:
     POST /v1/events route), so the route's ``invoke_cloud_agents`` /
     ``advance_workflow`` hooks never see them. Daemon agents are unaffected
     (they poll for the step and reply through the route), but cloud/built-in
-    agents like Yumi must be invoked explicitly — and without blocking the
+    agents like PAI Counselor must be invoked explicitly — and without blocking the
     caller (a full tool loop takes seconds; /assign must return immediately).
     """
     import threading
@@ -370,7 +370,7 @@ def _deliver_step(db, workspace, run: WorkflowRun, step: dict, prev_output: str,
         db.flush()
         _emit(db, workspace, run.channel_name, body, metadata={"workflow_step": step["id"]},
               attachments=attachments)
-        # Cloud agents (e.g. Yumi) don't poll — invoke them explicitly.
+        # Cloud agents (e.g. PAI Counselor) don't poll — invoke them explicitly.
         _maybe_invoke_cloud_agent(db, workspace, run.channel_name, body, agent)
     else:
         # Human step — nobody is auto-targeted; notify + park on Need Input.

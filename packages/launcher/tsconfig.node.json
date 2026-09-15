@@ -8,7 +8,7 @@
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
-    "skipLibCheck": true,
+    "skipLibCheck": true, 
     "composite": true,
     // electron-vite (esbuild) produces the actual bundles; tsc is only ever run
     // for type checking. Without this, `tsc -b` emits .js/.d.ts next to every

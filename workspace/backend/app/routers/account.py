@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Account-level endpoints for the signed-in end user (Google or Apple identity).
+Account-level endpoints for the signed-in end user (Supabase or Apple identity).
 
 DELETE /v1/account    Permanently delete the calling user's account data.
 
@@ -74,6 +74,13 @@ def list_account_workspaces(
     user = resolve_current_user(db, authorization)
     if not user:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
+
+    # Workspace access is unavailable until signup's required username claim
+    # has succeeded. The authenticated account remains usable so the client
+    # can ask the user to choose another name after an availability race.
+    if not user.username:
+        db.commit()
+        return json_response(ResponseCode.FORBIDDEN, "Username setup required")
 
     # Migration bridge: pull legacy email-keyed access into memberships.
     reconcile_memberships(db, user)

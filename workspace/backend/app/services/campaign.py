@@ -14,7 +14,7 @@ as they hit onboarding milestones. Confirmed ladder (2026-08-21):
 Farming resistance:
   * every grant comes from a server-observed event, never a client claim
   * unique (user_id, milestone) ledger rows + gateway idempotency keys
-  * cloud agents (any "cloud:*" type, incl. the auto-provisioned Yumi) NEVER
+  * cloud agents (any "cloud:*" type, incl. PAI Counselor) NEVER
     count — for connections or responses; only launcher/CLI agents qualify
   * milestones attribute to the OWNER of the workspace where the event
     happened, so joining someone else's workspace earns them nothing
@@ -57,7 +57,7 @@ MILESTONE_AMOUNTS = {
 # Cloud agents never count for campaign milestones (confirmed 2026-08-23):
 # they run on server-held or provider keys, not the user's own setup — the
 # campaign rewards connecting real launcher/CLI agents. This also covers the
-# auto-provisioned Yumi (cloud:openagents).
+# auto-provisioned PAI Counselor (cloud:placement_ai).
 CLOUD_TYPE_PREFIX = "cloud:"
 
 
@@ -332,7 +332,7 @@ def on_agent_message(workspace_id: str, source: str) -> None:
         uid = _owner_user_id(db, workspace_id)
         if not uid:
             return
-        # The responder must be a user-connected agent (not Yumi).
+        # The responder must be a user-connected agent (not PAI Counselor).
         agent_name = source.split(":", 1)[1]
         member_type = db.execute(
             select(WorkspaceMember.agent_type).where(

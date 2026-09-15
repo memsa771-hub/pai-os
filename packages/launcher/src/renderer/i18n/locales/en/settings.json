@@ -223,7 +223,6 @@
     "types": "Agent types in use",
     "agentCount": "{{count}}",
     "typeCount": "{{count}}",
-    "browseMarketplace": "Agent Marketplace",
     "openAgents": "Open Agents"
   },
   "notifications": {

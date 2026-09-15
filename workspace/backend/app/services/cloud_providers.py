@@ -39,18 +39,10 @@ class ProviderInfo:
 # repo-root /cloud_providers/*.json files (one provider per file) loaded by
 # _load_providers_from_files() below — edit those, not this dict.
 _BUILTIN_PROVIDERS: dict[str, ProviderInfo] = {
-    # ── First-party: OpenAgents built-in assistant (Yumi) ─────────────
-    # Server-held credentials (see config.YUMI_*). Users never enter a key for
+    # ── First-party: OpenAgents built-in assistant (PAI Counselor) ─────────────
+    # Server-held credentials (see config.PAI_*). Users never enter a key for
     # this provider; the invocation path injects it. Points at the OpenAgents
     # inference gateway (OpenAI-compatible, supports tool calling).
-    "openagents": ProviderInfo(
-        name="openagents",
-        label="OpenAgents",
-        base_url="https://api-gateway.openagents.org/v1",
-        models=[
-            ModelInfo("minimax-m2.5", "chat", "Yumi (MiniMax M2.5)"),
-        ],
-    ),
     # ── Tier 1: Major providers ───────────────────────────────────────
     "openai": ProviderInfo(
         name="openai",
@@ -498,7 +490,7 @@ async def chat_completion_tools(
     assistant message as a plain dict — ``{"role": "assistant", "content": str,
     "tool_calls": [...]?}`` — so a caller can run a multi-step tool loop and
     re-append the turn to ``messages``. Used by first-party assistant agents
-    (Yumi). Only OpenAI-compatible providers are supported.
+    (PAI Counselor). Only OpenAI-compatible providers are supported.
     """
     client = _make_client(api_key, provider, base_url_override=base_url)
 

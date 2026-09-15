@@ -27,7 +27,7 @@ import { WORKSPACE_BUNDLE_MISSING } from '../shared/workspace-view'
 const bounds = { x:0, y:40, width:1100, height:760 }
 function makeHost() {
   const win = { webContents:{ on:vi.fn() }, contentView:{ addChildView:vi.fn(), removeChildView:vi.fn() } }
-  return new WorkspaceHost({ getWindow:() => win as never, endpoint:() => undefined, session:() => null, onExternalLogin:vi.fn() })
+  return new WorkspaceHost({ getWindow:() => win as never, endpoint:() => undefined, session:() => null })
 }
 beforeEach(() => {
   vi.clearAllMocks()

@@ -17,7 +17,6 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Brand } from './brand';
 import { NavMain } from './nav-main';
 import { NavAgents } from './nav-agents';
-import { NavSecondary } from './nav-secondary';
 import { NotificationsMenu } from './notifications-menu';
 import { UserMenu } from './user-menu';
 import { useLayout, type ViewMode } from './layout-context';
@@ -88,7 +87,6 @@ export function MobileHeader() {
                         <NavAgents onNavigate={closeSheet} />
                       </ScrollArea>
                       <div className="shrink-0 border-t border-border px-1 pb-[env(safe-area-inset-bottom)]">
-                        <NavSecondary onNavigate={closeSheet} />
                       </div>
                     </div>
                   </SidebarProvider>

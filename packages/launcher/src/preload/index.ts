@@ -13,7 +13,6 @@ contextBridge.exposeInMainWorld('api', {
   runtimeInfo: () => ipcRenderer.invoke('runtime:info'),
 
   listAgents: () => ipcRenderer.invoke('agents:list'),
-  getSupportedAgentTypes: () => ipcRenderer.invoke('agents:supported-types'),
   getAgentCoreInfo: () => ipcRenderer.invoke('agents:core-info'),
   addAgent: (config: unknown) => ipcRenderer.invoke('agents:add', config),
   removeAgent: (name: string, opts?: { fromWorkspace?: boolean }) =>
@@ -32,37 +31,11 @@ contextBridge.exposeInMainWorld('api', {
   tailAgentLogs: (name: string, lines: number, offset: number) => ipcRenderer.invoke('agents:tail-logs', name, lines, offset),
   clearLogsInRange: (start: string, end: string) => ipcRenderer.invoke('agents:clear-logs-range', start, end),
 
-  installAgentType: (type: string) => ipcRenderer.invoke('agents:install-type', type),
-  installAgentTypeStreaming: (type: string) => ipcRenderer.invoke('agents:install-type-streaming', type),
-  onInstallOutput: (callback: (data: string) => void) => ipcRenderer.on('install:output', (_e, data) => callback(data)),
-  removeInstallOutputListener: () => ipcRenderer.removeAllListeners('install:output'),
-  onInstallProgress: (callback: (ev: unknown) => void) => ipcRenderer.on('install:progress', (_e, ev) => callback(ev)),
-  removeInstallProgressListener: () => ipcRenderer.removeAllListeners('install:progress'),
-  uninstallAgentType: (type: string) => ipcRenderer.invoke('agents:uninstall-type', type),
-  uninstallAgentTypeStreaming: (type: string) => ipcRenderer.invoke('agents:uninstall-type-streaming', type),
-  checkAgentType: (type: string) => ipcRenderer.invoke('agents:check-type', type),
-  getCatalog: (force?: boolean) => ipcRenderer.invoke('agents:catalog', !!force),
-  getInstalledAgents: () => ipcRenderer.invoke('agents:installed-list'),
-  checkAgentUpdates: (force?: boolean) =>
-    ipcRenderer.invoke('agents:check-updates', !!force),
-  rollbackAgentType: (type: string) => ipcRenderer.invoke('agents:rollback', type),
-  getAgentChangelog: (type: string) => ipcRenderer.invoke('agents:changelog', type),
-
-  getEnvFields: (type: string) => ipcRenderer.invoke('agents:env-fields', type),
   getAgentEnv: (type: string) => ipcRenderer.invoke('agents:get-env', type),
   saveAgentEnv: (type: string, env: unknown) => ipcRenderer.invoke('agents:save-env', type, env),
   deleteAgentEnv: (type: string) => ipcRenderer.invoke('agents:delete-env', type),
   getAgentInstanceEnv: (name: string) => ipcRenderer.invoke('agents:get-instance-env', name),
   saveAgentInstanceEnv: (name: string, env: unknown) => ipcRenderer.invoke('agents:save-instance-env', name, env),
-  testLLM: (env: unknown) => ipcRenderer.invoke('agents:test-llm', env),
-  listModels: (agentType: string, env: Record<string, string>, path?: 'key' | 'login') =>
-    ipcRenderer.invoke('agents:list-models', agentType, env, path),
-  scanCredentialImports: (agentType: string) =>
-    ipcRenderer.invoke('agents:import-credentials-scan', agentType),
-  parseCredentialImport: (agentType: string, text: string) =>
-    ipcRenderer.invoke('agents:import-credentials-parse', agentType, text),
-  resolveCredentialImport: (agentType: string, id: string) =>
-    ipcRenderer.invoke('agents:import-credentials-resolve', agentType, id),
   signalReload: () => ipcRenderer.invoke('agents:signal-reload'),
 
   connectWorkspace: (agentName: string, slug: string) => ipcRenderer.invoke('workspace:connect', agentName, slug),
@@ -72,17 +45,7 @@ contextBridge.exposeInMainWorld('api', {
   listWorkspaces: () => ipcRenderer.invoke('workspace:list'),
   renameWorkspace: (workspaceId: string, name: string) =>
     ipcRenderer.invoke('workspace:rename', workspaceId, name),
-  getOnboardingAgents: () => ipcRenderer.invoke('onboarding:agents'),
   consumeOnboardingReset: () => ipcRenderer.invoke('onboarding:consume-reset'),
-  provisionFirstAgent: (opts: { agentType: string; agentName: string; path?: string | null }) =>
-    ipcRenderer.invoke('onboarding:provision', opts),
-
-  getNodeStatus: () => ipcRenderer.invoke('node:status'),
-  refreshNodeStatus: (force?: boolean) => ipcRenderer.invoke('node:refresh', !!force),
-  connectNode: (code: string, opts?: { name?: string; deviceType?: string }) =>
-    ipcRenderer.invoke('node:connect', code, opts),
-  dismissNodeRevocation: (workspaceId: string) =>
-    ipcRenderer.invoke('node:dismiss-revocation', workspaceId),
 
   getSetting: (key: string) => ipcRenderer.invoke('settings:get', key),
   setSetting: (key: string, value: unknown) => ipcRenderer.invoke('settings:set', key, value),
@@ -108,27 +71,8 @@ contextBridge.exposeInMainWorld('api', {
   showPath: (p: string) => ipcRenderer.invoke('paths:show', p),
   selectDirectory: (defaultPath?: string) => ipcRenderer.invoke('dialog:select-directory', defaultPath),
 
-  healthCheck: (type: string) => ipcRenderer.invoke('agents:health-check', type),
-  refreshLogin: (type: string) => ipcRenderer.invoke('agents:login-refresh', type),
-  clearLoginKey: (type: string, agentName?: string) =>
-    ipcRenderer.invoke('agents:login-clear-key', type, agentName),
-
   openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
   installXcodeCommandLineTools: () => ipcRenderer.invoke('system:install-xcode-clt'),
-  openTerminal: (cmd: string) => ipcRenderer.invoke('shell:open-terminal', cmd),
-
-  // ── In-app CLI sign-in ──
-  startCliLogin: (type: string, opts?: { terminal?: boolean }) =>
-    ipcRenderer.invoke('cli-login:start', type, opts),
-  submitCliLoginCode: (type: string, code: string) =>
-    ipcRenderer.invoke('cli-login:submit-code', type, code),
-  cancelCliLogin: (type: string) => ipcRenderer.invoke('cli-login:cancel', type),
-  onCliLoginEvent: (cb: (ev: unknown) => void) => {
-    const handler = (_e: unknown, ev: unknown): void => cb(ev)
-    ipcRenderer.on('cli-login:event', handler)
-    return () => ipcRenderer.removeListener('cli-login:event', handler)
-  },
-  openAgentTerminal: (agentName: string) => ipcRenderer.invoke('shell:open-agent-terminal', agentName),
   updateCore: () => ipcRenderer.invoke('core:update'),
 
   // ── Launcher self-update ──
@@ -156,13 +100,6 @@ contextBridge.exposeInMainWorld('api', {
 
   onCoreUpdate: (cb: (info: { current: string; latest: string }) => void) =>
     ipcRenderer.on('core-update-available', (_e, info) => cb(info)),
-  onAgentUpdatesChanged: (cb: (updates: Array<{ name: string; current: string | null; latest: string | null }>) => void) =>
-    ipcRenderer.on('agent-updates-changed', (_e, updates) => cb(updates)),
-  onNavigateToInstall: (cb: (agentName: string) => void) =>
-    ipcRenderer.on('navigate-to-install', (_e, name) => cb(name)),
-
-  getIconPath: (name: string) => ipcRenderer.invoke('icons:get-path', name),
-  getIconsDir: () => ipcRenderer.invoke('icons:get-dir'),
 
   debugEnv: () => ipcRenderer.invoke('debug:env'),
 
@@ -275,11 +212,13 @@ contextBridge.exposeInMainWorld('api', {
   // Signing in gates workspaces only; everything under My Agents works without
   // ever touching these.
   getAccount: () => ipcRenderer.invoke('account:get'),
-  signIn: () => ipcRenderer.invoke('account:sign-in'),
+  signIn: (provider: 'google' | 'github') => ipcRenderer.invoke('account:sign-in', provider),
   signInWithPassword: (email: string, password: string) =>
     ipcRenderer.invoke('account:sign-in-password', email, password),
-  signUpWithPassword: (email: string, password: string, displayName?: string) =>
-    ipcRenderer.invoke('account:sign-up-password', email, password, displayName),
+  signInWithUsername: (username: string, password: string) =>
+    ipcRenderer.invoke('account:sign-in-username', username, password),
+  signUpWithPassword: (email: string, password: string, username: string) =>
+    ipcRenderer.invoke('account:sign-up-password', email, password, username),
   cancelSignIn: () => ipcRenderer.invoke('account:cancel-sign-in'),
   signOut: () => ipcRenderer.invoke('account:sign-out'),
   listAccountWorkspaces: () => ipcRenderer.invoke('account:workspaces'),

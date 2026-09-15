@@ -142,52 +142,6 @@ class WorkspaceClient {
   }
 
   /**
-   * Redeem a node pairing code via POST /v1/nodes/redeem. The code is the
-   * credential (no auth header). Returns { nodeId, workspaceId, workspaceSlug,
-   * workspaceName, token } — the token is the workspace's machine credential.
-   */
-  async redeemPairingCode(code, deviceInfo = {}) {
-    const body = { code, node_key: deviceInfo.nodeKey };
-    if (deviceInfo.name) body.name = deviceInfo.name;
-    if (deviceInfo.hostname) body.hostname = deviceInfo.hostname;
-    if (deviceInfo.deviceType) body.device_type = deviceInfo.deviceType;
-    if (deviceInfo.os) body.os = deviceInfo.os;
-    if (deviceInfo.launcherVersion) body.launcher_version = deviceInfo.launcherVersion;
-    const data = await this._post('/v1/nodes/redeem', body);
-    return data.data || data;
-  }
-
-  /**
-   * Node liveness via POST /v1/nodes/heartbeat (authenticated by the workspace
-   * token). Independent of any agent heartbeat.
-   */
-  async nodeHeartbeat(nodeId, token, deviceInfo = {}) {
-    const body = { node_id: nodeId };
-    if (deviceInfo.hostname) body.hostname = deviceInfo.hostname;
-    if (deviceInfo.deviceType) body.device_type = deviceInfo.deviceType;
-    if (deviceInfo.os) body.os = deviceInfo.os;
-    if (deviceInfo.launcherVersion) body.launcher_version = deviceInfo.launcherVersion;
-    if (Array.isArray(deviceInfo.agents)) body.agents = deviceInfo.agents;
-    if (Array.isArray(deviceInfo.runtimes)) body.runtimes = deviceInfo.runtimes;
-    if (deviceInfo.fs && typeof deviceInfo.fs === 'object') body.fs = deviceInfo.fs;
-    const data = await this._post('/v1/nodes/heartbeat', body, this._wsHeaders(token));
-    return data.data || data;
-  }
-
-  /**
-   * Report the outcome of a remote node command via
-   * POST /v1/nodes/commands/{id}/result (authenticated by the workspace token).
-   */
-  async nodeCommandResult(commandId, token, { ok, message, data } = {}) {
-    const resp = await this._post(
-      `/v1/nodes/commands/${commandId}/result`,
-      { ok: !!ok, message: message || null, data: data ?? null },
-      this._wsHeaders(token),
-    );
-    return resp.data || resp;
-  }
-
-  /**
    * Send heartbeat via POST /v1/heartbeat.
    *
    * @param {string} [sessionId] - optional session id returned by /v1/join.
@@ -1045,7 +999,6 @@ class WorkspaceClient {
                 if (parsed.data && typeof parsed.data === 'object') err.data = parsed.data;
                 // The HTTP status lets callers tell a definitive rejection
                 // (e.g. 404 "not found") from a transient one (5xx/timeout);
-                // the node heartbeat uses it to clear a removed pairing.
                 err.status = res.statusCode;
                 reject(err);
               }

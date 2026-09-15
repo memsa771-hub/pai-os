@@ -6,7 +6,6 @@ import {
   Play,
   SlidersHorizontal,
   Square,
-  Terminal,
 } from "lucide-react"
 import { useTranslation } from "react-i18next"
 
@@ -54,7 +53,6 @@ interface Props {
   loading: boolean
   pending: Set<string>
   onToggle: (agent: Agent) => void
-  onOpenTerminal: (agent: Agent) => void
   onConnect: (agent: Agent) => void
   onManage: (agent: Agent) => void
   onViewAll: () => void
@@ -73,7 +71,6 @@ export function AgentsCard({
   loading,
   pending,
   onToggle,
-  onOpenTerminal,
   onConnect,
   onManage,
   onViewAll,
@@ -137,7 +134,6 @@ export function AgentsCard({
                   lastActiveAt={lastActive[agent.name]}
                   busy={pending.has(agent.name)}
                   onToggle={() => onToggle(agent)}
-                  onOpenTerminal={() => onOpenTerminal(agent)}
                   onConnect={() => onConnect(agent)}
                   onManage={() => onManage(agent)}
                 />
@@ -155,7 +151,6 @@ interface RowProps {
   lastActiveAt?: string
   busy: boolean
   onToggle: () => void
-  onOpenTerminal: () => void
   onConnect: () => void
   onManage: () => void
 }
@@ -165,7 +160,6 @@ function AgentTableRow({
   lastActiveAt,
   busy,
   onToggle,
-  onOpenTerminal,
   onConnect,
   onManage,
 }: RowProps): React.JSX.Element {
@@ -240,11 +234,6 @@ function AgentTableRow({
               <Play />
               {t("dashboard.agents.start")}
             </Button>
-          ) : agent.hasCli ? (
-            <Button size="sm" variant="outline" onClick={onOpenTerminal}>
-              <Terminal />
-              {t("dashboard.agents.openTerminal")}
-            </Button>
           ) : (
             // Stop is a destructive entry point, and the app dresses every one
             // of those the same way: colour, no frame.
@@ -270,16 +259,6 @@ function AgentTableRow({
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {!notConnected && running && agent.hasCli && (
-                <DropdownMenuItem
-                  variant="destructive"
-                  disabled={busy}
-                  onClick={onToggle}
-                >
-                  <Square />
-                  {t("dashboard.agents.stop")}
-                </DropdownMenuItem>
-              )}
               <DropdownMenuItem onClick={onManage}>
                 <SlidersHorizontal />
                 {t("dashboard.agents.manage")}

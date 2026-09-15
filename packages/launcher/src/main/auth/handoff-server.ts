@@ -9,16 +9,19 @@ import type { AddressInfo } from "net"
  * runs in the user's own browser and hands its result back here:
  *
  *   1. this server binds 127.0.0.1 on a random port and invents a `state`
- *   2. the browser opens openagents.org/login with a returnTo that carries
- *      `desktop=<port>.<state>` through to workspace.openagents.org/auth/callback
- *   3. that page exchanges the one-time custom token for a session and POSTs it
- *      to http://127.0.0.1:<port>/desktop-auth
- *   4. the state is checked, the promise resolves, the server closes
+ *   2. account.ts opens the system browser directly at Supabase's authorize
+ *      URL, with redirect_to = workspace.openagents.org/auth/desktop?port=<port>&state=<state>
+ *   3. that page POSTs the `code` Supabase redirected back with to
+ *      http://127.0.0.1:<port>/desktop-auth, unexchanged
+ *   4. the state is checked, the promise resolves with that code, the server
+ *      closes, and account.ts exchanges it for a session itself (it holds the
+ *      matching PKCE code verifier — that page never sees it)
  *
  * The window is deliberately small: a random port, a single-use state, one
- * accepted request, and a hard timeout. The token does cross a cleartext local
+ * accepted request, and a hard timeout. The code does cross a cleartext local
  * socket — unavoidable for a loopback handoff — so nothing here outlives the
- * one exchange it exists for.
+ * one exchange it exists for, and a bare authorization code is useless
+ * without the verifier this process alone holds.
  */
 
 /** How long a sign-in may stay open before the port is given back. */
@@ -29,19 +32,9 @@ const MAX_BODY_BYTES = 16 * 1024
 
 /** What the callback page hands back. */
 export interface HandoffResult {
-  /** A workspace session JWT — the path we ask for. */
-  session?: {
-    token: string
-    email: string
-    displayName?: string | null
-    expiresAt: number
-  }
-  /**
-   * The raw openagents.org custom token, forwarded unconsumed when the backend
-   * could not mint a session (no WORKSPACE_SESSION_SECRET configured). The
-   * caller redeems it against Firebase instead.
-   */
-  customToken?: string
+  /** The raw Supabase PKCE authorization code, unexchanged — account.ts holds
+   * the matching code verifier and performs the exchange itself. */
+  code?: string
   /** Present when the browser side failed and wants to say why. */
   error?: string
 }
@@ -107,8 +100,7 @@ export async function startHandoffServer(
         }
         respondOk(req, res)
         settle?.({
-          session: payload.session,
-          customToken: payload.customToken,
+          code: payload.code,
           error: payload.error,
         })
         // One handoff per server: close as soon as the reply is on the wire.
@@ -204,10 +196,7 @@ interface Payload extends HandoffResult {
 function parsePayload(url: string, body: string): Payload | null {
   if (body) {
     try {
-      const raw = JSON.parse(body) as Payload & { ct?: string }
-      // `ct` on the wire, `customToken` in here: the browser side names it the
-      // way the login URL does, this side names it what it is.
-      return { ...raw, customToken: raw.ct ?? raw.customToken }
+      return JSON.parse(body) as Payload
     } catch {
       return null
     }
@@ -215,20 +204,9 @@ function parsePayload(url: string, body: string): Payload | null {
   const query = new URL(url, "http://127.0.0.1").searchParams
   const state = query.get("state")
   if (!state) return null
-  const token = query.get("session_token")
   return {
     state,
-    ...(token
-      ? {
-          session: {
-            token,
-            email: query.get("email") || "",
-            displayName: query.get("display_name"),
-            expiresAt: Number(query.get("expires_at")) || 0,
-          },
-        }
-      : {}),
-    ...(query.get("ct") ? { customToken: query.get("ct")! } : {}),
+    ...(query.get("code") ? { code: query.get("code")! } : {}),
     ...(query.get("error") ? { error: query.get("error")! } : {}),
   }
 }

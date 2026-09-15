@@ -3,7 +3,6 @@ import {
   LayoutDashboard,
   Layers,
   Settings,
-  Store,
   type LucideIcon,
 } from "lucide-react"
 
@@ -21,12 +20,11 @@ export interface NavItem {
  *
  * No Agents entry: This Computer (`dashboard`) already lists this computer's
  * agents and is where they are created, configured, started and stopped.
+ * No Install entry either — Placement AI does not manage a catalog of
+ * third-party coding-CLI tools to install.
  */
 export const NAV_ITEMS: NavItem[] = [
   { id: "dashboard", icon: LayoutDashboard, section: "overview" },
-  // Installs and updates agents — not OpenAgents itself, whose updates live in
-  // Settings → Updates. Carries the agent update count.
-  { id: "install", icon: Store, section: "manage" },
   { id: "workspaces", icon: Layers, section: "manage" },
   // `connections` is hidden for now — none of the platform options work yet.
   // The page itself still exists; put the row back here once they do.
@@ -43,7 +41,6 @@ export const NAV_SECTIONS: NavSection[] = ["overview", "manage", "system"]
  */
 export const SHORTCUT_TABS = [
   "dashboard",
-  "install",
   "workspaces",
   "logs",
   "settings",

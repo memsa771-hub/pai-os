@@ -12,16 +12,15 @@ import { useWorkspace } from '@/lib/workspace-context';
  */
 export function NewThreadDialogHost() {
   const { newThreadOpen, setNewThreadOpen, setViewMode, isMobile, openMobileDetail } = useLayout();
-  const { agents, sessions, createSession } = useWorkspace();
+  const { agents, createSession } = useWorkspace();
 
   return (
     <NewThreadDialog
       open={newThreadOpen}
       onOpenChange={setNewThreadOpen}
       agents={agents}
-      sessions={sessions}
-      onCreateThread={({ participants, resumeFrom }) => {
-        createSession({ participants, resumeFrom });
+      onCreateThread={({ participants }) => {
+        createSession({ participants });
         setViewMode('threads');
         // On mobile, jump to the detail pane so the new thread is visible.
         if (isMobile) openMobileDetail();

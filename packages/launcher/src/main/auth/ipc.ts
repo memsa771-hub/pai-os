@@ -11,7 +11,6 @@ import { openExternalSafely } from "../web-security"
 import { WorkspaceHost, type ViewBounds } from "../workspace-host"
 import { AccountManager, type AccountWorkspace } from "./account"
 import type { AccountInfo } from "./session-store"
-import type { NodeStatus } from "../agent-manager"
 
 /**
  * The account's IPC surface, kept out of index.ts.
@@ -31,13 +30,6 @@ export interface AccountIpcDeps {
   endpoint: () => string | undefined
   /** The window to notify when the account changes; null before it exists. */
   getWindow: () => BrowserWindow | null
-  /**
-   * Redeem a pairing code (agentManager.connectNode). Injected because the
-   * account has no business knowing about the agent core, and because the core
-   * may still be loading when the renderer asks.
-   */
-  connectNode: (code: string) => Promise<NodeStatus & { warning: string | null }>
-  nodeStatus: () => Promise<NodeStatus>
 }
 
 const NOTICE_TYPES = new Set(["info", "success", "error", "warning"])
@@ -69,35 +61,27 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
     getWindow: deps.getWindow,
     endpoint: deps.endpoint,
     session: () => account.embeddedSession(),
-    // Google and GitHub cannot finish in the app, so their sign-in runs in the
-    // browser and comes back over loopback — the same flow the launcher used
-    // before any of this was embedded.
-    onExternalLogin: () => {
-      // The page in the view does not change, so without this the window looks
-      // as if the click did nothing while the browser opens behind it.
-      deps.getWindow()?.webContents.send("account:sign-in-external")
-      void account.signIn().catch((err) => {
-        deps.getWindow()?.webContents.send("account:sign-in-failed", {
-          message: (err as Error).message,
-        })
-      })
-    },
   })
 
   workspaceHost = host
 
   ipcMain.handle("account:get", () => account.getAccount())
-  ipcMain.handle("account:sign-in", () => account.signIn())
+  ipcMain.handle("account:sign-in", (_e, provider: "google" | "github") => account.signIn(provider))
   ipcMain.handle(
     "account:sign-in-password",
     (_e, email: string, password: string) =>
       account.signInWithPassword(String(email || ""), String(password || "")),
   )
+  ipcMain.handle(
+    "account:sign-in-username",
+    (_e, username: string, password: string) =>
+      account.signInWithUsername(String(username || ""), String(password || "")),
+  )
   ipcMain.handle("account:cancel-sign-in", () => account.cancelSignIn())
   ipcMain.handle(
     "account:sign-up-password",
-    (_e, email: string, password: string, displayName?: string) =>
-      account.signUpWithPassword(String(email || ""), String(password || ""), String(displayName || "")),
+    (_e, email: string, password: string, username: string) =>
+      account.signUpWithPassword(String(email || ""), String(password || ""), String(username || "")),
   )
   ipcMain.handle("account:sign-out", async () => {
     // onChange tears the page down; resolve once its storage is gone too.
@@ -160,41 +144,6 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
   ipcMain.on("workspace-view:open-computer", (event) => {
     if (host.isWorkspaceSender(event.sender)) deps.getWindow()?.webContents.send("workspace:open-computer")
   })
-  const validateComputerRequest = (event: { sender: Electron.WebContents }, workspaceId: unknown): string => {
-    if (!host.isWorkspaceSender(event.sender) || typeof workspaceId !== "string" || !workspaceId || workspaceId.length > 200) {
-      throw new Error("Invalid workspace connection request")
-    }
-    return workspaceId
-  }
-  // Return only this workspace's device id and basic display information.
-  // Credentials and the computer's other workspace registrations stay in main.
-  const computerInfo = (status: NodeStatus, workspaceId: string, warning = false) => ({
-    hostname: status.hostname,
-    deviceType: status.deviceType,
-    nodeId: status.workspaces.find((entry) => entry.workspaceId === workspaceId)?.nodeId ?? null,
-    warning,
-  })
-  ipcMain.handle("workspace-view:computer-status", async (event, workspaceId: unknown) => {
-    const id = validateComputerRequest(event, workspaceId)
-    return computerInfo(await deps.nodeStatus(), id)
-  })
-  const connections = new Map<string, Promise<ReturnType<typeof computerInfo>>>()
-  ipcMain.handle("workspace-view:connect-computer", async (event, workspaceId: unknown) => {
-    const id = validateComputerRequest(event, workspaceId)
-    const pending = connections.get(id)
-    if (pending) return pending
-    const connecting = (async () => {
-      const current = computerInfo(await deps.nodeStatus(), id)
-      if (current.nodeId) return current
-      const code = await account.createPairingCode(id)
-      const result = await deps.connectNode(code)
-      return computerInfo(result, id, !!result.warning)
-    })()
-    connections.set(id, connecting)
-    try { return await connecting }
-    finally { connections.delete(id) }
-  })
-  // Synchronous by necessity — see the preload.
   ipcMain.on("workspace-view:config", (event) => {
     const { theme, language } = deps.appearance()
     event.returnValue = {

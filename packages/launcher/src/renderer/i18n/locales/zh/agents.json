@@ -13,14 +13,10 @@
     },
     "emptyNoMatch": "没有名称匹配「{{query}}」的智能体。",
     "empty": "选择要在此电脑上使用的智能体。我们会复用已安装的软件，您也可以在准备好后将智能体连接到工作区。",
-    "coreUpdateRequired": "需要更新智能体核心",
-    "apiPrefix": "API：{{value}}",
-    "modelPrefix": "模型：{{value}}",
     "stopping": "正在停止…",
     "starting": "正在启动…",
     "stop": "停止",
     "start": "启动",
-    "chat": "终端",
     "configure": "配置",
     "disconnect": "退出工作区",
     "openWorkspace": "打开工作区",
@@ -30,14 +26,6 @@
     "removeTitle": "移除 {{name}}？",
     "removeBody": "这将停止并移除 <1>{{name}}</1>。",
     "alsoRemovedFromWorkspace": "其在 {{workspace}} 中的成员身份也会一并移除 —— 否则它会以 $t(common.appName) 再也无法触及的成员身份留在那里。",
-    "health": {
-      "notConfigured": "未配置",
-      "notInstalled": "未安装",
-      "loginRequired": "需要登录",
-      "ready": "就绪",
-      "apiKey": "API 密钥",
-      "cliLogin": "账号登录"
-    },
     "toast": {
       "stoppingAgent": "正在停止 {{name}}…",
       "stoppedAgent": "{{name}} 已停止",
@@ -80,7 +68,6 @@
     "columns": {
       "agent": "智能体",
       "provider": "类型 / 模型",
-      "auth": "认证方式",
       "workspace": "工作区",
       "status": "状态",
       "lastActive": "最近活跃",
@@ -93,7 +80,6 @@
     "prevPage": "上一页",
     "nextPage": "下一页",
     "addHint": "快速接入新的智能体实例",
-    "readiness": "配置状态",
     "emptyNoFilterMatch": "你的智能体当前都不处于这个状态。",
     "workspaceLine": "工作区 · {{name}}",
     "emptyTitle": "还没有智能体",
@@ -104,11 +90,7 @@
   },
   "newDialog": {
     "title": "新建智能体",
-    "loadingTypes": "正在加载已安装的类型…",
-    "noRuntimes": "尚未安装支持的智能体运行时。请先安装一个。",
-    "goToInstall": "前往安装",
     "cancel": "取消",
-    "agentType": "智能体类型",
     "agentName": "智能体名称",
     "workingDirectory": "工作目录",
     "workingDirectoryPlaceholder": "/path/to/project",
@@ -135,58 +117,7 @@
         "error": "更新目录失败：{{message}}",
         "required": "请选择一个工作目录"
       }
-    },
-    "hintLoginOnly": "该智能体通过其自有服务登录 — 无需 API 密钥。点击登录会打开一个终端并运行",
-    "hintLoginOnlySuffix": "，请在其中完成登录。",
-    "hintInstance": "已为该智能体保存设置。类型默认值仍可作为后备。",
-    "hintType": "设置已保存至 ~/.openagents/env/",
-    "hintNoConfig": "该智能体类型无需任何配置。",
-    "authReadyPrefix": "已就绪 —",
-    "authReadyGeneric": "已完成认证",
-    "authNotReadyGeneric": "该智能体在使用前需要完成认证。",
-    "loadingConfig": "正在加载配置…",
-    "awaitingTerminalPrefix": "已打开终端并运行",
-    "awaitingTerminalSuffix": "。在其中完成登录后，请告知我们，我们将进行验证。",
-    "orUseApiKey": "或使用 API 密钥",
-    "close": "关闭",
-    "finishedSigningIn": "我已完成登录",
-    "notYet": "尚未完成",
-    "reLogin": "重新登录",
-    "login": "登录",
-    "save": "保存",
-    "testing": "正在测试…",
-    "testConnection": "测试连接",
-    "cancel": "取消",
-    "fieldRequired": "{{field}} 为必填项",
-    "toast": {
-      "signedInReady": "已登录 — 智能体已就绪",
-      "couldntConfirm": "无法确认登录状态。如果你已完成登录，请重试。",
-      "couldntReadStatus": "无法读取登录状态，请重试。",
-      "configurationSaved": "配置已保存",
-      "errorSaving": "保存出错：{{message}}"
-    },
-    "test": {
-      "okResult": "成功 — 模型：{{model}}，响应：\"{{response}}\"",
-      "unknownError": "未知错误"
-    },
-    "modelWithLogin": "可留空，留空时使用命令行工具自带的默认模型。",
-    "modelRequiredWithLogin": "必填，此智能体必须指定模型才能运行。"
-  },
-  "loginStatus": {
-    "checking": "正在检查登录状态…",
-    "signedIn": "已登录",
-    "notSignedIn": "未登录",
-    "installFirst": "未安装 —— 请先安装",
-    "signInWithCli": "用账号登录",
-    "opensTerminalPrefix": "直接在这里登录，运行的是",
-    "opensTerminalSuffix": "，无需 API 密钥。",
-    "finishThenConfirm": "在终端中完成登录，然后在下方确认。",
-    "finishedSigningIn": "我已完成登录",
-    "notYet": "尚未完成",
-    "reLogin": "重新登录",
-    "signIn": "登录",
-    "opensTerminalTerminalPrefix": "这个智能体的登录必须在终端里进行。点「登录」会打开终端并运行",
-    "opensTerminalTerminalSuffix": "，授权同样在浏览器里完成。"
+    }
   },
   "connectDialog": {
     "title": "把 '{{name}}' 加入工作区",
@@ -200,189 +131,18 @@
       "error": "错误：{{message}}"
     },
     "emptyTitle": "这台设备还没有加入任何工作区",
-    "emptyBody": "先在「本机工作区」页用配对码加入一个工作区，再回到这里选择。本设备可以同时加入多个工作区。",
-    "goToWorkspaces": "去加入工作区"
-  },
-  "detail": {
-    "back": "返回智能体市场",
-    "uninstallTitle": "卸载 {{name}}？",
-    "uninstallBody": "这将从你的系统中移除 <1>{{name}}</1>。该类型已配置的智能体可能会停止工作。",
-    "alsoRemoveEnv": "同时删除已保存的环境变量",
-    "alsoRemoveEnvHint": "（API 密钥、模型选择 — 默认保留，重新安装时会在设置向导中再次出现）",
-    "uninstall": "卸载",
-    "cancel": "取消",
-    "toast": {
-      "installSuccess": "{{name}} {{action}}",
-      "installed": "已安装",
-      "updated": "已更新",
-      "installFailed": "{{verb}} 失败：{{message}}",
-      "uninstalled": "{{name}} 已卸载",
-      "uninstallFailed": "卸载失败：{{message}}",
-      "noPreviousVersion": "未记录任何历史版本",
-      "rolledBack": "已回滚到 v{{version}}",
-      "rollbackFailed": "回滚失败：{{message}}",
-      "rollbackFailedBare": "回滚失败",
-      "logCopied": "日志已复制到剪贴板",
-      "logCopyFailed": "复制日志失败",
-      "uninstalledButGlobal": "已删除由 $t(common.appName) 管理的那份 {{name}}，但系统 PATH 上还有另一份安装",
-      "configNotRemoved": "配置未能删除，请手动检查 ~/.openagents/env/"
-    }
-  },
-  "header": {
-    "noDescription": "暂无可用描述",
-    "externalInstall": "外部安装",
-    "github": "GitHub",
-    "docs": "文档",
-    "currentVersion": "当前 v{{version}}",
-    "latestVersion": "最新 v{{version}}"
-  },
-  "actions": {
-    "uninstalling": "正在卸载…",
-    "rollingBack": "正在回滚…",
-    "updating": "正在更新…",
-    "installing": "正在安装…",
-    "install": "安装",
-    "updateToVersion": "更新到 v{{version}}",
-    "reinstall": "重新安装",
-    "setupWizard": "设置向导",
-    "rollBack": "回滚",
-    "uninstall": "卸载"
-  },
-  "readme": {
-    "overview": "概览",
-    "noDescription": "该智能体暂无可用描述。"
-  },
-  "screenshots": {
-    "openFullSize": "查看原图",
-    "altScreenshot": "{{prefix}} 截图 {{index}}",
-    "watchDemo": "▶ 观看演示视频 ↗"
-  },
-  "requirements": {
-    "title": "系统要求",
-    "platforms": "平台",
-    "runtime": "运行时",
-    "installMode": "安装模式",
-    "apiOnly": "仅 API — 无需二进制文件",
-    "binary": "二进制文件",
-    "updatedAt": "更新日期"
-  },
-  "dependencies": {
-    "title": "依赖安装"
-  },
-  "envConfig": {
-    "title": "配置",
-    "fieldRequired": "{{field}} 为必填项",
-    "saving": "正在保存…",
-    "save": "保存",
-    "testing": "正在测试…",
-    "testConnection": "测试连接",
-    "toast": {
-      "configurationSaved": "配置已保存",
-      "error": "错误：{{message}}",
-      "okResponded": "成功 — {{model}} 已响应",
-      "modelFallback": "模型",
-      "testFailed": "测试失败"
-    }
-  },
-  "quickStart": {
-    "title": "快速开始",
-    "launch": "启动 {{name}}",
-    "signInConfigure": "登录 / 配置",
-    "copyCommand": "复制命令",
-    "toast": {
-      "copyFailed": "复制失败"
-    }
-  },
-  "changelog": {
-    "title": "版本",
-    "loading": "加载中…",
-    "viewOnNpm": "在 npm 上查看",
-    "installed": "已安装",
-    "released": "发布于 {{date}}",
-    "releaseNotesGithub": "在 GitHub 上查看发布说明",
-    "recent": "最近 {{count}} 个",
-    "notFromNpm": "该智能体由厂商安装脚本分发，不在 npm 上，因此没有可查询的版本列表。重新运行安装即可获取最新版本。"
-  },
-  "installConfirm": {
-    "install": "安装",
-    "update": "更新",
-    "confirmTitle": "{{verb}} {{name}}？",
-    "willRunCommand": "这将在你的系统上运行以下命令：",
-    "willInstall": "这将在你的系统上{{verb}} <1>{{name}}</1>。",
-    "cancel": "取消"
-  },
-  "envFields": {
-    "enterField": "请输入 {{name}}",
-    "model": {
-      "placeholder": "默认模型",
-      "browse": "选择模型",
-      "search": "搜索模型…",
-      "loading": "正在获取模型…",
-      "empty": "没有可显示的模型。",
-      "noMatch": "没有匹配的模型。",
-      "refresh": "刷新",
-      "freeform": "也可直接填写服务商支持的任意模型 id",
-      "source": {
-        "cli": "来自你已登录的账号",
-        "api": "来自当前接口地址",
-        "builtin": "内置列表，可能已过时",
-        "none": "暂无可用列表"
-      },
-      "sourceByAgent": {
-        "opencode": {
-          "cli": "OpenCode 当前可用的模型，未登录时为 OpenCode Zen 免费模型"
-        }
-      },
-      "need_key": "先在上方填写 API Key，即可加载该接口地址提供的模型。",
-      "need_login": "先在上方登录，即可加载你的账号可用的模型。",
-      "no_list": "这种登录方式不提供模型列表，请直接填写模型 id。"
-    },
-    "advanced": "高级选项"
-  },
-  "unmanaged": {
-    "title": "安装在 $t(common.appName) 管理范围之外",
-    "body": "这份安装位于系统 PATH 上，不在 ~/.openagents/ 下，所以 $t(common.appName) 可以更新它，但不会删除它。这也是这里没有「卸载」按钮的原因。",
-    "removeManually": "要自行删除，请执行："
-  },
-  "cliLogin": {
-    "browserHint": "浏览器标签页应该已经打开了。如果没有，用下面的链接。",
-    "browserTitle": "在浏览器里完成登录",
-    "cancel": "取消",
-    "codeHint": "页面上会显示一段验证码，粘贴到这里完成登录。",
-    "codePlaceholder": "粘贴浏览器里的验证码",
-    "copied": "已复制",
-    "copyLink": "复制链接",
-    "failed": "登录没有完成。",
-    "openBrowser": "打开登录页面",
-    "starting": "正在启动登录…",
-    "submitCode": "提交",
-    "terminalFallback": "这个 CLI 需要真正的终端，已经为你打开了一个。按里面的提示操作，登录成功后这里会自动更新。",
-    "tryAgain": "重试",
-    "useTerminal": "用终端登录",
-    "verifying": "正在确认登录…"
+    "emptyBody": "在命令行用 `agn connect` 接入一个工作区，再回到这里选择。本设备可以同时加入多个工作区。",
+    "goToWorkspaces": "前往工作区"
   },
   "shared": {
     "thisComputer": "此电脑",
-    "runsHere": "运行设备：此电脑",
-    "localOnly": "本地使用",
-    "apiKey": "API 密钥",
-    "testing": "测试中…",
-    "testConnection": "测试连接",
-    "connectionWorks": "连接成功。",
-    "connectionFailed": "无法验证连接。",
-    "statusUnavailable": "暂时无法获取设备状态，正在重试…",
-    "loading": "正在读取设备状态…",
     "connectedCount_other": "已连接 {{count}} 个工作区",
     "localDescription": "支持本地使用，无需账户。",
     "deviceSettingsHint": "管理此设备的连接和已安装的软件。",
     "softwareUpdates": "安装与更新智能体",
     "overviewSubtitle": "查看此设备、工作区连接以及在此运行的智能体。",
     "agentsHere": "此电脑上的智能体",
-    "installing": "安装中…",
-    "installAndSignIn": "安装并登录",
-    "agentUnavailable": "此智能体已不可用，请返回智能体列表。",
-    "folderHint": "默认使用您的主目录，也可为智能体选择项目文件夹。",
-    "homeFolder": "您的主目录"
+    "folderHint": "默认使用您的主目录，也可为智能体选择项目文件夹。"
   },
   "renameDialog": {
     "title": "重命名 {{name}}",
@@ -391,27 +151,5 @@
     "hint": "留空则恢复为 {{name}}。",
     "save": "保存",
     "saving": "正在保存…"
-  },
-  "credentials": {
-    "unprobeable": {
-      "codebuddy": "CodeBuddy 向腾讯自有服务认证，此处无法校验密钥——保存后启动智能体即可验证。注意 CODEBUDDY_BASE_URL 指向的是另一套 CodeBuddy 部署（企业版或私有化），不是 OpenAI 兼容接口：模型网关或中转站的密钥在这里用不了。",
-      "cursor": "Cursor 通过自有服务登录，没有可供校验密钥的接口——保存后启动智能体即可验证。",
-      "amp": "Amp 向 Sourcegraph 自有服务认证，其密钥由运行 CLI 时校验——保存后启动智能体，或运行 `amp login`。",
-      "commandcode": "Command Code 用自有账号服务校验密钥，此处没有可测的接口——保存后启动智能体，或运行 `command-code login`。",
-      "copilot": "Copilot 使用你的 GitHub 账号认证，令牌由 GitHub 在首次使用时校验，此处没有模型接口可探测——保存后启动智能体即可验证。",
-      "claudeOauth": "订阅令牌由 Claude 在首次使用时自行校验，此处没有可验证它的接口——保存后在工作区发一条消息即可确认。",
-      "aider": "Aider 会把密钥注入 AIDER_PROVIDER（或模型名）选定的服务商，并在首次运行时校验，此处没有单一接口可测。设置 AIDER_PROVIDER（中转站再填 LLM_BASE_URL）即可在此校验，或保存后在工作区发消息确认。",
-      "cline": "Cline 面向你选定的服务商，该服务商无法在此直接测试——保存后启动智能体即可验证，或运行 `cline auth`。"
-    },
-    "unprobeableTitle": "该智能体无需在此测试",
-    "endpointMismatch": {
-      "gatewayIntoPlatform": "这看起来是一个模型接口地址（OpenAI 兼容网关或中转站）。该智能体用不了这类地址：这里只能填该厂商自有服务的部署地址。模型网关的密钥请改用 opencode、openclaw、codex 等 OpenAI 协议的智能体。"
-    },
-    "noEndpoint": {
-      "commandcode": "Command Code 的自定义服务商（BYOK）配置在它自己的 ~/.commandcode/providers.json 中，请求直接从本机发出，因此这里没有接口地址字段。配好之后，在上面的模型里填「服务商/模型」即可，例如 openrouter/deepseek-v4-flash。",
-      "cline": "Cline 的服务商与接口地址由 `cline auth` 配置，因此这里没有接口地址字段。上面的服务商只是在已配置好的项中选择。",
-      "cursor": "Cursor 通过自有服务认证，不支持自定义接口地址，因此这里没有该字段。",
-      "copilot": "Copilot 使用你的 GitHub 账号，端点由 GitHub 决定，因此这里没有接口地址字段。"
-    }
   }
 }

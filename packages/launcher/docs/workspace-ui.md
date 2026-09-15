@@ -14,28 +14,15 @@ The window has two halves, switched from the mode bar in a fixed place:
 Workspace and This Computer. The launcher owns the mode bar, the This Computer
 tools, and the signed-out Workspace — Welcome and native sign-in. Signing in
 opens the shared membership home. Local agent setup works without an account.
-Welcome also links straight to joining a workspace with a pairing code, for a
-server or remote machine that needs no account. Opening a connected
-workspace from This Computer stays in the app when signed in to the same
-deployment, with the device's token; the browser remains a menu option. Joining a workspace as a person does not
-authorize the computer: the optional connection action in the shared Devices
-settings uses the existing pairing workflow and requires workspace admin access.
+Opening a connected workspace from This Computer stays in the app when signed
+in to the same deployment; the browser remains a menu option.
 
-First-run onboarding detects the desktop host and offers **Connect this computer**.
-The card shows the local hostname and explains the permission before the user
-clicks. Main reuses an existing registration or creates and redeems a pairing
-code through the account service. The shared UI waits for that exact node to
-report online, then opens the existing agent gallery with its node id selected.
-Other workspace devices cannot accidentally become the setup target. The
-**Connect remote device** option and browser onboarding retain the download
-and pairing-code instructions. No connection happens just by opening onboarding.
-Desktop agent setup shows connected devices directly, without the cloud-agent
-or manual-connection tabs and onboarding links. The shared web flow retains them.
-
-`e2e/workspace-onboarding.spec.ts` exercises these flows against the compiled
-Workspace bundle with a simulated host and API, without registering devices or
-installing agents. Run it from `packages/launcher` after `npm run build`:
-`npx playwright test e2e/workspace-onboarding.spec.ts` (requires Playwright Chromium).
+There is no device-pairing or in-app "connect a workspace" flow any more — a
+workspace is created on the web after signing in, and an agent connects to it
+from the command line with `agn connect <agent-name> <workspace-token>`, which
+registers the workspace as a network this device already knows about. The
+Workspaces page and the agent Connect dialog only ever list networks
+registered that way; neither offers a way to add one.
 
 Both Welcome and the email sign-in form open native email registration. It uses
 the existing `POST /v1/auth/register` account endpoint, followed by the same
@@ -57,10 +44,9 @@ an isolated browser and blocks external requests; the data fixture lives beside
 the script. No separate Workspace layout is maintained for the illustration.
 
 `lib/desktop-host.ts` is the shared UI's optional bridge for sign-in, sign-out,
-opening This Computer, and connecting the computer. It returns null on the web.
-The desktop preload supplies the account session, endpoint, and appearance;
-main validates callers before accepting device connection requests. Appearance
-sync remains in `desktop/host.ts`.
+and opening This Computer. It returns null on the web. The desktop preload
+supplies the account session, endpoint, and appearance. Appearance sync remains
+in `desktop/host.ts`.
 
 Main is the only owner of the account session. The preload plants it when the
 page loads and forwards renewals through `onSession`; the page never reports its
@@ -104,33 +90,20 @@ The API must allow the bundle's origin: `CORS_ORIGINS` needs
 `openagents://workspace`. Until the deployment has it, `allowBundleApiAccess`
 rewrites the CORS headers for requests the bundle makes.
 
-## Shared agent management
+## Local agent management
 
-`workspace/frontend/components/agents/agent-setup.tsx` owns the agent catalogue,
-selection, device context, name, working folder, validation, and save flow. Both
-Workspace nodes and the local launcher import it directly. Keep service calls
-behind `AgentSetupApi`; the component must not import workspace auth or an API
-singleton. Workspace model-access and credit offers are optional render slots.
+Placement AI does not install, catalog, or authenticate third-party coding-CLI
+tools — that whole surface (the Agent Marketplace rail entry, the shared
+`workspace/frontend/components/agents/agent-setup.tsx` picker it used to embed
+via `pages/agents/local-agent-setup.tsx`, and the matching
+`e2e/shared-agent-setup.spec.ts`) was removed together with the connector's
+catalog/install API. The launcher renderer no longer aliases `@/` to the shared
+frontend package; nothing under `src/renderer` depends on it.
 
-The launcher’s `pages/agents/local-agent-setup.tsx` supplies its installed-core
-catalogue, native folder picker, and existing account-sign-in/model/credential
-controls. `local-setup-api.ts` uses existing launcher IPC, works without an
-OpenAgents account, reuses installations, and changes only edited instance
-settings. It never rewrites a workspace binding when saving configuration.
-The old separate create/configure dialogs have been removed.
-
-This Computer opens a device overview with its agents and connected workspaces;
-there is no separate Agents page. Agent Marketplace in the rail installs and
-updates agents and carries the update count; OpenAgents' own updates stay in
-Settings → Updates.
-Workspace setup continues to manage the selected device through the service;
-its first-agent handoff opens a conversation only after the agent joins.
-
-The launcher renderer aliases `@/` to the shared frontend and includes only the
-editor’s UI/i18n dependencies in its typecheck. React and UI runtime packages
-are deduplicated, and Tailwind scans the shared components. No new privileged
-bridge is exposed to the hosted Workspace page.
-
-`e2e/shared-agent-setup.spec.ts` exercises the built local UI with an in-memory
-backend and blocked external requests. It verifies account-free creation,
-folder selection, and saving existing settings without overwriting credentials.
+What remains is generic: `pages/agents/index.tsx` lists the daemon's named
+agent instances (any type — there is no more per-type catalog) and
+`pages/agents/components/manage-agent-dialog.tsx` is the whole "add or
+reconfigure one" flow — a name and a working directory, via the connector's
+plain `addAgent` / `setAgentWorkingDir`. This Computer still opens a device
+overview with its agents and connected workspaces; there is no separate Agents
+page and no Agent Marketplace to browse.

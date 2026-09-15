@@ -2,7 +2,6 @@
  * Provider URL/env normalization, applied on the way IN (what we persist) so it
  * matches what the connection test probes and what the spawned CLI sends.
  */
-import { mirrorPiProviderApiKey } from "../pi-env"
 
 export function normalizeWorkspaceEndpoint(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined
@@ -40,13 +39,11 @@ export function isOfficialAnthropicBase(base: string): boolean {
 }
 
 /**
- * Normalize provider base URLs before they're persisted to env, so what we
- * SAVE matches what we TEST (testLLMConnection). The mismatch this guards
- * against: a user pastes an Anthropic-compatible relay URL that already ends
- * in `/v1` (e.g. https://relay.example/v1). The connection test strips the
- * trailing `/v1` before probing `${base}/v1/messages`, so it passes — but the
- * spawned `claude` CLI appends `/v1/messages` to the raw value, hitting
- * `…/v1/v1/messages` → 404, which the CLI mis-reports as "model not found".
+ * Normalize provider base URLs before they're persisted to env. The mismatch
+ * this guards against: a user pastes an Anthropic-compatible relay URL that
+ * already ends in `/v1` (e.g. https://relay.example/v1). Anthropic's own SDK
+ * appends `/v1/messages` to the raw value, so a trailing `/v1` left in place
+ * produces `…/v1/v1/messages` → 404, misreported as "model not found".
  *
  * Anthropic's SDK owns the `/v1` segment, so the base must NOT carry it. We do
  * NOT touch OpenAI-style bases (OPENAI_BASE_URL etc.) — those are SUPPOSED to
@@ -56,7 +53,7 @@ export function isOfficialAnthropicBase(base: string): boolean {
 export function normalizeEnvForSave(
   env: Record<string, string>,
 ): Record<string, string> {
-  const out = mirrorPiProviderApiKey(env)
+  const out = { ...env }
   const anthropicBase = out.ANTHROPIC_BASE_URL
   if (typeof anthropicBase === "string" && anthropicBase.trim()) {
     out.ANTHROPIC_BASE_URL = anthropicBase

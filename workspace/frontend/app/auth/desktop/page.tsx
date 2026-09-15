@@ -2,36 +2,18 @@
 
 import { useEffect, useState } from 'react';
 
-import {
-  DESKTOP_AUTH_PATH,
-  forwardToDesktop,
-  parseDesktopHandoff,
-  type DesktopHandoff,
-} from '@/lib/desktop-handoff';
-import { loadWorkspaceSession } from '@/lib/workspace-session';
+import { forwardToDesktop, parseDesktopHandoff } from '@/lib/desktop-handoff';
 
 /**
- * The desktop launcher's sign-in landing.
+ * The desktop launcher's OAuth sign-in landing.
  *
- * The launcher opens this page with the loopback port it is listening on. From
- * here there are exactly two outcomes:
- *
- *  - a workspace session already exists on this origin → hand it to the port
- *  - none does → send the user through the central login, with this page as
- *    the returnTo, and take the first branch when they come back
- *
- * Deliberately an ordinary page rather than a branch of /auth/callback: the
- * central login mints its one-time token and bounces through the callback ON
- * THE WAY to returnTo, so a returnTo pointing at the callback is treated as the
- * final destination and no token is ever minted. Being a normal destination
- * keeps this on the same path every browser sign-in already takes.
+ * The launcher opens the system browser directly at Supabase's authorize URL
+ * (redirect_to = this page, with the loopback port+state it invented). When
+ * Supabase redirects back here with `?code=...`, this page's only job is to
+ * hand that code to the loopback listener — the launcher's main process holds
+ * the matching PKCE code verifier (it generated the authorize URL) and
+ * exchanges the code for a session itself. This page never sees the session.
  */
-
-const CENTRAL = 'https://openagents.org';
-
-/** Set once we have been through the login; a second empty return is a failure,
- *  not a reason to bounce again. */
-const RETRY_FLAG = 'retried';
 
 type Phase = 'working' | 'done' | 'failed';
 
@@ -42,33 +24,20 @@ function DesktopAuth() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const handoff = parseDesktopHandoff(window.location.search);
+    const code = params.get('code');
+    const oauthError = params.get('error_description') || params.get('error');
+
     if (!handoff) {
       setPhase('failed');
       setError('This link is missing the information the desktop app needs.');
       return;
     }
 
-    const session = loadWorkspaceSession();
-    if (!session) {
-      if (params.get(RETRY_FLAG)) {
-        setPhase('failed');
-        setError('Signed in, but no desktop session was issued. Please try again.');
-        return;
-      }
-      window.location.replace(`${CENTRAL}/login?returnTo=${encodeURIComponent(returnUrl(handoff))}`);
-      return;
-    }
-
     void (async () => {
       try {
-        await forwardToDesktop(handoff, {
-          session: {
-            token: session.token,
-            email: session.email,
-            displayName: session.displayName,
-            expiresAt: session.expiresAt,
-          },
-        });
+        if (oauthError) throw new Error(oauthError);
+        if (!code) throw new Error('Missing sign-in code.');
+        await forwardToDesktop(handoff, { code });
         setPhase('done');
       } catch (e) {
         setPhase('failed');
@@ -109,15 +78,6 @@ function DesktopAuth() {
       </div>
     </div>
   );
-}
-
-/** This page's own URL, marked so a fruitless round trip cannot loop. */
-function returnUrl(handoff: DesktopHandoff): string {
-  const url = new URL(DESKTOP_AUTH_PATH, window.location.origin);
-  url.searchParams.set('port', String(handoff.port));
-  url.searchParams.set('state', handoff.state);
-  url.searchParams.set(RETRY_FLAG, '1');
-  return url.href;
 }
 
 export default function DesktopAuthPage() {

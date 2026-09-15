@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { accountApiBase, apiBase, webBase, DEFAULT_API_BASE } from "./endpoints"
+import { apiBase, webBase, DEFAULT_API_BASE } from "./endpoints"
 
 describe("endpoints", () => {
   it("defaults to the hosted workspace API", () => {
@@ -30,24 +30,6 @@ describe("webBase override", () => {
       expect(webBase(undefined)).toBe("http://localhost:3001")
     } finally {
       delete process.env.OPENAGENTS_WORKSPACE_WEB_BASE
-    }
-  })
-})
-
-describe("accountApiBase", () => {
-  it("is the account service, not the workspace API", () => {
-    // Two different deployments: the website's own sign-in posts to this one,
-    // and a password sent to the workspace API would only ever 404.
-    expect(accountApiBase()).toBe("https://endpoint.openagents.org")
-    expect(accountApiBase()).not.toBe(apiBase(undefined))
-  })
-
-  it("follows its override to a staging deployment", () => {
-    process.env.OPENAGENTS_ACCOUNT_API_BASE = "https://staging.example.com/"
-    try {
-      expect(accountApiBase()).toBe("https://staging.example.com")
-    } finally {
-      delete process.env.OPENAGENTS_ACCOUNT_API_BASE
     }
   })
 })

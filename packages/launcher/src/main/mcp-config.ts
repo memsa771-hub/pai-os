@@ -74,27 +74,8 @@ function home(...parts: string[]): string {
  * `experimental_use_rmcp_client` on older builds, so a naive merge would risk
  * corrupting a hand-edited file.
  */
-export const MCP_TARGETS: McpTarget[] = [
-  {
-    id: 'claude',
-    label: 'Claude Code',
-    file: home('.claude.json'),
-    entry: (s) => ({ type: 'http', url: s.url, ...(s.headers ? { headers: s.headers } : {}) }),
-  },
-  {
-    id: 'cursor',
-    label: 'Cursor',
-    file: home('.cursor', 'mcp.json'),
-    entry: (s) => ({ url: s.url, ...(s.headers ? { headers: s.headers } : {}) }),
-  },
-  {
-    id: 'gemini',
-    label: 'Gemini CLI',
-    file: home('.gemini', 'settings.json'),
-    // `url` means SSE to the Gemini CLI; streamable HTTP is `httpUrl`.
-    entry: (s) => ({ httpUrl: s.url, ...(s.headers ? { headers: s.headers } : {}) }),
-  },
-]
+/** No coding/developer clients are registered by default. */
+export const MCP_TARGETS: McpTarget[] = []
 
 type Json = Record<string, unknown>
 

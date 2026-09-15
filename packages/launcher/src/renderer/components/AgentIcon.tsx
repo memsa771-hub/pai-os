@@ -1,31 +1,10 @@
 import React from "react"
 import { cn } from "../lib/utils"
 
-const BUNDLED_SLUGS = new Set([
-  "aider",
-  "amp",
-  "antigravity",
-  "claude",
-  "cline",
-  "codebuddy",
-  "codex",
-  "commandcode",
-  "copilot",
-  "cursor",
-  "deepseek",
-  "default",
-  "gemini",
-  "goose",
-  "hermes",
-  "kimi",
-  "nanoclaw",
-  "openai",
-  "openclaw",
-  "opencode",
-  "openworker",
-  "pi",
-  "yaml-agent",
-])
+// Placement AI does not install or brand third-party coding CLIs, so this is
+// just a generic local-agent icon plus the one built-in agent type — not a
+// tool catalog.
+const BUNDLED_SLUGS = new Set(["default", "openclaw"])
 
 interface AgentIconProps {
   type: string

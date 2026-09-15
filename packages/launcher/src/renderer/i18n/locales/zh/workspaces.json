@@ -12,7 +12,7 @@
   "refresh": "刷新",
   "activeWorkspaces": "活跃工作区",
   "loading": "正在加载工作区…",
-  "emptyNone": "工作区是你和智能体协作的地方。用工作区里的配对码即可加入；工作区本身请在网页端登录后创建。",
+  "emptyNone": "工作区是你和智能体协作的地方。请在网页端登录后创建工作区，然后用 `agn connect` 将智能体连接到它。",
   "emptyNoMatch": "没有名称匹配「{{query}}」的工作区。",
   "copied": "已复制",
   "toast": {
@@ -28,27 +28,16 @@
   },
   "remove": {
     "title": "移除工作区「{{name}}」？",
-    "description": "本设备将取消与该工作区的配对，并删除本机的记录。工作区本身、频道以及其他成员和设备都不受影响，之后随时可以用新的配对码重新加入。",
+    "description": "本设备将与该工作区断开连接，并删除本机的记录。工作区本身、频道以及其他成员都不受影响。",
     "descriptionRemote": "对所有成员删除 —— 频道、历史消息、已连接的设备一并消失。应用内无法撤销。",
     "effects": {
-      "pairing": "服务器上本设备的配对记录会被删除，其凭据立即失效。",
       "agents": "该工作区内的智能体会退出工作区，并在本机解除绑定。",
-      "local": "工作区将从此电脑上移除，直到你重新加入它。"
+      "local": "工作区将从此电脑上移除，直到有智能体重新连接它。"
     },
     "alsoDelete": "同时删除服务器上的工作区 —— 影响所有成员",
     "alsoDeleteWarning": "所有人立刻失去访问权限，只有管理员手工改回数据记录才能恢复。",
-    "confirm": "取消配对",
-    "confirmRemote": "删除工作区",
-    "revoked": {
-      "title": "清除「{{name}}」的本机记录？",
-      "description": "这台设备已在工作区端被移除，配对与凭据早已失效。这里只是清掉本机残留的记录，工作区本身、其他成员和设备都不受影响。",
-      "effects": {
-        "credential": "本机保存的配对凭据会被删除 —— 它已经无法再使用。",
-        "agents": "该工作区下的智能体会在本机解除绑定，实例和数据都保留。",
-        "local": "这张卡片会从列表消失，之后随时可以用新的配对码重新加入。"
-      },
-      "confirm": "清除记录"
-    }
+    "confirm": "断开连接",
+    "confirmRemote": "删除工作区"
   },
   "card": {
     "unfavorite": "取消收藏",
@@ -111,27 +100,6 @@
     "daysAgo": "{{count}} 天前",
     "unknown": "—"
   },
-  "quickConnect": {
-    "title": "$t(common.actions.addWorkspace)",
-    "subtitle": "加入一个已存在的工作区。本设备可同时加入多个工作区，每个工作区各用自己的配对码。",
-    "pairLabel": "工作区里的配对码",
-    "pairPlaceholder": "XXXX-XXXX",
-    "pairHint": "在工作区打开「$t(common.workspaceMenu.connectAgent) → $t(common.workspaceMenu.nodes)」获取。这台设备会作为节点加入，之后在工作区里给它安装、运行智能体。配对码只能用一次，30 分钟后失效。",
-    "pairBtn": "加入",
-    "pairError": "配对码是 8 位，形如 XXXX-XXXX。",
-    "cancel": "取消",
-    "connecting": "正在连接…",
-    "toast": {
-      "paired": "这台设备已加入 {{label}}"
-    },
-    "fallbackLabel": "工作区",
-    "error": {
-      "tls": "工作区服务暂时无法访问（TLS 证书不匹配）。请稍后重试或联系支持。",
-      "dns": "无法连接到工作区服务。请检查你的网络连接后重试。",
-      "timeout": "工作区服务未能及时响应。请稍后重试。"
-    },
-    "createOnWeb": "需要新工作区？请登录后前往"
-  },
   "rename": {
     "title": "重命名工作区",
     "label": "显示名称",
@@ -169,12 +137,5 @@
   },
   "emptyNoneTitle": "还没有工作区",
   "emptyNoMatchTitle": "没有匹配的工作区",
-  "emptyNoFilterMatchTitle": "该筛选下没有工作区",
-  "revokedNotice": {
-    "title": "工作区「{{name}}」已把这台设备移除",
-    "body": "该工作区已从本机移除。重新加入需要一个新的配对码。",
-    "bodyAgents": "该工作区已从本机移除，原先归属它的 {{count}} 个智能体已解除绑定（实例与数据保留）。重新加入同一个工作区会自动把它们绑回去。",
-    "rejoin": "重新加入",
-    "dismiss": "知道了"
-  }
+  "emptyNoFilterMatchTitle": "该筛选下没有工作区"
 }

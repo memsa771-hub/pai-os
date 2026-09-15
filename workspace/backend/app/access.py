@@ -11,7 +11,7 @@ Access rules (evaluated in order):
   1. Workspace token — `X-Workspace-Token` == `workspace.password_hash`.
      The MACHINE credential (agents, daemons, adapters, iOS, legacy share
      links). Always accepted regardless of `require_login`.
-  2. Member identity — a logged-in user (verified Google/Apple bearer) who has
+  2. Member identity — a logged-in user (verified Supabase/Apple bearer) who has
      a WorkspaceMembership row, or — for backward compatibility — whose email
      matches `creator_email` (owner) or a collaborator row (editor→member,
      viewer→viewer).
@@ -35,7 +35,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SqlaSession
 
 from app.firebase_auth import verify_identity_claims
-from app.models import Node, User, Workspace, WorkspaceCollaborator, WorkspaceMembership
+from app.models import User, Workspace, WorkspaceCollaborator, WorkspaceMembership
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ def get_or_create_user(db: Session, claims: dict) -> Optional[User]:
     if user is None:
         user = User(
             email=email,
-            firebase_uid=claims.get("firebase_uid"),
+            supabase_uid=claims.get("supabase_uid"),
             apple_sub=claims.get("apple_sub"),
             display_name=claims.get("display_name"),
             last_login_at=_now(),
@@ -91,8 +91,8 @@ def get_or_create_user(db: Session, claims: dict) -> Optional[User]:
         return user
 
     # Backfill identity fields we didn't have yet (never clobber existing).
-    if claims.get("firebase_uid") and not user.firebase_uid:
-        user.firebase_uid = claims["firebase_uid"]
+    if claims.get("supabase_uid") and not user.supabase_uid:
+        user.supabase_uid = claims["supabase_uid"]
     if claims.get("apple_sub") and not user.apple_sub:
         user.apple_sub = claims["apple_sub"]
     if claims.get("display_name") and not user.display_name:
@@ -200,16 +200,16 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
     db.flush()
     db.add(WorkspaceMembership(workspace_id=ws.id, user_id=user.id, role="owner"))
 
-    # Auto-provision the built-in Yumi onboarding assistant, same as
+    # Auto-provision the built-in PAI Counselor onboarding assistant, same as
     # POST /v1/workspaces — a first workspace without any agent is a dead end
     # (especially on mobile, where the launcher can't be installed). Never let
     # this block workspace creation.
     try:
-        from app.services.yumi import provision_yumi, seed_welcome_thread
-        if provision_yumi(db, ws):
+        from app.services.pai import provision_pai, seed_welcome_thread
+        if provision_pai(db, ws):
             seed_welcome_thread(db, ws)
     except Exception:
-        logger.warning("provision_workspace: failed to provision Yumi", exc_info=True)
+        logger.warning("provision_workspace: failed to provision PAI Counselor", exc_info=True)
     return ws
 
 
@@ -260,7 +260,7 @@ def resolve_machine_token(db: Session, token: str):
 
     Two credential classes exist: the shared workspace token
     (workspaces.password_hash, legacy + manual connections) and per-node
-    tokens (nodes.token, minted at pairing redeem). This helper is used by
+    workspace bearer tokens. This helper is used by
     BOTH the access check and /v1/token/resolve so the two can never disagree
     about what a token means (the failure mode behind "agn connect says
     invalid token while the same token heartbeats fine").
@@ -279,16 +279,6 @@ def resolve_machine_token(db: Session, token: str):
     ).scalar_one_or_none()
     if ws is not None:
         return ws, None
-    node = db.execute(select(Node).where(Node.token == token)).scalar_one_or_none()
-    if node is not None:
-        ws = db.execute(
-            select(Workspace).where(
-                Workspace.id == node.workspace_id,
-                Workspace.status != "deleted",
-            )
-        ).scalar_one_or_none()
-        if ws is not None:
-            return ws, node
     return None, None
 
 
@@ -315,18 +305,7 @@ def verify_workspace_access(
         db = SqlaSession.object_session(workspace)
 
     # 1b. Per-node token belonging to THIS workspace — the machine credential
-    # minted at pairing redeem. Same full trust as the workspace token, but
     # scoped: another workspace's node token does not pass.
-    if token and db is not None:
-        node = db.execute(
-            select(Node).where(
-                Node.token == token,
-                Node.workspace_id == workspace.id,
-            )
-        ).scalar_one_or_none()
-        if node is not None:
-            return True
-
     # 2. Member identity (membership row or legacy email match).
     if db is not None:
         role = resolve_user_role(db, workspace, authorization)

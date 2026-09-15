@@ -73,17 +73,33 @@ async def invoke_cloud_agents(workspace_id: str, event_data: dict) -> None:
             try:
                 await _invoke_single(db, workspace_id, event_data, cloud_config, depth)
             except Exception as exc:
-                logger.exception(
-                    "cloud_agent: failed to invoke %s (%s/%s)",
+                is_pai = cloud_config.provider == "placement_ai"
+                log_args = (
                     agent_name, cloud_config.provider, cloud_config.model,
+                    type(exc).__name__, getattr(exc, "status_code", None) or "unknown",
                 )
-                error_detail = str(exc)[:200] if str(exc) else "Unknown error"
+                if is_pai:
+                    # Upstream exception strings can contain request details.
+                    # Log only a safe diagnostic envelope for the system agent.
+                    logger.error(
+                        "cloud_agent: invocation failed for %s (%s/%s): error_type=%s status=%s",
+                        *log_args,
+                    )
+                else:
+                    logger.error(
+                        "cloud_agent: invocation failed for %s (%s/%s): error_type=%s status=%s",
+                        *log_args, exc_info=True,
+                    )
                 # Use a fresh DB session for error posting — the original
                 # session may be stale after a long async API call.
                 await _post_error_message(
                     workspace_id, event_data, agent_name,
-                    f"Failed to get a response from {cloud_config.provider}/{cloud_config.model}: "
-                    f"{error_detail}",
+                    (
+                        "PAI Counselor could not reach the language service right now. "
+                        "Please try again shortly."
+                        if is_pai else
+                        f"Failed to get a response from {cloud_config.provider}/{cloud_config.model}."
+                    ),
                 )
     finally:
         db.close()
@@ -193,14 +209,14 @@ async def _invoke_assistant_agent(
     db, workspace_id: str, event_data: dict,
     cloud_config: CloudAgentConfig, depth: int,
 ) -> None:
-    """Invoke a tool-using assistant agent (Yumi) with a hand-rolled
+    """Invoke a tool-using assistant agent (PAI Counselor) with a hand-rolled
     function-calling loop.
 
     Unlike the single-shot chat path, this lets the agent call server-side
     tools (list/create threads, etc.) across several turns before producing a
     final answer, which is posted as a normal chat message.
     """
-    from app.services import yumi
+    from app.services import pai
 
     channel_target = event_data.get("target", "")
     agent_name = cloud_config.agent_name
@@ -209,9 +225,9 @@ async def _invoke_assistant_agent(
     # calls (below), which expires ORM objects, so we must not read from
     # cloud_config inside the loop.
     provider = cloud_config.provider
-    model = yumi.resolve_model(cloud_config)
+    model = pai.resolve_model(cloud_config)
     max_tokens = cloud_config.max_tokens
-    api_key, base_url = yumi.resolve_credentials(cloud_config)
+    api_key, base_url = pai.resolve_credentials(cloud_config)
     if not api_key:
         logger.error("assistant %s: no API key configured", agent_name)
         await _post_error_message(
@@ -227,7 +243,7 @@ async def _invoke_assistant_agent(
     if not messages:
         return
 
-    # Yumi's tools go through the real workspace HTTP API (in-process ASGI),
+    # PAI Counselor's tools go through the real workspace HTTP API (in-process ASGI),
     # authenticated with the workspace token — never direct DB access.
     workspace = db.execute(
         select(Workspace).where(Workspace.id == workspace_id)
@@ -235,12 +251,12 @@ async def _invoke_assistant_agent(
     if not workspace:
         logger.error("assistant %s: workspace %s not found", agent_name, workspace_id)
         return
-    api = yumi.WorkspaceApi(workspace_id, workspace.password_hash)
+    api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
-    system_prompt = cloud_config.system_prompt or yumi.YUMI_SYSTEM_PROMPT
-    system_prompt = system_prompt + "\n\n" + await yumi.workspace_state_summary(api)
-    tools = yumi.build_tools()
-    max_iters = max(1, config.YUMI_MAX_TOOL_ITERATIONS)
+    system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
+    system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
+    tools = pai.build_tools()
+    max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
     logger.info(
         "assistant: invoking %s (%s/%s), %d ctx msgs, max %d tool iters",
@@ -283,7 +299,7 @@ async def _invoke_assistant_agent(
                 args = _json.loads(fn.get("arguments") or "{}")
             except Exception:
                 args = {}
-            result = await yumi.execute_tool(
+            result = await pai.execute_tool(
                 api, agent_name, fn.get("name", ""), args,
             )
             messages.append({

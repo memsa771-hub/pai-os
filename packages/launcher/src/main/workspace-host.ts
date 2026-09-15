@@ -2,7 +2,7 @@ import path from "path"
 import { app, WebContentsView, session as electronSession } from "electron"
 import type { BrowserWindow } from "electron"
 
-import { apiBase, loginBase, webBase } from "./auth/endpoints"
+import { apiBase, webBase } from "./auth/endpoints"
 import {
   allowBundleApiAccess,
   bundleExists,
@@ -58,19 +58,13 @@ export interface WorkspaceHostDeps {
    * only owner: the page is told about changes and never reports one back.
    */
   session: () => EmbeddedSession | null
-  /**
-   * Called when the sign-in has to leave the app: Google's and GitHub's OAuth
-   * screens refuse to run in an embedded view, so those accounts finish in a
-   * real browser and are handed back over loopback.
-   */
-  onExternalLogin: () => void
 }
 
 /**
  * Marks this view as the desktop app, for the pages that need to know.
  *
  * The workspace's login callback reads it: a sign-in happening in here has to
- * be exchanged for a workspace session server-side, because a Firebase session
+ * be exchanged for a workspace session server-side, because a human auth session
  * lives in the page and the launcher cannot keep one.
  */
 export const LAUNCHER_UA_TAG = "OpenAgentsLauncher"
@@ -345,58 +339,33 @@ export class WorkspaceHost {
     return view
   }
 
-  /** Whether the view currently sits on the account site's sign-in. */
-  private _onLoginPage(): boolean {
-    try {
-      return (
-        new URL(this._view?.webContents.getURL() || "").origin ===
-        new URL(loginBase()).origin
-      )
-    } catch {
-      return false
-    }
-  }
-
-  /**
-   * Move a sign-in that cannot finish here out to the browser, and put the page
-   * back the way it was.
-   *
-   * The reload is the point of this being a method. A provider button opens a
-   * popup and then waits for it to report back; refusing the popup leaves the
-   * page waiting forever, with every button stuck on "Signing in…" and no way
-   * for the user to pick a different method.
-   */
-  private _handOffToBrowser(): void {
-    slog("[workspace-view] sign-in needs a real browser — restarting it there")
-    this._deps.onExternalLogin()
-    this._view?.webContents.reload()
-  }
-
   /**
    * What this view is allowed to do.
    *
    * Unlike the launcher's own window, this one is *supposed* to navigate — it
    * is a web app — so the rule is an origin allowlist rather than a flat
    * refusal: anywhere on the workspace's own origin is in-app navigation, and
-   * everything else (a doc link, a third-party OAuth screen, a shared file on
-   * another host) belongs in the user's browser, where it has a real address
-   * bar to be judged by.
+   * everything else (a doc link, a shared file on another host) belongs in
+   * the user's browser, where it has a real address bar to be judged by.
+   *
+   * The embedded sign-in page never navigates to Supabase's OAuth screen
+   * itself — its Google/GitHub buttons detect this host and delegate to
+   * `__oaHost__.signIn()` instead (workspace-view:sign-in → the launcher's
+   * own native sign-in, which runs the browser round trip outside this
+   * view). So there is no "leaving the login page mid-sign-in" case left to
+   * special-case here; any third-party navigation is treated like any other
+   * external link.
    */
   private _hardenNavigation(contents: Electron.WebContents): void {
     const allowed = [
       // The bundle itself.
       `${WORKSPACE_SCHEME}://${WORKSPACE_HOST}`,
-      // The account site, for the sign-in that still runs on its own pages.
-      new URL(loginBase()).origin,
       // The hosted workspace, for a deployment with no bundle to serve.
       new URL(webBase(this._deps.endpoint())).origin,
     ]
 
     contents.setWindowOpenHandler(({ url }) => {
-      // Same reasoning as will-navigate: a provider popup opened from the login
-      // page is that provider refusing to run in here.
-      if (this._onLoginPage()) this._handOffToBrowser()
-      else openExternalSafely(url)
+      openExternalSafely(url)
       return { action: "deny" }
     })
     contents.on("will-navigate", (event, url) => {
@@ -409,16 +378,6 @@ export class WorkspaceHost {
       }
       if (allowed.includes(origin)) return
       event.preventDefault()
-
-      // Leaving the account site mid-sign-in means the user picked a provider
-      // that will not authenticate in here. Handing them the raw OAuth URL
-      // would strand the sign-in in the browser, where it has no way back into
-      // the app; the whole flow restarts out there instead, on the path that
-      // does have one.
-      if (this._onLoginPage()) {
-        this._handOffToBrowser()
-        return
-      }
       openExternalSafely(url)
     })
     contents.on("will-attach-webview", (event) => event.preventDefault())

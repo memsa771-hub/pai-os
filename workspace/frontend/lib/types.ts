@@ -61,12 +61,12 @@ export interface NodeAgent {
   apiKeyMasked?: string | null;
   /** Last smoke-test result for THIS agent (probes are per agent, run after
    * create/reconfigure and hourly by the daemon). */
-  probe?: NodeProbe | null;
+  probe?: AgentProbe | null;
 }
 
 /** Last smoke-test result the daemon reported for an agent type: one tiny
  * end-to-end "hi" prompt, with classified guidance when it failed. */
-export interface NodeProbe {
+export interface AgentProbe {
   ok: boolean;
   at: string;
   code?: string | null;
@@ -75,53 +75,6 @@ export interface NodeProbe {
   reply?: string | null;
   guidance?: string[];
   durationMs?: number;
-}
-
-/** Per-agent-type detection the daemon reports for a node. */
-export interface NodeRuntime {
-  type: string;
-  installed: boolean;
-  ready: boolean;
-  version: string | null;
-  reason: string | null;
-  message: string | null;
-  authStatus?: string | null;
-  probe?: NodeProbe | null;
-}
-
-/** A device running the launcher daemon, connected to the workspace. */
-export interface WorkspaceNode {
-  nodeId: string;
-  name: string;
-  hostname: string | null;
-  deviceType: string;
-  os: string | null;
-  launcherVersion: string | null;
-  status: string;
-  agents: NodeAgent[];
-  runtimes: NodeRuntime[];
-  /** Filesystem hint for the working-directory picker (home + its subfolders). */
-  fs?: { home?: string; dirs?: string[] } | null;
-  lastHeartbeatAt: string | null;
-  createdAt: string | null;
-}
-
-/** A queued remote agent-management command for a node. */
-export interface NodeCommand {
-  commandId: string;
-  action: string;
-  status: 'pending' | 'running' | 'done' | 'error';
-  result: { ok: boolean; message: string | null; data?: unknown } | null;
-  agentName: string | null;
-  createdAt: string | null;
-  finishedAt: string | null;
-}
-
-/** A short-lived, single-use code the launcher redeems to connect a node. */
-export interface PairingCode {
-  code: string;
-  expiresAt: string;
-  expiresInSeconds: number;
 }
 
 /** A connected chat-platform bot (Slack app / Telegram bot) bridging
@@ -160,7 +113,7 @@ export interface WorkspaceAgent {
   status: string;
   lastHeartbeatAt: string | null;
   joinedAt: string | null;
-  /** True only for the built-in Yumi assistant; false/absent for all others. */
+  /** True only for the built-in PAI Counselor assistant; false/absent for all others. */
   builtin?: boolean;
 }
 
@@ -661,7 +614,7 @@ export interface NetworkAgent {
   model?: string | null;
   last_heartbeat_at: string | null;
   joined_at: string | null;
-  /** True only for the built-in Yumi assistant; false/absent for all others. */
+  /** True only for the built-in PAI Counselor assistant; false/absent for all others. */
   builtin?: boolean;
 }
 

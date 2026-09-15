@@ -2,7 +2,7 @@
 """Tests for enforced-login v1.0: users, memberships, access rules,
 reconciliation and auto-provision (Phase 1).
 
-Identity-token verification is stubbed (no real Firebase/Apple) by patching
+Identity-token verification is stubbed (no real Supabase/Apple) by patching
 app.access.verify_identity_claims, which every caller routes through.
 """
 
@@ -21,7 +21,7 @@ from app.models import User, Workspace, WorkspaceCollaborator, WorkspaceMembersh
 
 
 def _claims(email, uid="uid", name="Test User"):
-    return {"provider": "firebase", "email": email, "firebase_uid": uid,
+    return {"provider": "supabase", "email": email, "supabase_uid": uid,
             "apple_sub": None, "display_name": name}
 
 

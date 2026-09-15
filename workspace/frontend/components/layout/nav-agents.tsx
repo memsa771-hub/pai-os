@@ -15,6 +15,7 @@ import { cn } from '@/lib/utils';
 import { agentLabel, isRecentAgent } from '@/lib/helpers';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
+import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import { useLayout } from './layout-context';
 
 /**
@@ -71,6 +72,13 @@ export function NavAgents({ onNavigate }: { onNavigate?: () => void }) {
                   <SidebarMenuButton
                     tooltip={agentLabel(agent)}
                     onClick={() => {
+                      if (agent.builtin) {
+                        setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
+                        setSelectedAgentName(null);
+                        openMobileDetail();
+                        onNavigate?.();
+                        return;
+                      }
                       // Same as the desktop rail: a person-click opens the DM
                       // (the profile is one more tap away via the overlay).
                       const pair = ['human:user', `openagents:${agent.agentName}`].sort();

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 
 import { useAgentsStore } from "@renderer/store/agents"
-import { useInstallStore } from "@renderer/store/install"
 import { useConnectionsStore } from "@renderer/store/connections"
 import type { Workspace } from "@renderer/types"
 
@@ -10,7 +9,6 @@ import type { Workspace } from "@renderer/types"
 const AGENTS_POLL_MS = 5000
 /** Workspace/message aggregates — expensive, so far less often. */
 const AGGREGATES_POLL_MS = 60_000
-const UPDATES_POLL_MS = 60 * 60 * 1000
 /** Only aggregate the most recent workspaces; the full sweep is too costly. */
 const AGGREGATE_WORKSPACE_LIMIT = 10
 const AGGREGATE_MESSAGE_LIMIT = 100
@@ -37,7 +35,6 @@ export interface DashboardAggregates {
    * agent sent is the best "last active" the launcher can know.
    */
   lastActiveByAgent: Record<string, string>
-  installedCount: number | undefined
 }
 
 interface DashboardData extends DashboardAggregates {
@@ -59,7 +56,6 @@ export function useDashboardData(): DashboardData {
       setLauncherVersion: s.setLauncherVersion,
     })),
   )
-  const setUpdates = useInstallStore((s) => s.setUpdates)
   const refreshConnections = useConnectionsStore((s) => s.refresh)
 
   const inFlight = useRef(false)
@@ -72,7 +68,6 @@ export function useDashboardData(): DashboardData {
   const [lastActiveByAgent, setLastActiveByAgent] = useState<
     Record<string, string>
   >({})
-  const [installedCount, setInstalledCount] = useState<number | undefined>()
 
   useEffect(() => {
     mounted.current = true
@@ -166,11 +161,6 @@ export function useDashboardData(): DashboardData {
         setActiveWorkspaceCount(active)
         setLastActiveByAgent(lastActive)
       }
-
-      try {
-        const installed = await window.api.getInstalledAgents()
-        if (mounted.current) setInstalledCount(installed.length)
-      } catch {}
     } catch {}
   }, [])
 
@@ -180,23 +170,6 @@ export function useDashboardData(): DashboardData {
     return () => clearInterval(id)
   }, [loadAggregates])
 
-  // Never forced: the main process caches probes for an hour, and this poll is
-  // happy to read that cache. The marketplace is where a user goes to demand a
-  // fresh check.
-  const loadUpdates = useCallback(async (): Promise<void> => {
-    try {
-      setUpdates(await window.api.checkAgentUpdates())
-    } catch {
-      /* offline / registry down — keep whatever we last knew */
-    }
-  }, [setUpdates])
-
-  useEffect(() => {
-    void loadUpdates()
-    const id = setInterval(() => void loadUpdates(), UPDATES_POLL_MS)
-    return () => clearInterval(id)
-  }, [loadUpdates])
-
   return {
     loading,
     refresh,
@@ -204,6 +177,5 @@ export function useDashboardData(): DashboardData {
     activeWorkspaceCount,
     todayMessageCount,
     lastActiveByAgent,
-    installedCount,
   }
 }

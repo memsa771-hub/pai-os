@@ -14,6 +14,7 @@ import { useFormatters, useT, type MessageKey } from '@/lib/i18n';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { workspaceApi } from '@/lib/api';
 import type { WorkspaceAgent, WorkspaceSession } from '@/lib/types';
+import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -601,7 +602,7 @@ export function ThreadList() {
           }
           muted={muted}
           onSelect={() => selectSession(session.sessionId)}
-          actions={rowActions(session)}
+          actions={session.sessionId === PAI_PRIMARY_CONVERSATION_ID ? null : rowActions(session)}
         />
       );
     });

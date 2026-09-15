@@ -18,7 +18,6 @@ export interface AgentActions {
   renameAgent: (name: string, displayName: string) => Promise<void>
   disconnectAgent: (name: string) => Promise<void>
   openWorkspace: (agent: Agent) => Promise<void>
-  openAgentChat: (agent: Agent) => Promise<void>
 }
 
 /**
@@ -234,26 +233,11 @@ export function useAgentActions(
     }
   }
 
-  // Open a terminal in the agent's working folder, launching its CLI so the
-  // user can interact with the agent directly on the command line.
-  const openAgentChat = async (agent: Agent): Promise<void> => {
-    try {
-      capture("agent_chat_opened", { type: agent.type })
-      await window.api.openAgentTerminal(agent.name)
-    } catch (err: unknown) {
-      showToast(
-        t("agents.list.toast.error", { message: (err as Error).message }),
-        "error",
-      )
-    }
-  }
-
   return {
     toggleAgent,
     removeAgent,
     renameAgent,
     disconnectAgent,
     openWorkspace,
-    openAgentChat,
   }
 }

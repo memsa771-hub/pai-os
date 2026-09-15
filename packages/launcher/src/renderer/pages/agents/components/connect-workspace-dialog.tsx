@@ -18,7 +18,6 @@ import { useAgentsStore } from "@renderer/store/agents"
 import { useUiStore } from "@renderer/store/ui"
 import { capture } from "@renderer/lib/analytics"
 import { cn } from "@renderer/lib/utils"
-import type { NodeStatus } from "@renderer/types"
 import type { ToastType } from "@renderer/hooks/useToast"
 
 interface WorkspaceOption {
@@ -39,18 +38,6 @@ interface WorkspaceOption {
  * so the pairing set is what the list is drawn from. No pairings, no options:
  * the empty state sends the user to the Workspaces page to join one.
  */
-function pairedOnly(
-  list: WorkspaceOption[],
-  node: NodeStatus | null,
-): WorkspaceOption[] {
-  const keys = new Set<string>()
-  for (const w of node?.workspaces || []) {
-    if (w.workspaceSlug) keys.add(w.workspaceSlug)
-    if (w.workspaceId) keys.add(w.workspaceId)
-  }
-  return list.filter((ws) => keys.has(ws.slug) || keys.has(ws.id))
-}
-
 export function ConnectWorkspaceDialog({
   open,
   agentName,
@@ -81,38 +68,14 @@ export function ConnectWorkspaceDialog({
     setWorkspaces(null)
     let cancelled = false
 
-    void (async () => {
-      // node.json first: it is on disk, so the list is right without waiting
-      // for the network.
-      let list: WorkspaceOption[] = []
-      let node: NodeStatus | null = null
-      try {
-        ;[list, node] = await Promise.all([
-          window.api.listWorkspaces(),
-          window.api.getNodeStatus(),
-        ])
-      } catch {
-        // Either record unreadable — offer nothing. Binding needs a pairing,
-        // so an empty list is the honest answer, not a reason to fall back to
-        // the unverified one.
-      }
-      if (cancelled) return
-      setWorkspaces(pairedOnly(list, node))
-
-      // Then ask the workspaces themselves, since being removed happens on
-      // their side and nothing tells this machine. Until now only the
-      // Workspaces page ever asked, so a device removed while the user was
-      // anywhere else went on offering the workspace it had lost. `force`
-      // skips the once-a-minute throttle that page's polling relies on.
-      let fresh: NodeStatus | null = null
-      try {
-        fresh = await window.api.refreshNodeStatus(true)
-      } catch {
-        // Offline — what is on disk stands.
-      }
-      if (cancelled || !fresh) return
-      setWorkspaces(pairedOnly(list, fresh))
-    })()
+    void window.api
+      .listWorkspaces()
+      .then((list) => {
+        if (!cancelled) setWorkspaces(list)
+      })
+      .catch(() => {
+        if (!cancelled) setWorkspaces([])
+      })
 
     return () => {
       cancelled = true

@@ -5,26 +5,19 @@ import { app, safeStorage } from "electron"
 /**
  * The signed-in account, as this machine remembers it.
  *
- * Two shapes of credential can end up here and the rest of the app treats them
- * identically — both are the `Authorization: Bearer` value the workspace API
- * accepts as an identity:
- *
- *  - `workspace`: a session JWT minted by POST /v1/auth/session. Long-lived
- *    (30 days) and obtained without ever contacting Google, which is the only
- *    path that works from mainland China. This is the one we ask for.
- *  - `firebase`: a Firebase ID token plus its refresh token, used only where
- *    the backend has no session secret configured. Expires hourly and is
- *    renewed in the background (see firebase-rest.ts).
+ * A Supabase session: a short-lived access token (the `Authorization: Bearer`
+ * value the workspace API accepts as an identity) plus the refresh token used
+ * to renew it — see supabase.ts.
  */
 export interface AccountSession {
-  kind: "workspace" | "firebase"
+  kind: "supabase"
   token: string
   email: string
   displayName: string | null
   /** Unix seconds. */
   expiresAt: number
-  /** Firebase only — what the hourly renewal is done with. */
-  refreshToken?: string
+  /** What renewal (see supabase.ts refreshSession) is done with. */
+  refreshToken: string
 }
 
 /** What the renderer is told about the account; never the token itself. */

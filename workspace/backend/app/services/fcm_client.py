@@ -9,17 +9,15 @@ read, and the iOS-specific knobs (sound, badge, thread grouping) are still
 expressed via `messaging.APNSConfig`, which FCM forwards to APNs verbatim.
 
 Auth: a Firebase **service account** JSON, supplied whole in the
-`FIREBASE_CREDENTIALS_JSON` env var. The Admin SDK app is initialized once
-by `app.firebase_auth._init_firebase()` and shared with the login-token
-verification path — do not call `firebase_admin.initialize_app()` here, a
-second call on the default app raises.
+`FIREBASE_CREDENTIALS_JSON` env var. The Admin SDK app is initialized once by
+`app.firebase_auth._init_firebase()` — do not call
+`firebase_admin.initialize_app()` here, a second call on the default app
+raises. Firebase is not a human-auth provider in this codebase (see
+app/firebase_auth.py); this is its only remaining use.
 
-Note the credential requirement is stricter than login verification's:
-`_init_firebase()` will happily come up with a no-op credential when only
-`FIREBASE_PROJECT_ID` is set, because verifying an ID token needs nothing
-but Google's public certs. *Sending* is an authenticated API call, so this
-module additionally insists on a real service account and otherwise skips
-silently (matching the old client's "not configured → log and move on").
+Sending is an authenticated API call, so `_init_firebase()` requires a real
+service account here and otherwise skips silently (matching the old client's
+"not configured → log and move on").
 
 The module exposes one function, `send_push`, returning a
 `(sent_ok, dead_tokens)` tuple so callers can prune `device_tokens` of

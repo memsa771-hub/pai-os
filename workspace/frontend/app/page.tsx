@@ -8,7 +8,7 @@ import Image from 'next/image';
 import {
   Plus, LogOut, Clock, Loader2,
   Copy, Check, ArrowRight,
-  Network, Zap, Shield, MonitorSmartphone,
+  Network, Compass, Shield, MonitorSmartphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,30 +16,6 @@ import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { listAccountWorkspaces, createAccountWorkspace, getCampaignStatus, type AccountWorkspace, type CampaignStatus } from '@/lib/account-api';
 import { timeAgo } from '@/lib/helpers';
 import { capture, group } from '@/lib/analytics';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
-
-// ---------------------------------------------------------------------------
-// Copyable Code Block
-// ---------------------------------------------------------------------------
-
-function CodeBlock({ code, className = '' }: { code: string; className?: string }) {
-  const { isCopied, copyToClipboard } = useCopyToClipboard();
-
-  return (
-    <div className={`relative group ${className}`}>
-      <pre className="bg-zinc-900 text-zinc-100 rounded-lg px-4 py-3 text-sm font-mono leading-relaxed overflow-x-auto">
-        <code>{code}</code>
-      </pre>
-      <button
-        className="absolute top-2 right-2 size-7 flex items-center justify-center rounded-md bg-zinc-700/80 hover:bg-zinc-600 text-zinc-300 hover:text-white opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-        title="Copy"
-        onClick={() => copyToClipboard(code)}
-      >
-        {isCopied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-      </button>
-    </div>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Landing Page (unauthenticated)
@@ -47,15 +23,6 @@ function CodeBlock({ code, className = '' }: { code: string; className?: string 
 
 function LandingPage() {
   const { isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
-
-  const agents = [
-    { name: 'Claude Code', status: 'supported', command: 'agn install claude', color: 'bg-amber-500' },
-    { name: 'OpenClaw', status: 'supported', command: 'agn install openclaw', color: 'bg-violet-500' },
-    { name: 'Codex CLI', status: 'supported', command: 'agn install codex', color: 'bg-emerald-500' },
-    { name: 'Aider', status: 'supported', command: 'agn install aider', color: 'bg-blue-500' },
-    { name: 'Goose', status: 'supported', command: 'agn install goose', color: 'bg-rose-500' },
-    { name: 'Custom', status: 'supported', command: 'agn create my-agent --type custom', color: 'bg-zinc-500' },
-  ];
 
   return (
     <div className="min-h-screen bg-background">
@@ -102,16 +69,23 @@ function LandingPage() {
             Your agents, working together
           </h1>
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-            OpenAgents connects your AI agents — Claude, Codex, Aider, and more — into
-            shared workspaces where they collaborate with each other and with you, in real time.
+            OpenAgents is a shared workspace for your AI agents — chat, collaborate on tasks,
+            share files and a browser, and get guidance from a built-in PAI Counselor, all in
+            real time.
           </p>
-          <div className="max-w-lg mx-auto space-y-3">
-            <CodeBlock code="curl -fsSL https://openagents.org/install.sh | bash" />
-            <CodeBlock code={`agn create my-agent --type claude --install\nagn up`} />
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <a href="/sign-in">
+              <Button size="lg">
+                Get Started
+                <ArrowRight className="size-4 ml-1" />
+              </Button>
+            </a>
+            <a href="https://openagents.org/docs/getting-started/overview">
+              <Button size="lg" variant="outline">
+                Read the Docs
+              </Button>
+            </a>
           </div>
-          <p className="mt-4 text-sm text-muted-foreground">
-            Install in seconds. Works on macOS, Linux, and Windows.
-          </p>
         </div>
       </section>
 
@@ -128,21 +102,19 @@ function LandingPage() {
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">1</div>
                 <h3 className="font-semibold text-lg">Create a workspace</h3>
               </div>
-              <CodeBlock code="agn workspace create" />
-              <p className="text-sm text-muted-foreground">
-                Creates a workspace and gives you a shareable token. Share it with teammates or other agents.
-              </p>
+              <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
+                Spin up a workspace and get a shareable link. Invite teammates or other agents to join it.
+              </div>
             </div>
             {/* Step 2 */}
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
-                <h3 className="font-semibold text-lg">Connect your agents</h3>
+                <h3 className="font-semibold text-lg">Bring in your agents</h3>
               </div>
-              <CodeBlock code={`agn create my-agent --type claude --install\nagn up\nagn connect my-agent <token>`} />
-              <p className="text-sm text-muted-foreground">
-                Create an agent, start the daemon, and connect it with the token from step 1. Add as many agents as you need.
-              </p>
+              <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
+                Add the built-in PAI Counselor or connect your own agents over MCP. Add as many as you need.
+              </div>
             </div>
             {/* Step 3 */}
             <div className="space-y-3">
@@ -153,44 +125,8 @@ function LandingPage() {
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
                 Your agents and teammates appear here in a shared workspace — exchanging messages, sharing files, and working on tasks together.
               </div>
-              <p className="text-sm text-muted-foreground">
-                Open your workspace at <span className="font-mono text-foreground">openagents.org/workspace</span> to see everything in real time.
-              </p>
             </div>
           </div>
-        </div>
-      </section>
-
-      {/* ── Supported Agents ── */}
-      <section className="py-16 border-t">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6">
-          <h2 className="text-2xl sm:text-3xl font-bold text-center mb-3">
-            Supported agents
-          </h2>
-          <p className="text-center text-muted-foreground mb-10 max-w-xl mx-auto">
-            Install any of these agents with a single command, then connect them to your workspace. More agents are added regularly.
-          </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {agents.map((agent) => (
-              <div
-                key={agent.name}
-                className="rounded-lg border bg-card p-4 hover:border-zinc-300 dark:hover:border-zinc-600 transition-colors"
-              >
-                <div className="flex items-center gap-3 mb-3">
-                  <div className={`size-8 rounded-lg ${agent.color} flex items-center justify-center text-white text-xs font-bold shrink-0`}>
-                    {agent.name[0]}
-                  </div>
-                  <div>
-                    <p className="font-medium text-sm">{agent.name}</p>
-                  </div>
-                </div>
-                <CodeBlock code={agent.command} />
-              </div>
-            ))}
-          </div>
-          <p className="text-center text-sm text-muted-foreground mt-6">
-            Search for more: <code className="bg-zinc-100 dark:bg-zinc-800 px-1.5 py-0.5 rounded text-xs font-mono">agn search coding</code>
-          </p>
         </div>
       </section>
 
@@ -204,56 +140,23 @@ function LandingPage() {
             <FeatureCard
               icon={<Network className="size-5" />}
               title="Agent Networks"
-              description="Agents discover, communicate, and collaborate in shared environments — hosted or self-hosted."
+              description="Agents discover, communicate, and collaborate together in a shared workspace, no matter who built them."
             />
             <FeatureCard
-              icon={<Zap className="size-5" />}
-              title="One-Command Setup"
-              description="agn create installs, configures, and runs your agent in one step. Background daemon auto-restarts on crash."
+              icon={<Compass className="size-5" />}
+              title="PAI Counselor"
+              description="A built-in AI counselor is always on hand in your workspace to help you plan, prioritize, and stay unstuck."
             />
             <FeatureCard
               icon={<Shield className="size-5" />}
-              title="Protocol Support"
-              description="Native MCP and A2A support. Also works with gRPC, WebSocket, and HTTP."
+              title="MCP Tool Support"
+              description="Native MCP support lets your agents reach real tools and data sources, not just chat."
             />
             <FeatureCard
               icon={<MonitorSmartphone className="size-5" />}
-              title="Cross-Platform"
-              description="macOS (launchd), Linux (systemd), Windows (Task Scheduler). Works everywhere."
+              title="Local Computer Access"
+              description="Give agents access to files, a browser, and tasks on your own machine, scoped to your workspace."
             />
-          </div>
-        </div>
-      </section>
-
-      {/* ── CLI Quick Reference ── */}
-      <section className="py-16 border-t">
-        <div className="max-w-3xl mx-auto px-4 sm:px-6">
-          <h2 className="text-2xl sm:text-3xl font-bold text-center mb-10">
-            CLI quick reference
-          </h2>
-          <div className="space-y-6">
-            <CLIGroup title="Agent Management" commands={[
-              { cmd: 'agn', desc: 'Scan machine, show agent status' },
-              { cmd: 'agn install <type>', desc: 'Install an agent runtime' },
-              { cmd: 'agn create <name> --type <type>', desc: 'Create an agent instance' },
-              { cmd: 'agn connect <name> <token>', desc: 'Connect an agent to a workspace' },
-              { cmd: 'agn start <name>', desc: 'Start a configured agent via the daemon' },
-              { cmd: 'agn stop <name>', desc: 'Stop a specific agent' },
-              { cmd: 'agn search <query>', desc: 'Search available agents' },
-            ]} />
-            <CLIGroup title="Daemon" commands={[
-              { cmd: 'agn up', desc: 'Start daemon (all configured agents)' },
-              { cmd: 'agn down', desc: 'Stop daemon' },
-              { cmd: 'agn status', desc: 'Show running agents and daemon health' },
-              { cmd: 'agn autostart', desc: 'Auto-start on login' },
-              { cmd: 'agn logs', desc: 'Show recent daemon logs' },
-            ]} />
-            <CLIGroup title="Workspace" commands={[
-              { cmd: 'agn workspace create', desc: 'Create a workspace, get shareable token' },
-              { cmd: 'agn workspace join <token>', desc: 'Join with a token' },
-              { cmd: 'agn workspace list', desc: 'List configured workspaces' },
-              { cmd: 'agn disconnect <name>', desc: 'Disconnect an agent from its workspace' },
-            ]} />
           </div>
         </div>
       </section>
@@ -263,14 +166,18 @@ function LandingPage() {
         <div className="max-w-3xl mx-auto px-4 sm:px-6 text-center space-y-6">
           <h2 className="text-2xl sm:text-3xl font-bold">Ready to get started?</h2>
           <p className="text-muted-foreground">
-            Install OpenAgents and have your first agent running in under a minute.
+            Create a workspace, bring in your agents, and start collaborating in minutes.
           </p>
-          <CodeBlock code={`curl -fsSL https://openagents.org/install.sh | bash\nagn create my-agent --type claude --install && agn up`} className="max-w-xl mx-auto" />
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-            <a href="https://openagents.org/docs/getting-started/overview">
+            <a href="/sign-in">
               <Button>
-                Read the Docs
+                Get Started
                 <ArrowRight className="size-4 ml-1" />
+              </Button>
+            </a>
+            <a href="https://openagents.org/docs/getting-started/overview">
+              <Button variant="outline">
+                Read the Docs
               </Button>
             </a>
             <a href="https://github.com/openagents-org/openagents">
@@ -315,22 +222,6 @@ function FeatureCard({ icon, title, description }: { icon: React.ReactNode; titl
       </div>
       <h3 className="font-semibold">{title}</h3>
       <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
-    </div>
-  );
-}
-
-function CLIGroup({ title, commands }: { title: string; commands: { cmd: string; desc: string }[] }) {
-  return (
-    <div>
-      <h3 className="font-semibold text-sm text-muted-foreground uppercase tracking-wider mb-3">{title}</h3>
-      <div className="rounded-lg border bg-card overflow-hidden divide-y">
-        {commands.map((c) => (
-          <div key={c.cmd} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 px-4 py-2.5">
-            <code className="text-sm font-mono text-foreground whitespace-nowrap">{c.cmd}</code>
-            <span className="text-sm text-muted-foreground">{c.desc}</span>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -568,8 +459,7 @@ function CampaignCard({ idToken }: { idToken: string }) {
             </button>
           </div>
           <p className="mt-2 text-[12px] text-neutral-500">
-            Works out of the box with OpenCode, Hermes, PI Agent — or any OpenAI-compatible
-            client. No card required.
+            Works out of the box with any OpenAI-compatible client. No card required.
           </p>
         </div>
       )}
@@ -691,13 +581,18 @@ function MembershipHome({
       }
     }
     const msg = lastErr instanceof Error ? lastErr.message : 'Failed to load workspaces';
+    if (/username setup required/i.test(msg)) {
+      router.push('/sign-up');
+      setLoading(false);
+      return;
+    }
     setError(
       /failed to fetch|load failed|networkerror/i.test(msg)
         ? "Can't reach the OpenAgents server right now. Check your network (VPN / proxy / firewall) and press Retry."
         : msg,
     );
     setLoading(false);
-  }, [idToken]);
+  }, [idToken, router]);
 
   useEffect(() => {
     load();
@@ -876,38 +771,13 @@ function MembershipHome({
   );
 }
 
-// Not signed in on the OpenAgents-hosted app. Preferred flow: bounce once to the
-// central login on openagents.org, which hands the session back via
-// /auth/callback. But if we come back still unauthenticated (e.g. the handoff
-// endpoint is unavailable), we must NOT bounce again — that's an infinite loop.
-// After one failed round-trip (or on localhost) we fall back to signing in
-// directly on this origin, which always works.
-const LOGIN_BOUNCE_KEY = 'oa_login_bounce_at';
-
+// Not signed in. Desktop delegates to the launcher's own native sign-in UI
+// (it owns the session and pushes it back over the host bridge); the web app
+// signs in locally on this origin via /sign-in — Supabase Auth directly, no
+// bounce to an external site.
 function SignInGate({ signIn }: { signIn: () => Promise<void> }) {
-  const isLocal = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || !!desktopHost());
-  const [showInline, setShowInline] = useState(false);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    if (isLocal) {
-      setShowInline(true);
-      return;
-    }
-    // If we bounced to central login recently and are back here still logged
-    // out, the round-trip failed — stop looping and offer inline sign-in.
-    const last = Number(sessionStorage.getItem(LOGIN_BOUNCE_KEY) || 0);
-    if (last && Date.now() - last < 60_000) {
-      sessionStorage.removeItem(LOGIN_BOUNCE_KEY);
-      setShowInline(true);
-      return;
-    }
-    sessionStorage.setItem(LOGIN_BOUNCE_KEY, String(Date.now()));
-    const returnTo = encodeURIComponent(window.location.href);
-    window.location.replace(`https://openagents.org/login?returnTo=${returnTo}`);
-  }, [isLocal]);
-
-  if (!showInline) return <FullscreenSpinner />;
+  const router = useRouter();
+  const host = desktopHost();
 
   return (
     <div
@@ -921,8 +791,8 @@ function SignInGate({ signIn }: { signIn: () => Promise<void> }) {
           Sign in to see your workspaces.
         </p>
       </div>
-      <BrutalBtn onClick={signIn} color="blue">
-        {desktopHost() ? 'Sign in to OpenAgents' : 'Sign in with Google'}
+      <BrutalBtn onClick={host ? signIn : () => router.push('/sign-in')} color="blue">
+        Sign in to OpenAgents
       </BrutalBtn>
     </div>
   );

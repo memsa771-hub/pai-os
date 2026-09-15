@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 
 import type { Agent } from "@renderer/types"
 import { deriveModel } from "@renderer/lib/agent-model"
@@ -21,12 +21,10 @@ export type AgentStatus = StateKey
 
 export interface AgentRow {
   agent: Agent
-  /** Catalog display name for the agent type, e.g. "Claude Code". */
+  /** The agent's type, e.g. "openclaw". */
   providerLabel: string
   /** Model taken from the agent's own env; null when it never set one. */
   model: string | null
-  /** How the agent authenticates, once a health check has reported it. */
-  auth: "api_key" | "cli_login" | null
   workspace: string | null
   /** What the process is doing. Membership is `connected`, not a status. */
   status: AgentStatus
@@ -58,49 +56,21 @@ export function useAgentsView(
   sort: AgentSort,
 ): AgentsView {
   const lastActive = useAgentActivity()
-  const [labels, setLabels] = useState<Record<string, string>>({})
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(PAGE_SIZES[0])
-  const mounted = useRef(true)
-
-  useEffect(() => {
-    mounted.current = true
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  // The catalog is cached in main and only changes when an agent type is
-  // installed, so once per mount is enough.
-  useEffect(() => {
-    window.api
-      .getCatalog()
-      .then((entries) => {
-        if (!mounted.current) return
-        const next: Record<string, string> = {}
-        for (const e of entries) if (e.label) next[e.name] = e.label
-        setLabels(next)
-      })
-      .catch(() => {})
-  }, [])
 
   const allRows = useMemo<AgentRow[]>(
     () =>
       agents.map((agent) => ({
         agent,
-        providerLabel: labels[agent.type] || agent.type,
+        providerLabel: agent.type,
         model: deriveModel(agent),
-        auth: agent.health?.auth_mode === "api_key"
-          ? "api_key"
-          : agent.health?.auth_mode === "cli_login"
-            ? "cli_login"
-            : null,
         workspace: agent.networkName || agent.network || null,
         status: stateKeyOf(agent),
         connected: !!agent.network,
         lastActiveAt: lastActive[agent.name] || null,
       })),
-    [agents, labels, lastActive],
+    [agents, lastActive],
   )
 
   const counts = useMemo<Record<AgentFilter, number>>(() => {

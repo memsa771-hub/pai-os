@@ -5,7 +5,7 @@ Agent names and display names share ONE namespace per workspace: display
 names are routable aliases (the LLM router and the @mention picker resolve
 them), so any writer of either field must go through these helpers — the
 member PATCH, the agent-join event handler, cloud-agent creation, the OAuth
-callback and the Yumi backfill.
+callback and the system-agent backfill.
 """
 
 import unicodedata
@@ -94,7 +94,7 @@ def lock_member_namespace(db, workspace_id) -> None:
 def fold_alias(text: str) -> str:
     """Canonical form for namespace comparison.
 
-    NFKC collapses compatibility forms — fullwidth ｙｕｍｉ becomes yumi — and
+    NFKC collapses compatibility forms — fullwidth ｐａｉ becomes pai — and
     casefold() handles the case pairs lower() misses (ẞ → ss, İ). Plain SQL
     lower() does neither, which let visually identical aliases coexist. Both
     sides of every namespace comparison must go through this.

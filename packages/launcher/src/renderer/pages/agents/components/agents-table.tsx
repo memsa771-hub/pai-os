@@ -1,13 +1,11 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
 import {
-  KeyRound,
   MoreHorizontal,
   Pencil,
   Play,
   SlidersHorizontal,
   Square,
-  Terminal,
   Trash2,
   Unplug,
 } from "lucide-react"
@@ -39,7 +37,6 @@ import { agentLabel, type AgentActionHandlers } from "./agent-actions"
 const COLUMNS = [
   "agent",
   "provider",
-  "auth",
   "workspace",
   "status",
   "lastActive",
@@ -54,12 +51,7 @@ const COLUMNS = [
  * width evenly, overflow the viewport at the 1200px minimum, and let the
  * container clip the actions column out of sight.
  */
-const SHRINK_COLUMNS = new Set<string>([
-  "auth",
-  "status",
-  "lastActive",
-  "actions",
-])
+const SHRINK_COLUMNS = new Set<string>(["status", "lastActive", "actions"])
 
 interface Props extends AgentActionHandlers {
   rows: AgentRow[]
@@ -74,7 +66,6 @@ export function AgentsTable({
   rows,
   pending,
   onToggle,
-  onOpenTerminal,
   onConfigure,
   onRename,
   onConnect,
@@ -97,7 +88,6 @@ export function AgentsTable({
                 key={c}
                 className={cn(
                   c === "actions" && "text-center",
-                  c === "auth" && "text-center",
                   // Columns whose content is a fixed size take only what they
                   // need (`w-px` collapses a table column onto its content),
                   // so every pixel of pressure lands on the three that can
@@ -112,7 +102,7 @@ export function AgentsTable({
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map(({ agent, providerLabel, model, auth, workspace, status, lastActiveAt }) => {
+          {rows.map(({ agent, providerLabel, model, workspace, status, lastActiveAt }) => {
             // Read from the status the row is already showing, not a second
             // opinion on the raw state: an agent with no workspace has
             // `running` written for it while nothing drives it.
@@ -161,28 +151,6 @@ export function AgentsTable({
                   >
                     {model || "—"}
                   </div>
-                </TableCell>
-
-                <TableCell className="whitespace-nowrap text-center">
-                  {/* Icon only, with the wording on hover: spelled out, this
-                      column cost more width than the fact is worth. */}
-                  {auth ? (
-                    <span
-                      title={t(
-                        auth === "api_key"
-                          ? "agents.list.health.apiKey"
-                          : "agents.list.health.cliLogin",
-                      )}
-                    >
-                      {auth === "api_key" ? (
-                        <KeyRound className="inline size-4 text-muted-foreground" />
-                      ) : (
-                        <Terminal className="inline size-4 text-muted-foreground" />
-                      )}
-                    </span>
-                  ) : (
-                    <span className="text-xs text-muted-foreground">—</span>
-                  )}
                 </TableCell>
 
                 <TableCell>
@@ -234,18 +202,7 @@ export function AgentsTable({
                   {/* The menu only ever adds what the row does not already
                       show: repeating Configure in both read as a duplicate. */}
                   <div className="flex items-center justify-center gap-1.5">
-                    {agent.network ? (
-                      agent.hasCli && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => onOpenTerminal(agent)}
-                        >
-                          <Terminal />
-                          {t("agents.list.chat")}
-                        </Button>
-                      )
-                    ) : (
+                    {agent.network ? null : (
                       <Button
                         size="sm"
                         data-testid={`agent-connect-${agent.name}`}

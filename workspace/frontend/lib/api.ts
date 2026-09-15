@@ -18,11 +18,9 @@ import type {
   ModelProbeResult,
   NetworkDiscovery,
   NetworkProfile,
-  NodeCommand,
   NotificationItem,
   ONMEvent,
   IntegrationBinding,
-  PairingCode,
   ShareSummary,
   TimerItem,
   TodoItem,
@@ -36,7 +34,6 @@ import type {
   WorkspaceFile,
   WorkspaceInvitation,
   WorkspaceMe,
-  WorkspaceNode,
   WorkspaceRole,
   WorkspaceSession,
 } from './types';
@@ -247,40 +244,6 @@ class WorkspaceApi {
   // Nodes — devices running the launcher daemon (connect-a-node)
   // ---------------------------------------------------------------------------
 
-  /** List the workspace's connected nodes with live status. */
-  async listNodes(): Promise<WorkspaceNode[]> {
-    return this.request<WorkspaceNode[]>(`/v1/nodes?network=${this.requireWorkspace()}`);
-  }
-
-  /** Mint a short-lived, single-use pairing code (owner/admin only). */
-  async createPairingCode(): Promise<PairingCode> {
-    return this.request<PairingCode>(`/v1/workspaces/${this.requireWorkspace()}/pairing-codes`, {
-      method: 'POST',
-    });
-  }
-
-  /** Queue a remote agent-management command for a node (owner/admin only). */
-  async enqueueNodeCommand(
-    nodeId: string,
-    action: 'create_agent' | 'configure_agent' | 'start_agent' | 'stop_agent' | 'remove_agent' | 'detect_runtimes' | 'list_dir' | 'probe_agent',
-    args: Record<string, unknown> = {},
-  ): Promise<NodeCommand> {
-    return this.request<NodeCommand>(`/v1/nodes/${nodeId}/commands`, {
-      method: 'POST',
-      body: JSON.stringify({ action, args }),
-    });
-  }
-
-  /** Recent remote commands for a node (to show pending/done status). */
-  async listNodeCommands(nodeId: string): Promise<NodeCommand[]> {
-    return this.request<NodeCommand[]>(`/v1/nodes/${nodeId}/commands`);
-  }
-
-  /** Remove/forget a node from the workspace (owner/admin only). */
-  async deleteNode(nodeId: string): Promise<{ nodeId: string; removed: boolean }> {
-    return this.request(`/v1/nodes/${nodeId}`, { method: 'DELETE' });
-  }
-
   // ---------------------------------------------------------------------------
   // Chat-platform integrations (Slack / Telegram bridges) — owner/admin only
   // ---------------------------------------------------------------------------
@@ -485,7 +448,6 @@ class WorkspaceApi {
     title?: string;
     master?: string;
     participants?: string[];
-    resumeFrom?: string;
   } = {}): Promise<WorkspaceSession> {
     const event = await this.sendEvent({
       type: 'network.channel.create',
@@ -495,7 +457,6 @@ class WorkspaceApi {
         ...(opts.title && { title: opts.title }),
         ...(opts.master && { master: opts.master }),
         ...(opts.participants && { participants: opts.participants }),
-        ...(opts.resumeFrom && { resume_from: opts.resumeFrom }),
       },
     });
 

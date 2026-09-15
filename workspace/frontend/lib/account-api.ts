@@ -1,5 +1,5 @@
 // Membership Home API — the signed-in user's workspaces, keyed to their
-// verified identity (Firebase/Apple bearer), served by the workspace backend's
+// verified identity (Supabase/Apple bearer), served by the workspace backend's
 // GET /v1/account/workspaces. That endpoint also reconciles legacy email-based
 // access into memberships and auto-provisions an empty workspace for brand-new
 // users, so a freshly signed-in user always has at least one entry.
@@ -35,15 +35,6 @@ async function bearerFetch<T>(path: string, idToken: string, options: RequestIni
 /** List the signed-in user's workspaces (Membership Home). */
 export function listAccountWorkspaces(idToken: string): Promise<AccountWorkspace[]> {
   return bearerFetch<AccountWorkspace[]>('/v1/account/workspaces', idToken);
-}
-
-/** Email the caller a "finish setup on your computer" link for a workspace —
-    the async bridge for phone users who can't install the launcher here. */
-export function sendSetupEmail(idToken: string, workspaceIdOrSlug: string): Promise<{ emailSent: boolean }> {
-  return bearerFetch<{ emailSent: boolean }>(`/v1/workspaces/${workspaceIdOrSlug}/setup-email`, idToken, {
-    method: 'POST',
-    body: JSON.stringify({}),
-  });
 }
 
 /** The signed-in user's cross-workspace profile (name + avatar). */

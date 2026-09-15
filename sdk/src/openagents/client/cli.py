@@ -7,7 +7,6 @@ This is the main CLI entry point. Commands are organized into domain modules:
 - cli_network.py  — network start/init/list/interact/publish
 - cli_agent.py    — agent start/list, agents start/list (bulk)
 - cli_identity.py — certs generate/verify, agentid commands
-- cli_packages.py — install/search/update/runtimes
 - cli_shared.py   — shared state (app, console, constants)
 
 Daemon/launcher commands (up/down/status/start/stop/create/connect/autostart)
@@ -23,8 +22,6 @@ from typing import Optional
 import typer
 from rich.panel import Panel
 from rich.progress import Progress, SpinnerColumn, TextColumn
-from rich.table import Table
-from rich import box
 
 # -- Shared state (re-export for backward compatibility) ----------------------
 from openagents.client.cli_shared import app, console, show_banner
@@ -44,7 +41,6 @@ from openagents.client.cli_helpers import (  # noqa: F401
 import openagents.client.cli_network   # noqa: F401  — network_app
 import openagents.client.cli_agent     # noqa: F401  — agent_app, agents_app
 import openagents.client.cli_identity  # noqa: F401  — certs_app, agentid_app
-import openagents.client.cli_packages  # noqa: F401  — install/search/update/runtimes
 
 
 # =============================================================================
@@ -168,12 +164,6 @@ def init_workspace_cmd(
             raise typer.Exit(1)
 
 
-@app.command("list", rich_help_panel="Client")
-def list_agents_cmd():
-    """List locally installed agents and their setup status"""
-    _show_agent_scan()
-
-
 # =============================================================================
 # Callbacks
 # =============================================================================
@@ -220,46 +210,6 @@ def main(
     # Show banner for studio command
     if not no_banner and len(sys.argv) > 1 and sys.argv[1] == 'studio':
         show_banner()
-
-
-def _show_agent_scan():
-    """Scan machine for agents and show readiness status."""
-    from openagents.client.plugin_registry import registry
-
-    console.print("\n[bold blue]OpenAgents[/bold blue] — scanning for agents...\n")
-
-    scan = registry.scan_agents()
-
-    table = Table(box=box.SIMPLE)
-    table.add_column("Agent", style="cyan")
-    table.add_column("Status")
-    table.add_column("Notes", style="dim")
-
-    installed_count = 0
-    for agent in scan:
-        if agent["installed"]:
-            installed_count += 1
-            if agent["ready"]:
-                status = "[green]ready[/green]"
-            else:
-                status = "[yellow]needs setup[/yellow]"
-            notes = agent["message"]
-            if agent["path"] and agent["ready"]:
-                notes = agent["path"]
-        else:
-            status = "[dim]not installed[/dim]"
-            notes = agent["install_command"]
-        table.add_row(agent["label"], status, notes)
-
-    console.print(table)
-
-    if installed_count == 0:
-        console.print("Install an agent: [bold]openagents install claude[/bold]")
-    console.print(
-        "\n[dim]To run agents as a workspace daemon, install the Node CLI:\n"
-        "  npm install -g @openagents-org/agent-launcher\n"
-        "then use  [bold]agn up[/bold]  /  [bold]agn down[/bold].[/dim]\n"
-    )
 
 
 def cli_main():

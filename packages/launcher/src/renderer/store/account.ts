@@ -27,8 +27,12 @@ export interface WorkspaceTarget {
 interface AccountState {
   account: AccountInfo | null
   mode: AppMode
-  /** What the Workspace side shows while signed out. */
-  authMode: "welcome" | "sign-in" | "sign-up"
+  /** What the Workspace side shows while signed out. `check-email` follows a
+   * sign-up when Supabase requires confirming the address before a session
+   * exists. */
+  authMode: "welcome" | "sign-in" | "sign-up" | "check-email"
+  /** The address a "check-email" state is waiting on. */
+  pendingEmail: string | null
   /** Loaded by the next Workspace show, then cleared. See openWorkspace. */
   workspaceTarget: WorkspaceTarget | null
   /** Bumped per openWorkspace, so a target asked for while Workspace is showing still loads. */
@@ -58,13 +62,16 @@ interface AccountState {
   cancelSignIn: () => void
   /** Sign in with an email and password, in the app. */
   signInWithPassword: (email: string, password: string) => Promise<void>
-  signUpWithPassword: (email: string, password: string, displayName?: string) => Promise<void>
+  /** Sign in with a username and password — resolved to an email
+   * server-side only. */
+  signInWithUsername: (username: string, password: string) => Promise<void>
+  signUpWithPassword: (email: string, password: string, username: string) => Promise<void>
   /**
    * Sign in through the browser, for the providers that will not authenticate
    * inside an app window. Resolves false on failure, with the reason in
    * `error` — the caller decides where to show it.
    */
-  signIn: () => Promise<boolean>
+  signIn: (provider: "google" | "github") => Promise<boolean>
   signOut: () => Promise<void>
   clearError: () => void
 }
@@ -73,6 +80,7 @@ export const useAccountStore = create<AccountState>((set, get) => ({
   account: null,
   mode: "workspace",
   authMode: "welcome",
+  pendingEmail: null,
   workspaceTarget: null,
   workspaceTargetSignal: 0,
   ready: false,
@@ -162,11 +170,11 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     set({ signingIn: false })
   },
 
-  signIn: async () => {
+  signIn: async (provider) => {
     if (get().signingIn) return false
     set({ signingIn: true, error: null })
     try {
-      set({ account: await window.api.signIn() })
+      set({ account: await window.api.signIn(provider) })
       return true
     } catch (err) {
       set({ error: (err as Error).message })
@@ -181,8 +189,17 @@ export const useAccountStore = create<AccountState>((set, get) => ({
     set({ account, error: null })
   },
 
-  signUpWithPassword: async (email, password, displayName) => {
-    const account = await window.api.signUpWithPassword(email, password, displayName)
+  signInWithUsername: async (username, password) => {
+    const account = await window.api.signInWithUsername(username, password)
+    set({ account, error: null })
+  },
+
+  signUpWithPassword: async (email, password, username) => {
+    const { account, needsEmailConfirmation } = await window.api.signUpWithPassword(email, password, username)
+    if (needsEmailConfirmation) {
+      set({ authMode: "check-email", pendingEmail: email, error: null })
+      return
+    }
     set({ account, authMode: "sign-in", error: null })
   },
 

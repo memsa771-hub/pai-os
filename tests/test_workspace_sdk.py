@@ -110,18 +110,3 @@ class TestMCPServer:
             agent_name="claude-abcd",
         )
         assert server.name == "openagents-workspace"
-
-
-class TestClaudeAdapter:
-    def test_init(self):
-        from openagents.adapters.claude import ClaudeAdapter
-
-        adapter = ClaudeAdapter(
-            workspace_id="ws-123",
-            session_id="sess-456",
-            token="ws_test_token",
-            agent_name="claude-abcd",
-        )
-        assert adapter.workspace_id == "ws-123"
-        assert adapter.agent_name == "claude-abcd"
-        assert adapter._running is False

@@ -4,7 +4,6 @@ import {
   ArrowRight,
   Copy,
   ExternalLink,
-  Laptop,
   MoreHorizontal,
   Pencil,
   Star,
@@ -21,7 +20,6 @@ import {
   DropdownMenuTrigger,
 } from "../ui/dropdown-menu"
 import { WorkspaceHealth, type WorkspaceHealthState } from "./WorkspaceHealth"
-import { Badge } from "../ui/badge"
 import { WorkspaceQrcodeDialog } from "./WorkspaceQrcodeDialog"
 import { ActivitySparkline } from "./activity-sparkline"
 import { QrcodeIcon } from "../icons/qrcode-icon"
@@ -41,8 +39,6 @@ export interface WorkspaceCardData {
   lastMessagePreview: string | null
   sessionCount: number
   connectedPlatforms: string[]
-  /** Whether THIS machine is the node behind this workspace. */
-  device?: boolean
   activity?: WorkspaceActivity
 }
 
@@ -56,8 +52,6 @@ interface Props {
   onOpenInBrowser: () => void
   onRename: () => void
   onRemove: () => void
-  /** Re-open the pairing dialog after the workspace revoked this device. */
-  onRepair?: () => void
 }
 
 /** The trend line takes the workspace's own health colour. */
@@ -65,8 +59,6 @@ const TREND_TONE: Record<WorkspaceHealthState, string> = {
   healthy: "text-success",
   warning: "text-warning",
   error: "text-destructive",
-  device: "text-muted-foreground",
-  revoked: "text-destructive",
   disconnected: "text-muted-foreground",
 }
 
@@ -74,14 +66,6 @@ const TREND_TONE: Record<WorkspaceHealthState, string> = {
  * What an agent-less card says depends on WHY it has none: nothing set up here,
  * or this device paired in with nothing installed on it yet.
  */
-const EMPTY_TITLE: Partial<Record<WorkspaceHealthState, string>> = {
-  device: "workspaces.card.deviceLinkedTitle",
-  revoked: "workspaces.card.revokedTitle",
-}
-const EMPTY_BODY: Partial<Record<WorkspaceHealthState, string>> = {
-  device: "workspaces.card.deviceLinked",
-  revoked: "workspaces.card.revokedBody",
-}
 
 function Metric({
   label,
@@ -107,7 +91,6 @@ export function WorkspaceCard({
   onOpenInBrowser,
   onRename,
   onRemove,
-  onRepair,
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const {
@@ -119,7 +102,6 @@ export function WorkspaceCard({
     lastMessagePreview,
     sessionCount,
     connectedPlatforms,
-    device,
     activity,
   } = data
   const slug = ws.slug || ws.id
@@ -174,17 +156,6 @@ export function WorkspaceCard({
                   machine in here at all" — two facts that were sharing one chip
                   and lost the second one the moment an agent bound here.
                   Skipped when health is already saying it (no agents yet). */}
-              {device && health !== "device" && (
-                <Badge
-                  variant="outline"
-                  size="sm"
-                  className="shrink-0 gap-1"
-                  title={t("workspaces.card.deviceBadgeHint")}
-                >
-                  <Laptop />
-                  {t("workspaces.card.deviceBadge")}
-                </Badge>
-              )}
             </div>
             <div className="truncate font-mono text-2xs text-muted-foreground">
               {workspaceDisplayHost(ws.endpoint)}/{slug}
@@ -217,16 +188,10 @@ export function WorkspaceCard({
         </Metric>
         <Metric label={t("workspaces.card.lastActive")}>
           <span className="truncate" title={activityTitle}>
-            {/* "Never" is a claim about the workspace's whole history, and a
-                revoked card is in no position to make it: the pairing that fed
-                this number is gone, so what we have is an absence of data, not
-                a workspace that was never used. */}
-            {relativeTimeAgo(t, lastActiveAt) ||
-              t(
-                health === "revoked"
-                  ? "workspaces.relativeTime.unknown"
-                  : "workspaces.relativeTime.never",
-              )}
+            {/* "Never" is a claim about the workspace's whole history — an
+                absence of activity data isn't proof the workspace was never
+                used, so fall back to it only when there's truly nothing. */}
+            {relativeTimeAgo(t, lastActiveAt) || t("workspaces.relativeTime.never")}
           </span>
         </Metric>
       </div>
@@ -234,19 +199,14 @@ export function WorkspaceCard({
       {/* Agents first: a workspace with none can't produce activity, so the
           trend line would just be a flat lie where the real answer is "install
           something here". */}
-      {agents.length === 0 || health === "revoked" ? (
+      {agents.length === 0 ? (
         <div className="mx-4 mb-3 rounded-md border border-dashed px-4 py-5 text-center">
           <div className="text-xs text-muted-foreground">
-            {t(EMPTY_TITLE[health] || "workspaces.card.noAgentsTitle")}
+            {t("workspaces.card.noAgentsTitle")}
           </div>
           <div className="mt-1 text-2xs text-muted-foreground">
-            {t(EMPTY_BODY[health] || "workspaces.card.noAgents")}
+            {t("workspaces.card.noAgents")}
           </div>
-          {health === "revoked" && onRepair && (
-            <Button size="sm" className="mt-3" onClick={onRepair}>
-              {t("workspaces.card.repair")}
-            </Button>
-          )}
         </div>
       ) : (
         <div className="px-4 pb-2">

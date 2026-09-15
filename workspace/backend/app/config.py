@@ -20,47 +20,39 @@ class Config:
     # Auth mode: "workspace_token" (self-hosted) or "firebase" (hosted)
     AUTH_MODE: str = os.environ.get("AUTH_MODE", "workspace_token")
 
-    # Firebase (used for user login on workspace.openagents.org).
-    #
-    # Intentionally empty by default. A project id is all _init_firebase() needs
-    # to verify tokens (no service account required), so a non-empty default
-    # makes every deployment trust identity tokens issued by that project. For a
-    # self-hosted instance that means accepting logins from an identity tenant
-    # its operator does not control: any holder of an account there can call
-    # POST /v1/workspaces/{id}/claim, which takes a bearer and no workspace
-    # token, and claim any workspace whose creator_email is unset. The hosted
-    # deployment sets this explicitly via the environment.
-    FIREBASE_PROJECT_ID: str = os.environ.get("FIREBASE_PROJECT_ID", "")
-
     # Firebase service account credentials, the whole JSON key file as a
-    # single-line string. Optional for login (verifying an ID token needs only
-    # FIREBASE_PROJECT_ID plus Google's public certs) but REQUIRED for mobile
-    # push: services/fcm_client.py sends through Firebase Cloud Messaging,
-    # which is an authenticated API call. Without it, push is silently off.
+    # single-line string. Firebase is no longer a human-login provider here
+    # (see app.firebase_auth / Supabase below) — this is kept only because
+    # services/fcm_client.py sends mobile push through Firebase Cloud
+    # Messaging, which is a separate, authenticated API call that shares the
+    # same Admin SDK app (_init_firebase()). Without it, push is silently off.
     FIREBASE_CREDENTIALS_JSON: str = os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
 
-    # Firebase Web API key of the same project — the public key that ships in
-    # the web client bundle. Used server-side to exchange the openagents.org
-    # login-handoff custom token via the Identity Toolkit REST API on behalf of
-    # browsers that cannot reach Google themselves (mainland China).
-    FIREBASE_WEB_API_KEY: str = os.environ.get(
-        "FIREBASE_WEB_API_KEY", "AIzaSyCXgN-7HfgAQiN0pRKqGi8jMbGGo9e9X34"
-    )
+    # Supabase Auth — the sole human-identity provider for web/desktop (and,
+    # later, mobile). SUPABASE_ANON_KEY is the public/publishable key that also
+    # ships in every client bundle, so it is not a secret; there is
+    # deliberately no service-role key or JWT signing secret here (see
+    # app.firebase_auth.verify_supabase_claims, which verifies tokens via
+    # Supabase's own JWKS/introspection instead of a shared secret).
+    #
+    # TODO(deploy): require these public values from environment configuration.
+    # They are intentionally defaults only for the current development phase.
+    SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "https://qhrzlmfzdeulhdzpadtn.supabase.co")
+    SUPABASE_ANON_KEY: str = os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_W_ITKg52Rr3G0eeoi4wPLQ_AdSTiKPD")
 
-    # Workspace-issued login session (HS256 JWT). Minted by POST /v1/auth/session
-    # after a server-side custom-token exchange and accepted as an identity
-    # bearer alongside Firebase / Apple ID tokens, so a signed-in browser never
-    # has to talk to Google. Unset = the endpoint is disabled (503).
-    WORKSPACE_SESSION_SECRET: str = os.environ.get("WORKSPACE_SESSION_SECRET", "")
-    WORKSPACE_SESSION_TTL_DAYS: int = int(os.environ.get("WORKSPACE_SESSION_TTL_DAYS", "30"))
+    # Blast-radius cap for POST /v1/auth/sign-in-username (per process, sliding
+    # hour, keyed by client IP) — mirrors PILOT_MAX_GRANTS_PER_HOUR below.
+    SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR: int = int(
+        os.environ.get("SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR", "20")
+    )
 
     # Sign in with Apple. Native ("Sign in with Apple" on the iOS app) issues an
     # identity token whose `aud` is the app's bundle id; web/services flows use
     # the Services ID instead. Accept a comma-separated allowlist so both work.
     #
-    # Empty by default for the same reason as FIREBASE_PROJECT_ID: a bundle id
-    # baked in here is an identity tenant every deployment would trust. Set it
-    # in the environment for the deployment that owns that bundle id.
+    # Empty by default: a bundle id baked in here is an identity tenant every
+    # deployment would trust. Set it in the environment for the deployment
+    # that owns that bundle id.
     APPLE_CLIENT_IDS: str = os.environ.get("APPLE_CLIENT_IDS", "")
 
     # Apple push used to be sent direct to APNs from here (APNS_AUTH_KEY /
@@ -129,20 +121,20 @@ class Config:
     CLOUD_AGENT_MAX_CONTEXT_CHARS: int = int(os.environ.get("CLOUD_AGENT_MAX_CONTEXT_CHARS", "60000"))
     CLOUD_AGENT_MAX_DEPTH: int = int(os.environ.get("CLOUD_AGENT_MAX_DEPTH", "3"))
 
-    # Yumi — first-party built-in onboarding assistant (a cloud agent auto-added
+    # PAI Counselor — Placement AI's primary education counselor (auto-added
     # to every workspace). Its credentials are SERVER-HELD and shared across all
     # workspaces: never persisted per-workspace and never exposed to the frontend.
-    # Yumi is only provisioned when enabled AND a key is configured, so
+    # PAI Counselor is only provisioned when enabled AND a key is configured, so
     # self-hosted deployments without a key simply don't get it.
-    YUMI_ENABLED: bool = os.environ.get("YUMI_ENABLED", "true").lower() in ("true", "1", "yes")
-    YUMI_API_KEY: str = os.environ.get("YUMI_API_KEY", "")
-    YUMI_BASE_URL: str = os.environ.get("YUMI_BASE_URL", "https://api-gateway.openagents.org/v1")
+    PAI_ENABLED: bool = os.environ.get("PAI_ENABLED", "false").lower() in ("true", "1", "yes")
+    PAI_API_KEY: str = os.environ.get("PAI_API_KEY", "")
+    PAI_BASE_URL: str = os.environ.get("PAI_BASE_URL", "https://api.openai.com/v1")
     # minimax-m2.5: fastest reliable tool-looper on the gateway (2026-08-27
     # screen of all 23 models: ~7s/2-turn loop, 4/4 valid reps, all quality
     # probes passed; deepseek-4-flash had degraded to >40s continuation turns).
-    YUMI_MODEL: str = os.environ.get("YUMI_MODEL", "minimax-m2.5")
+    PAI_MODEL: str = os.environ.get("PAI_MODEL", "gpt-5.4-mini")
     # Safety cap on the tool-calling loop per user message.
-    YUMI_MAX_TOOL_ITERATIONS: int = int(os.environ.get("YUMI_MAX_TOOL_ITERATIONS", "6"))
+    PAI_MAX_TOOL_ITERATIONS: int = int(os.environ.get("PAI_MAX_TOOL_ITERATIONS", "6"))
 
     # Google OAuth (for "Sign in with Google" Gemini integration)
     GOOGLE_OAUTH_CLIENT_ID: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")

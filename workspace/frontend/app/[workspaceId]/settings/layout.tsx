@@ -4,7 +4,7 @@ import { use, Suspense, useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
 import {
-  ArrowLeft, CircleUser, Gift, Globe, KeyRound, LogIn, MonitorSmartphone, Settings2, ShieldCheck, SlidersHorizontal, Users,
+  ArrowLeft, CircleUser, Gift, Globe, KeyRound, LogIn, Settings2, ShieldCheck, SlidersHorizontal, Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { AdminSettingsContext, type AdminSettingsValue } from '@/components/settings/admin-context';
@@ -33,7 +33,6 @@ const SECTIONS = [
   { slug: 'general', labelKey: 'admin.navGeneral', icon: Settings2 },
   { slug: 'members', labelKey: 'admin.navMembers', icon: Users },
   { slug: 'security', labelKey: 'admin.navSecurity', icon: ShieldCheck },
-  { slug: 'devices', labelKey: 'admin.navDevices', icon: MonitorSmartphone },
   { slug: 'model-access', labelKey: 'admin.navModelAccess', icon: KeyRound },
   { slug: 'integrations', labelKey: 'admin.navIntegrations', icon: Globe },
   { slug: 'preferences', labelKey: 'admin.navPreferences', icon: SlidersHorizontal },

@@ -144,6 +144,13 @@ async def add_cloud_agent(
             "Agent name must be 3-64 chars, alphanumeric/hyphen/underscore",
         )
 
+    from app.services.pai import PAI_AGENT_NAME, PAI_PROVIDER
+    if body.agent_name.casefold() == PAI_AGENT_NAME or body.provider == PAI_PROVIDER:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be installed or replaced.",
+        )
+
     model_info = validate_provider_model(body.provider, body.model)
     if not model_info:
         return json_response(
@@ -151,20 +158,9 @@ async def add_cloud_agent(
             f"Unknown provider/model: {body.provider}/{body.model}",
         )
 
-    # The built-in "openagents" provider (Yumi) is server-managed: it runs the
-    # assistant tool loop and its key is injected at call time, so the user
-    # doesn't (and can't) supply one. This is the re-add path after a user
-    # removed the built-in agent.
-    from app.services.yumi import YUMI_CATEGORY, YUMI_KEY_PLACEHOLDER
-    is_builtin = body.provider == "openagents"
-    if is_builtin:
-        category = YUMI_CATEGORY
-        effective_key = YUMI_KEY_PLACEHOLDER
-        member_description = "OpenAgents built-in assistant — helps you get started"
-    else:
-        category = model_info.category
-        effective_key = body.api_key
-        member_description = f"Cloud agent: {model_info.label} ({body.provider})"
+    category = model_info.category
+    effective_key = body.api_key
+    member_description = f"Cloud agent: {model_info.label} ({body.provider})"
 
     # Namespace lock BEFORE the membership read: a concurrent create/rename
     # could otherwise invalidate what we read before we write.
@@ -220,9 +216,9 @@ async def add_cloud_agent(
             cfg.model = body.model
             cfg.category = category
             cfg.api_key = effective_key
-            cfg.base_url = None if is_builtin else body.base_url
-            cfg.system_prompt = None if is_builtin else body.system_prompt
-            cfg.max_tokens = None if is_builtin else body.max_tokens
+            cfg.base_url = body.base_url
+            cfg.system_prompt = body.system_prompt
+            cfg.max_tokens = body.max_tokens
             cfg.status = "active"
         db.commit()
         logger.info(
@@ -238,9 +234,9 @@ async def add_cloud_agent(
         model=body.model,
         category=category,
         api_key=effective_key,
-        base_url=None if is_builtin else body.base_url,
-        system_prompt=None if is_builtin else body.system_prompt,
-        max_tokens=None if is_builtin else body.max_tokens,
+        base_url=body.base_url,
+        system_prompt=body.system_prompt,
+        max_tokens=body.max_tokens,
     )
     db.add(cfg)
 
@@ -289,8 +285,14 @@ async def list_cloud_agents(
         )
     ).scalars().all()
 
+    from app.services.pai import PAI_AGENT_NAME, PAI_PROVIDER
+    visible_configs = [
+        cfg for cfg in configs
+        if cfg.agent_name != PAI_AGENT_NAME and cfg.provider != PAI_PROVIDER
+    ]
+
     return success_response({
-        "cloud_agents": [_format_cloud_agent(c) for c in configs],
+        "cloud_agents": [_format_cloud_agent(c) for c in visible_configs],
     })
 
 
@@ -323,6 +325,13 @@ async def update_cloud_agent(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    from app.services.pai import PAI_AGENT_NAME
+    if agent_name.casefold() == PAI_AGENT_NAME:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be modified.",
+        )
 
     cfg = db.execute(
         select(CloudAgentConfig).where(
@@ -392,6 +401,13 @@ async def remove_cloud_agent(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    from app.services.pai import PAI_AGENT_NAME
+    if agent_name.casefold() == PAI_AGENT_NAME:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be removed.",
+        )
 
     cfg = db.execute(
         select(CloudAgentConfig).where(

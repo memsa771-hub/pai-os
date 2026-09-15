@@ -5,22 +5,10 @@ on:
     branches: [main, master, develop]
     paths:
       - 'packages/agent-connector/**'
-      # registry/ is the source of truth for the bundled catalog and
-      # scripts/sync-registry.js generates it, so a change to either has to run
-      # the suite that checks they still agree (test/registry-sync.test.js).
-      # Without these the drift this check exists to catch lands untested.
-      - 'registry/**'
-      - 'scripts/sync-registry.js'
   pull_request:
     branches: [main, master, develop]
     paths:
       - 'packages/agent-connector/**'
-      # registry/ is the source of truth for the bundled catalog and
-      # scripts/sync-registry.js generates it, so a change to either has to run
-      # the suite that checks they still agree (test/registry-sync.test.js).
-      # Without these the drift this check exists to catch lands untested.
-      - 'registry/**'
-      - 'scripts/sync-registry.js'
   workflow_dispatch:
 
 jobs:
@@ -40,10 +28,6 @@ jobs:
       with:
         node-version: ${{ matrix.node-version }}
 
-    # The suite ran with no node_modules at all until the OpenWorker adapter,
-    # whose mock server needs `ws` — the same package the adapter's WebSocket
-    # client uses at runtime. Without this the openworker tests would be skipped
-    # in CI while passing locally, which is the worst of both.
     - name: Install dependencies
       working-directory: packages/agent-connector
       run: npm ci
@@ -52,10 +36,8 @@ jobs:
       working-directory: packages/agent-connector
       # shell: bash ensures the `test/*.test.js` glob is expanded by bash
       # even on Windows runners (PowerShell doesn't expand globs).
-      # mini.test.js (mini-SWE-agent) is excluded — that agent isn't part of the
-      # supported set and its stop/SIGTERM test is unreliable on Windows.
       shell: bash
-      run: node --test $(ls test/*.test.js | grep -v 'mini\.test\.js')
+      run: node --test test/*.test.js
 
   publish:
     needs: test

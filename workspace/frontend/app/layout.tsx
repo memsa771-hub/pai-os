@@ -101,7 +101,7 @@ export default async function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <I18nProvider initialLocale={locale} hasStoredLocale={hasStoredLocale}>
             {/* Legacy email/password AuthProvider was removed in v1.0 —
-                Firebase (OpenAgentsAuthProvider) is the sole identity path. */}
+                OpenAgentsAuthProvider supplies the canonical identity path. */}
             <OpenAgentsAuthProvider>
               <DialogsProvider>
                 {children}

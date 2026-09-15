@@ -6,6 +6,7 @@ import { capture, group } from './analytics';
 import { useOpenAgentsAuth } from './openagents-auth-context';
 import { generateUserId, getStoredIdentity, storeIdentity } from './identity';
 import { networkAgentToWorkspaceAgent, networkChannelToSession } from './types';
+import { defaultWorkspaceConversation } from './primary-conversation';
 import { useUploadQueue } from '@/hooks/use-upload-queue';
 import type { PendingUpload } from '@/hooks/use-upload-queue';
 import type { BrowserPersistentContext, BrowserTab, DMConversation, KanbanTask, Workflow, WorkflowStep, KnowledgeEntry, NotificationItem, OnlineUser, RoutineItem, TodoItem, TrashEntry, Workspace, WorkspaceAgent, WorkspaceFile, WorkspaceIdentity, WorkspaceSession } from './types';
@@ -146,7 +147,7 @@ interface WorkspaceContextValue {
   setSelectedFileId: (id: string | null) => void;
   setSelectedKnowledgeId: (id: string | null) => void;
   setCurrentFilePath: (path: string) => void;
-  createSession: (opts?: { title?: string; master?: string; participants?: string[]; resumeFrom?: string }) => Promise<WorkspaceSession>;
+  createSession: (opts?: { title?: string; master?: string; participants?: string[] }) => Promise<WorkspaceSession>;
   /** Request that a thread be opened with an agent as soon as it joins — used
    *  by guided onboarding for the user's first agent. */
   requestFirstThread: (agentName: string) => void;
@@ -1235,9 +1236,9 @@ export function WorkspaceProvider({
           lastKnownEventAtRef.current[ch.sessionId] = ch.lastEventAt;
         }
 
-        // Auto-select the most-recently-updated thread, mirroring the sidebar's
-        // default (non-search) list order so the opened thread === sidebar's
-        // first row. Two distinct sets:
+        // PAI Counselor is the primary workspace experience. On workspace
+        // entry, prefer its canonical persisted conversation; generic threads
+        // and DMs remain available but are secondary navigation.
         //   • keep set — current is preserved if it still belongs to this
         //     workspace (any discovered channel: active/archived/routine) or is
         //     a DM, AND we did not just switch workspaces.
@@ -1251,13 +1252,9 @@ export function WorkspaceProvider({
           cur != null &&
           (channelSessions.some((s) => s.sessionId === cur) || cur.startsWith('dm:'));
         if (!keepCurrent) {
-          const toMs = (s: WorkspaceSession) =>
-            s.lastEventAt || (s.createdAt ? new Date(s.createdAt).getTime() : 0);
-          const newest = [...channelSessions]
-            .filter((s) => s.status === 'active' && !s.sessionId.startsWith('routine:'))
-            .sort((a, b) => toMs(b) - toMs(a))[0];
-          if (newest) {
-            setCurrentSessionId(newest.sessionId);
+          const selected = defaultWorkspaceConversation(channelSessions);
+          if (selected) {
+            setCurrentSessionId(selected.sessionId);
           } else {
             // No active thread to fall back to (empty/archived-only workspace,
             // or the current thread was deleted) — clear any stale selection so
@@ -1391,7 +1388,7 @@ export function WorkspaceProvider({
     return () => clearTimeout(timeout);
   }, [refreshDiscovery]);
 
-  const createSession = useCallback(async (opts?: { title?: string; master?: string; participants?: string[]; resumeFrom?: string }) => {
+  const createSession = useCallback(async (opts?: { title?: string; master?: string; participants?: string[] }) => {
     // Only set a channel leader when one is explicitly requested (e.g. the
     // single-agent DM path). The default "dynamic" orchestration mode needs no
     // leader, so threads created from the picker start with none — a leader can
@@ -1403,9 +1400,8 @@ export function WorkspaceProvider({
       title: opts?.title,
       master: masterAgent,
       participants,
-      resumeFrom: opts?.resumeFrom,
     });
-    capture('thread_created', { participant_count: participants.length, has_resume: !!opts?.resumeFrom });
+    capture('thread_created', { participant_count: participants.length });
     setSessions((prev) => [session, ...prev]);
     setCurrentSessionId(session.sessionId);
     return session;

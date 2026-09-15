@@ -164,14 +164,23 @@ function getEnhancedPATH() {
 function getEnhancedEnv(baseEnv) {
   const env = { ...(baseEnv || process.env) };
   const extra = getExtraBinDirs();
+  const pathKeys = Object.keys(env).filter((k) => k.toLowerCase() === 'path');
+  // Prefer an explicitly supplied/updated PATH over the casing inherited from
+  // Windows (usually "Path"). JavaScript can hold both keys even though the OS
+  // environment cannot; passing both to libuv makes the selected value
+  // undefined after callers update process.env.PATH at runtime.
+  const pathKey = pathKeys.includes('PATH') ? 'PATH' : (pathKeys[0] || 'PATH');
+  const currentPath = env[pathKey] || '';
+  for (const duplicate of pathKeys) {
+    if (duplicate !== pathKey) delete env[duplicate];
+  }
   if (extra.length > 0) {
     // Spreading process.env on Windows yields a "Path" key (not "PATH"), so a
     // bare `env.PATH = …` would create a SECOND key holding only the extra dirs
     // — no System32 — and libuv picks that truncated one when resolving spawned
     // executables (cmd.exe / where.exe become unfindable). Update the existing
     // case-insensitive path key in place instead.
-    const pathKey = Object.keys(env).find((k) => k.toLowerCase() === 'path') || 'PATH';
-    env[pathKey] = extra.join(SEP) + SEP + (env[pathKey] || '');
+    env[pathKey] = extra.join(SEP) + SEP + currentPath;
   }
   if (IS_WINDOWS) {
     // Force UTF-8 output from child processes on non-English Windows locales
@@ -217,7 +226,24 @@ function whichBinary(name, { allowWsl = true } = {}) {
 
 /** The PATH lookup proper — `where`/`which`, this side of any boundary. */
 function _whichNative(name) {
-  let hits = _runWhich(name);
+  // Inspect PATH with Node first. Besides avoiding shell/codepage failures on
+  // Windows, this makes runtime PATH changes immediately observable after the
+  // lookup cache is cleared (important for installers and long-lived GUIs).
+  const suffixes = IS_WINDOWS && !/\.[^\\/]+$/.test(name)
+    ? ['.cmd', '.exe', '.bat', '.com', '']
+    : [''];
+  const hitsFromPath = [];
+  for (const rawDir of getEnhancedPATH().split(SEP)) {
+    const dir = rawDir.trim().replace(/^"|"$/g, '');
+    if (!dir) continue;
+    for (const suffix of suffixes) {
+      const candidate = path.join(dir, name + suffix);
+      try {
+        if (fs.statSync(candidate).isFile()) hitsFromPath.push(candidate);
+      } catch {}
+    }
+  }
+  let hits = hitsFromPath.length ? hitsFromPath : _runWhich(name);
 
   if (isRunningInWsl()) {
     // Interop puts the Windows PATH on the distro's PATH, so `which claude`

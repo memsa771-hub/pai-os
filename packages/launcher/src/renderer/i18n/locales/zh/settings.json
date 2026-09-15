@@ -223,7 +223,6 @@
     "types": "已使用类型",
     "agentCount": "{{count}} 个",
     "typeCount": "{{count}} 种",
-    "browseMarketplace": "智能体市场",
     "openAgents": "打开智能体"
   },
   "notifications": {

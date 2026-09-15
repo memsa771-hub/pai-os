@@ -17,7 +17,6 @@ const START_WAITS_MS = [500, 1000, 1500, 2500, 3000, 3000, 3000, 3000, 3000, 300
 
 interface AgentActions {
   toggle: (agent: Agent) => Promise<void>
-  openTerminal: (agent: Agent) => void
 }
 
 export function useAgentActions(
@@ -92,10 +91,5 @@ export function useAgentActions(
 
   return {
     toggle,
-    // The in-app chat view is gone — "chat" now means an interactive CLI
-    // session in the agent's working folder.
-    openTerminal: (agent) => {
-      void window.api.openAgentTerminal(agent.name).catch(reportError)
-    },
   }
 }

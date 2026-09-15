@@ -17,7 +17,6 @@
     "connections": "Connections",
     "credentials": "Credentials",
     "github": "GitHub",
-    "install": "Agent Marketplace",
     "logs": "Logs",
     "settings": "Settings"
   },
@@ -29,7 +28,6 @@
     "startAll": "Start all agents",
     "stopAll": "Stop all agents",
     "addWorkspace": "$t(common.actions.addWorkspace)",
-    "installAgent": "Install new agent",
     "theme": "Theme: {{mode}}"
   },
   "themes": {

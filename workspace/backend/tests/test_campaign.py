@@ -127,9 +127,9 @@ def test_agent_joined_milestones(db, campaign_on, gateway):
     ws = _mk_workspace(db, user)
     campaign.ensure_account(db, user)
 
-    # Cloud agents (incl. Yumi) never count.
-    _mk_member(db, ws, "yumi", "cloud:openagents")
-    campaign.on_agent_joined(str(ws.id), "cloud:openagents")
+    # Cloud agents (including system agents) never count.
+    _mk_member(db, ws, "cloud-helper", "cloud:openai")
+    campaign.on_agent_joined(str(ws.id), "cloud:openai")
     _mk_member(db, ws, "gpt-cloud", "cloud:openai")
     campaign.on_agent_joined(str(ws.id), "cloud:openai")
     assert campaign.total_granted(db, user.id) == 5.0

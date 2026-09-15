@@ -9,7 +9,7 @@ const account = { email: "person@example.test", displayName: "Person", expiresAt
 beforeEach(() => {
   localStorage.clear()
   useAccountStore.setState({
-    account: null, mode: "workspace", authMode: "welcome",
+    account: null, mode: "workspace", authMode: "welcome", pendingEmail: null,
     workspaceTarget: null, workspaceTargetSignal: 0, ready: false,
   })
   window.api = {

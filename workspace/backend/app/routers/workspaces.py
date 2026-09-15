@@ -70,10 +70,20 @@ def _verify_workspace_access(workspace, token: Optional[str], authorization: Opt
     Thin wrapper over the single source of truth in app.access — kept here so
     the many callers importing this name don't have to change. (This path now
     also accepts Sign in with Apple bearers, matching the network router; the
-    old copy verified Google/Firebase tokens only.)
+    old copy verified a single hosted identity provider only.)
     """
     from app.access import verify_workspace_access
     return verify_workspace_access(workspace, token, authorization)
+
+
+def _workspace_access_denied(authorization: Optional[str]):
+    """Distinguish missing/invalid auth (401) from a valid non-member (403)."""
+    bearer = _extract_bearer(authorization)
+    if bearer:
+        from app.firebase_auth import verify_identity_token
+        if verify_identity_token(bearer):
+            return json_response(ResponseCode.FORBIDDEN, "Workspace membership required")
+    return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +163,7 @@ def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
             "description": m.description,
             "workingDir": m.working_dir,
             "model": m.model,
-            "builtin": (m.agent_type or "") == "cloud:openagents",
+            "builtin": (m.agent_type or "") == "cloud:placement_ai",
             "lastHeartbeatAt": m.last_heartbeat.isoformat() if m.last_heartbeat else None,
             "joinedAt": m.joined_at.isoformat() if m.joined_at else None,
         })
@@ -293,16 +303,16 @@ def create_workspace(
             agent_name=body.agent_name,
         ))
 
-    # Auto-provision the built-in Yumi onboarding assistant (no-op when disabled
+    # Auto-provision the built-in PAI Counselor onboarding assistant (no-op when disabled
     # or no server key is configured). Never let this block workspace creation.
     try:
-        from app.services.yumi import provision_yumi, seed_welcome_thread
-        if provision_yumi(db, workspace) and not body.agent_name:
-            # Web-created workspace (no agent yet): seed a Yumi-led welcome
-            # thread so the first screen is a conversation, not an empty room.
+        from app.services.pai import provision_pai, seed_welcome_thread
+        if provision_pai(db, workspace):
+            # Every workspace gets the same canonical PAI conversation, even
+            # when a legacy caller also requested a starter agent/session.
             seed_welcome_thread(db, workspace)
     except Exception:
-        logger.warning("create_workspace: failed to provision Yumi", exc_info=True)
+        logger.warning("create_workspace: failed to provision PAI Counselor", exc_info=True)
 
     db.commit()
     db.refresh(workspace)
@@ -378,7 +388,7 @@ def get_workspace(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+        return _workspace_access_denied(authorization)
 
     members = db.execute(
         select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace.id)
@@ -409,7 +419,7 @@ def update_workspace(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+        return _workspace_access_denied(authorization)
 
     if body.name is not None:
         workspace.name = body.name
@@ -461,15 +471,16 @@ def claim_workspace(
     """
     Claim ownership of a workspace.
 
-    Requires a valid Firebase bearer token. Sets creator_email on the workspace
-    so the user can access it without a workspace token.
+    Requires a valid identity bearer token (Supabase or Apple). Sets
+    creator_email on the workspace so the user can access it without a
+    workspace token.
     """
     bearer = _extract_bearer(authorization)
     if not bearer:
         return json_response(ResponseCode.UNAUTHORIZED, "Bearer token required")
 
-    from app.firebase_auth import verify_firebase_token
-    email = verify_firebase_token(bearer)
+    from app.firebase_auth import verify_identity_token
+    email = verify_identity_token(bearer)
     if not email:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid or expired token")
 
@@ -508,7 +519,7 @@ def rotate_token(
 ):
     """Rotate the workspace token. Old token immediately stops working.
 
-    Requires either the current workspace token or Firebase bearer auth
+    Requires either the current workspace token or verified human bearer auth
     from the workspace owner.
     """
     workspace = db.execute(
@@ -519,7 +530,7 @@ def rotate_token(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     new_token = secrets.token_urlsafe(32)
     workspace.password_hash = new_token
@@ -552,7 +563,14 @@ def remove_member(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
+
+    from app.services.pai import PAI_AGENT_NAME
+    if agent_name.casefold() == PAI_AGENT_NAME:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be removed.",
+        )
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -580,9 +598,10 @@ class MemberUpdateRequest(BaseModel):
     enabled_skills: Optional[Dict[str, bool]] = None
     # Display label, any script. Empty string clears it (falls back to agent_name).
     display_name: Optional[str] = None
-    # Model id the agent should use (from /v1/agent-catalog/{type} models, but
-    # any id is accepted — catalogs are curated suggestions). Empty string
-    # clears the override back to the agent's own default.
+    # Model id the agent should use (see /v1/cloud-agents/providers for the
+    # available providers/models, but any id is accepted — that list is only
+    # a curated suggestion). Empty string clears the override back to the
+    # agent's own default.
     model: Optional[str] = None
 
 
@@ -604,7 +623,14 @@ def update_member(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
+
+    from app.services.pai import PAI_AGENT_NAME
+    if agent_name.casefold() == PAI_AGENT_NAME:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "PAI Counselor is a system agent and cannot be modified.",
+        )
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -744,7 +770,7 @@ def generate_member_description(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -960,7 +986,7 @@ async def install_skill(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -1066,7 +1092,7 @@ async def report_skill_status(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -1164,7 +1190,7 @@ async def uninstall_skill(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     member = db.execute(
         select(WorkspaceMember).where(
@@ -1221,7 +1247,7 @@ async def list_custom_skills(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     return success_response({"skills": list(_custom_skills_map(workspace).values())})
 
@@ -1259,7 +1285,7 @@ async def register_custom_skill(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     # The file must exist AND belong to this workspace. The generic file
     # download route only checks "can you access the file's own workspace", so
@@ -1355,7 +1381,14 @@ def get_channel(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
+
+    from app.services.pai import PAI_PRIMARY_CHANNEL
+    if channel_name == PAI_PRIMARY_CHANNEL:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "The PAI Counselor conversation is a system conversation and cannot be modified.",
+        )
 
     channel = db.execute(
         select(Channel).where(
@@ -1389,7 +1422,14 @@ def update_channel(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
+
+    from app.services.pai import PAI_PRIMARY_CHANNEL
+    if channel_name == PAI_PRIMARY_CHANNEL:
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            "The PAI Counselor conversation is managed by Placement AI",
+        )
 
     channel = db.execute(
         select(Channel).where(
@@ -1454,7 +1494,7 @@ def delete_workspace(
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Soft-delete a workspace (set status to 'deleted'). Requires workspace token or Firebase owner auth."""
+    """Soft-delete a workspace (set status to 'deleted'). Requires workspace token or verified owner auth."""
     workspace = db.execute(
         select(Workspace).where(_workspace_filter(workspace_id))
     ).scalar_one_or_none()
@@ -1463,7 +1503,7 @@ def delete_workspace(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     workspace.status = "deleted"
     db.commit()
@@ -1534,7 +1574,7 @@ def list_collaborators(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     rows = workspace.collaborators or []
     cards = _user_cards(db, [c.email for c in rows])
@@ -1566,7 +1606,7 @@ async def record_presence(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     email = (body.senderEmail or "").strip().lower()
     if not email or "@" not in email:
@@ -1606,7 +1646,7 @@ def add_collaborator(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     email = body.email.strip().lower()
     if not email or "@" not in email:
@@ -1620,8 +1660,8 @@ def add_collaborator(
     added_by = None
     bearer = _extract_bearer(authorization)
     if bearer:
-        from app.firebase_auth import verify_firebase_token
-        added_by = verify_firebase_token(bearer)
+        from app.firebase_auth import verify_identity_token
+        added_by = verify_identity_token(bearer)
 
     # Upsert: update role if already exists
     existing = db.execute(
@@ -1664,7 +1704,7 @@ def remove_collaborator(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+        return _workspace_access_denied(authorization)
 
     email_lower = email.strip().lower()
     collab = db.execute(
@@ -1744,7 +1784,7 @@ def list_team(
     if not workspace or workspace.status == "deleted":
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db, min_role="member"):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+        return _workspace_access_denied(authorization)
     return success_response(_team_rows(db, workspace.id))
 
 
@@ -1892,7 +1932,7 @@ def join_team_self(
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
     if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+        return _workspace_access_denied(authorization)
 
     user = resolve_current_user(db, authorization)
     if not user:
@@ -1932,7 +1972,7 @@ def get_me(
     if not workspace or workspace.status == "deleted":
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
     if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+        return _workspace_access_denied(authorization)
 
     token_access = bool(
         workspace.password_hash and x_workspace_token == workspace.password_hash
@@ -2118,43 +2158,4 @@ def revoke_invite(
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/workspaces/{id}/pairing-codes — mint a node pairing code
 # ---------------------------------------------------------------------------
-
-@router.post("/{workspace_id}/pairing-codes")
-def create_pairing_code(
-    workspace_id: str,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """Generate a short-lived, single-use code to connect a node (device) to this
-    workspace. Owner/admin only (a workspace-token holder also qualifies). The
-    launcher redeems it at POST /v1/nodes/redeem."""
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-    if not workspace or workspace.status == "deleted":
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db, min_role="admin"):
-        return json_response(ResponseCode.FORBIDDEN, "Only an owner or admin can create pairing codes")
-
-    from app.models import NodePairingCode
-    from app.routers.nodes import generate_pairing_code, format_pairing_code, PAIRING_TTL
-
-    code = generate_pairing_code()
-    now = datetime.now(timezone.utc)
-    expires = now + PAIRING_TTL
-    creator = resolve_current_user(db, authorization)
-    db.add(NodePairingCode(
-        code=code,
-        workspace_id=workspace.id,
-        created_by=creator.email if creator else None,
-        expires_at=expires,
-    ))
-    db.commit()
-    return success_response({
-        "code": format_pairing_code(code),
-        "expiresAt": expires.isoformat(),
-        "expiresInSeconds": int(PAIRING_TTL.total_seconds()),
-    })

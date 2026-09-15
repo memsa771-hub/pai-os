@@ -24,6 +24,10 @@ services:
       AUTH_MODE: workspace_token
       IDENTITY_MODE: standalone
       CORS_ORIGINS: http://localhost:3000
+      PAI_ENABLED: ${PAI_ENABLED:-false}
+      PAI_API_KEY: ${PAI_API_KEY:-}
+      PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
+      PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
     ports:
       - "8000:8000"
     depends_on:

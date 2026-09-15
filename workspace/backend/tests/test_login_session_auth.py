@@ -4,7 +4,7 @@ Integration tests for login and session authentication endpoints.
 
 Covers:
   - Workspace token auth (X-Workspace-Token header)
-  - Firebase bearer token auth (Authorization: Bearer)
+  - Identity bearer token auth (Authorization: Bearer)
   - Workspace claim flow (POST /v1/workspaces/{id}/claim)
   - Token rotation security
   - Session lifecycle (join → heartbeat → leave → rejoin)
@@ -31,12 +31,15 @@ def _create_workspace(client, name="Test WS", agent_name="agent-alpha", creator_
     return resp.json()["data"]
 
 
-def _mock_firebase_verify(email):
-    """Return a patcher that makes verify_firebase_token return the given email."""
-    return patch(
-        "app.firebase_auth.verify_firebase_token",
-        return_value=email,
+def _mock_identity_verify(email):
+    """Return a patcher that makes an identity bearer resolve to the given
+    email (or reject the bearer, when email is None)."""
+    claims = (
+        {"provider": "supabase", "email": email, "supabase_uid": None, "display_name": None}
+        if email
+        else None
     )
+    return patch("app.firebase_auth.verify_supabase_claims", return_value=claims)
 
 
 # ===========================================================================
@@ -105,16 +108,16 @@ class TestTokenLogin:
 
 
 # ===========================================================================
-# Firebase Bearer Token Auth
+# Identity Bearer Token Auth
 # ===========================================================================
 
 class TestBearerAuth:
-    """Login/auth via Firebase bearer token (Authorization: Bearer)."""
+    """Login/auth via identity bearer token (Authorization: Bearer)."""
 
     def test_send_event_with_valid_bearer(self, client, workspace):
         """Events pass auth mod when bearer token resolves to workspace creator."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.post("/v1/events", json={
                 "type": "workspace.message.posted",
                 "source": "human:user",
@@ -127,7 +130,7 @@ class TestBearerAuth:
     def test_send_event_bearer_wrong_email_rejected(self, client, workspace):
         """Bearer token with a different email than creator is rejected."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify("wrong@example.com"):
+        with _mock_identity_verify("wrong@example.com"):
             resp = client.post("/v1/events", json={
                 "type": "workspace.message.posted",
                 "source": "human:user",
@@ -140,7 +143,7 @@ class TestBearerAuth:
     def test_send_event_bearer_returns_none_rejected(self, client, workspace):
         """Bearer token that fails Firebase verification is rejected."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify(None):
+        with _mock_identity_verify(None):
             resp = client.post("/v1/events", json={
                 "type": "workspace.message.posted",
                 "source": "human:user",
@@ -152,7 +155,7 @@ class TestBearerAuth:
 
     def test_rotate_token_via_bearer(self, client, workspace):
         """Workspace owner can rotate token using bearer auth instead of token."""
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{workspace['id']}/rotate-token",
                 headers={"Authorization": "Bearer valid-firebase-token"},
@@ -170,7 +173,7 @@ class TestBearerAuth:
             "network": workspace["id"],
         })
 
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.delete(
                 f"/v1/workspaces/{workspace['id']}/members/agent-removable",
                 headers={"Authorization": "Bearer valid-firebase-token"},
@@ -181,7 +184,7 @@ class TestBearerAuth:
     def test_get_channel_via_bearer(self, client, workspace):
         """Workspace owner can access channels using bearer auth."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.get(
                 f"/v1/workspaces/{workspace['id']}/channels/{channel_name}",
                 headers={"Authorization": "Bearer valid-firebase-token"},
@@ -192,7 +195,7 @@ class TestBearerAuth:
     def test_get_channel_bearer_wrong_email(self, client, workspace):
         """Non-owner bearer auth cannot access channels."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify("other@example.com"):
+        with _mock_identity_verify("other@example.com"):
             resp = client.get(
                 f"/v1/workspaces/{workspace['id']}/channels/{channel_name}",
                 headers={"Authorization": "Bearer other-user-token"},
@@ -212,7 +215,7 @@ class TestWorkspaceClaim:
         ws = _create_workspace(client, name="Unclaimed WS", agent_name="bot")
         ws_id = ws["workspaceId"]
 
-        with _mock_firebase_verify("claimer@example.com"):
+        with _mock_identity_verify("claimer@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{ws_id}/claim",
                 headers={"Authorization": "Bearer claim-token"},
@@ -223,7 +226,7 @@ class TestWorkspaceClaim:
 
     def test_claim_already_owned_by_same_user(self, client, workspace):
         """Re-claiming by the same owner succeeds (idempotent)."""
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{workspace['id']}/claim",
                 headers={"Authorization": "Bearer valid-token"},
@@ -233,7 +236,7 @@ class TestWorkspaceClaim:
 
     def test_claim_already_owned_by_different_user(self, client, workspace):
         """Claiming a workspace owned by someone else is forbidden."""
-        with _mock_firebase_verify("attacker@evil.com"):
+        with _mock_identity_verify("attacker@evil.com"):
             resp = client.post(
                 f"/v1/workspaces/{workspace['id']}/claim",
                 headers={"Authorization": "Bearer attacker-token"},
@@ -248,7 +251,7 @@ class TestWorkspaceClaim:
 
     def test_claim_with_invalid_bearer(self, client, workspace):
         """Claim with invalid Firebase token returns 401."""
-        with _mock_firebase_verify(None):
+        with _mock_identity_verify(None):
             resp = client.post(
                 f"/v1/workspaces/{workspace['id']}/claim",
                 headers={"Authorization": "Bearer expired-token"},
@@ -257,7 +260,7 @@ class TestWorkspaceClaim:
 
     def test_claim_nonexistent_workspace(self, client):
         """Claiming nonexistent workspace returns 404."""
-        with _mock_firebase_verify("user@example.com"):
+        with _mock_identity_verify("user@example.com"):
             resp = client.post(
                 "/v1/workspaces/nonexistent/claim",
                 headers={"Authorization": "Bearer valid-token"},
@@ -270,14 +273,14 @@ class TestWorkspaceClaim:
         ws_id = ws["workspaceId"]
 
         # Claim
-        with _mock_firebase_verify("owner@example.com"):
+        with _mock_identity_verify("owner@example.com"):
             client.post(
                 f"/v1/workspaces/{ws_id}/claim",
                 headers={"Authorization": "Bearer claim-token"},
             )
 
         # Now use bearer auth to rotate token (a protected action)
-        with _mock_firebase_verify("owner@example.com"):
+        with _mock_identity_verify("owner@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{ws_id}/rotate-token",
                 headers={"Authorization": "Bearer owner-token"},
@@ -424,7 +427,7 @@ class TestCrossWorkspaceIsolation:
         ws_b = _create_workspace(client, name="WS B", agent_name="agent-b", creator_email="bob@example.com")
 
         # Alice can rotate her workspace token
-        with _mock_firebase_verify("alice@example.com"):
+        with _mock_identity_verify("alice@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{ws_a['workspaceId']}/rotate-token",
                 headers={"Authorization": "Bearer alice-token"},
@@ -432,7 +435,7 @@ class TestCrossWorkspaceIsolation:
         assert resp.status_code == 200
 
         # Alice cannot rotate Bob's workspace token
-        with _mock_firebase_verify("alice@example.com"):
+        with _mock_identity_verify("alice@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{ws_b['workspaceId']}/rotate-token",
                 headers={"Authorization": "Bearer alice-token"},
@@ -652,7 +655,7 @@ class TestRemoveAgentAuth:
             "network": workspace["id"],
         })
 
-        with _mock_firebase_verify("test@example.com"):
+        with _mock_identity_verify("test@example.com"):
             resp = client.post("/v1/remove", json={
                 "agent_name": "agent-bye",
                 "network": workspace["id"],
@@ -667,7 +670,7 @@ class TestRemoveAgentAuth:
             "network": workspace["id"],
         })
 
-        with _mock_firebase_verify("other@example.com"):
+        with _mock_identity_verify("other@example.com"):
             resp = client.post("/v1/remove", json={
                 "agent_name": "agent-protected",
                 "network": workspace["id"],
@@ -725,7 +728,7 @@ class TestAuthHeaderParsing:
         """'Bearer', 'bearer', 'BEARER' prefixes all work."""
         channel_name = workspace["channel"]["name"]
         for prefix in ["Bearer", "bearer", "BEARER"]:
-            with _mock_firebase_verify("test@example.com"):
+            with _mock_identity_verify("test@example.com"):
                 resp = client.post("/v1/events", json={
                     "type": "workspace.message.posted",
                     "source": "human:user",
@@ -752,7 +755,7 @@ class TestAuthHeaderParsing:
     def test_empty_bearer_token_rejected(self, client, workspace):
         """Authorization header with empty bearer token is rejected."""
         channel_name = workspace["channel"]["name"]
-        with _mock_firebase_verify(None):
+        with _mock_identity_verify(None):
             resp = client.post("/v1/events", json={
                 "type": "workspace.message.posted",
                 "source": "human:user",

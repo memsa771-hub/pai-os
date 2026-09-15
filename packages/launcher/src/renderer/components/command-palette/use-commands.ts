@@ -1,7 +1,6 @@
 import { useMemo } from "react"
 import {
   Cpu,
-  Download,
   FileText,
   Folder,
   Github,
@@ -10,7 +9,6 @@ import {
   Monitor,
   Moon,
   Play,
-  Plus,
   Settings,
   Square,
   Sun,
@@ -38,7 +36,6 @@ export interface Command {
 // Agents section when it ships.
 const NAV_TABS: Array<[id: string, icon: LucideIcon]> = [
   ["dashboard", LayoutDashboard],
-  ["install", Download],
   ["workspaces", Layers],
   // `connections` is hidden alongside its rail entry until the platform
   // options actually work (see nav-config.ts).
@@ -56,10 +53,9 @@ const THEME_ICON: Record<ThemeMode, LucideIcon> = {
 /** Every command the palette can run, in a stable order (groups stay together). */
 export function useCommands(): Command[] {
   const { t } = useTranslation()
-  const { setCurrentTab, goToInstallList, requestCreate } = useUiStore(
+  const { setCurrentTab, requestCreate } = useUiStore(
     useShallow((s) => ({
       setCurrentTab: s.setCurrentTab,
-      goToInstallList: s.goToInstallList,
       requestCreate: s.requestCreate,
     })),
   )
@@ -76,7 +72,7 @@ export function useCommands(): Command[] {
       }),
       group: t("commandPalette.groups.navigation"),
       icon,
-      run: () => (id === "install" ? goToInstallList() : setCurrentTab(id)),
+      run: () => setCurrentTab(id),
     }))
 
     const agentCmds = agents.flatMap((a): Command[] => {
@@ -86,9 +82,6 @@ export function useCommands(): Command[] {
         subtitle: a.type,
         group: t("commandPalette.groups.agents"),
         icon: Cpu,
-        // Agents page only. `setInstallFocusAgent` used to be called here
-        // too, but nothing on this page reads it — it just left a marketplace
-        // deep-link armed, to fire on some later, unrelated visit there.
         run: () => setCurrentTab("dashboard"),
       }
       // Nothing drives an agent with no workspace, so neither command would do
@@ -120,7 +113,6 @@ export function useCommands(): Command[] {
     const actions: Command[] = [
       { id: "action:start-all", title: t("commandPalette.commands.startAll"), group, icon: Play, run: () => void window.api.startAll() },
       { id: "action:stop-all", title: t("commandPalette.commands.stopAll"), group, icon: Square, run: () => void window.api.stopAll() },
-      { id: "action:install-agent", title: t("commandPalette.commands.installAgent"), group, icon: Plus, run: () => goToInstallList() },
       // Opens the Workspaces page with its join dialog: the launcher joins an
       // existing workspace by code, it never creates one.
       { id: "action:add-workspace", title: t("commandPalette.commands.addWorkspace"), group, icon: Folder, run: () => requestCreate("workspace") },
@@ -138,5 +130,5 @@ export function useCommands(): Command[] {
     }))
 
     return [...nav, ...agentCmds, ...actions, ...themes]
-  }, [agents, setCurrentTab, goToInstallList, requestCreate, mode, setMode, t])
+  }, [agents, setCurrentTab, requestCreate, mode, setMode, t])
 }

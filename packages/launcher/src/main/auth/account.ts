@@ -1,11 +1,7 @@
-import { accountApiBase, apiBase, webBase } from "./endpoints"
+import { apiBase, webBase } from "./endpoints"
 import { authFetch } from "./http"
 import { registrationPasswordError } from "../../shared/account-registration"
-import {
-  refreshIdToken,
-  signInWithCustomToken,
-  signInWithPassword as firebaseSignInWithPassword,
-} from "./firebase-rest"
+import * as supabase from "./supabase"
 import { startHandoffServer, type Handoff } from "./handoff-server"
 import {
   clearSession,
@@ -28,7 +24,12 @@ import {
  * Signing in is a workspace-scoped gate, never an app-scoped one: everything
  * under My Agents works signed out, and nothing here is touched until the user
  * asks for something that is theirs (their workspaces, authorizing this
- * machine). See docs on the lazy gate in the desktop-workspace plan.
+ * machine).
+ *
+ * Identity is Supabase Auth, spoken directly (see supabase.ts) — the same
+ * project every client (web, desktop, and later mobile) authenticates
+ * against. workspace/backend verifies the resulting access token itself; this
+ * process never mints its own session format.
  */
 
 /** One membership from GET /v1/account/workspaces. */
@@ -51,25 +52,20 @@ export interface AccountDeps {
   onChange: (account: AccountInfo | null) => void
 }
 
-/** Google's auth hosts are unreachable in China; that failure must read plainly. */
-const FIREBASE_UNREACHABLE = "SIGN_IN_UNREACHABLE"
+export interface SignUpOutcome {
+  account: AccountInfo | null
+  /** True when Supabase requires confirming the email before a session
+   * exists — the caller should show a "check your email" state, not treat
+   * this as a failure. */
+  needsEmailConfirmation: boolean
+}
 
 /** Codes the sign-in form turns into wording; see renderer/lib/account-errors. */
 const BAD_CREDENTIALS = "SIGN_IN_BAD_CREDENTIALS"
 const TOO_MANY_ATTEMPTS = "SIGN_IN_TOO_MANY_ATTEMPTS"
 
-/**
- * There is no account service in front of this deployment — the only failure
- * Firebase is worth asking about. Anything else (a rejected password, a
- * handoff that would not mint) has already been answered by the service that
- * holds the account, and retrying it against Google would turn a true reason
- * into "wrong password".
- */
-const NO_ACCOUNT_SERVICE = "SIGN_IN_NO_ACCOUNT_SERVICE"
-
-/** Firebase's own names for "that is not a valid login". */
-const REJECTION_PATTERN =
-  /INVALID_LOGIN_CREDENTIALS|INVALID_PASSWORD|EMAIL_NOT_FOUND|USER_DISABLED|MISSING_PASSWORD/
+/** Supabase's own names for "that is not a valid login". */
+const REJECTION_PATTERN = /invalid_grant|Invalid login credentials|invalid_credentials/i
 
 /**
  * The browser round trip needs a page on the workspace site to come back
@@ -83,6 +79,10 @@ export class AccountManager {
   private _session: AccountSession | null = null
   private _loaded = false
   private _pending: Handoff | null = null
+  /** The PKCE code verifier for the OAuth round trip in flight — generated
+   * alongside its authorize URL, consumed once the loopback handoff returns
+   * the code. Never leaves this process. */
+  private _pendingCodeVerifier: string | null = null
 
   constructor(private _deps: AccountDeps) {}
 
@@ -106,15 +106,26 @@ export class AccountManager {
     this._deps.onChange(session ? toAccountInfo(session) : null)
   }
 
+  private _fromSupabase(session: supabase.SupabaseSession): AccountSession {
+    return {
+      kind: "supabase",
+      token: session.accessToken,
+      refreshToken: session.refreshToken,
+      email: session.email,
+      displayName: session.username,
+      expiresAt: session.expiresAt,
+    }
+  }
+
   /**
-   * Run a sign-in: open the central login in the user's browser and wait for
-   * the callback page to hand the session back over loopback.
+   * Run a sign-in: open Supabase's OAuth authorize page in the user's browser
+   * and wait for the loopback callback page to hand the resulting code back.
    *
-   * The system browser, not an in-app window: Google refuses OAuth in an
-   * embedded webview ("this browser is not secure"), and the user's existing
-   * session there is usually what makes this one click.
+   * The system browser, not an in-app window: Google and GitHub refuse OAuth
+   * in an embedded webview ("this browser is not secure"), and the user's
+   * existing session there is usually what makes this one click.
    */
-  async signIn(): Promise<AccountInfo> {
+  async signIn(provider: "google" | "github"): Promise<AccountInfo> {
     // A second click while one is in flight replaces it — the first browser tab
     // is already stale, and leaving its port open would be a second live gate.
     this.cancelSignIn()
@@ -128,38 +139,25 @@ export class AccountManager {
     const handoff = await startHandoffServer(origin)
     this._pending = handoff
 
-    // Straight to the workspace's own desktop landing page, NOT to the central
-    // login: that login treats `returnTo` as where to go after minting its
-    // one-time token and bouncing through /auth/callback, so a returnTo aimed
-    // at the callback is taken as the destination and no token is minted at
-    // all. /auth/desktop is an ordinary page, so it can send the user through
-    // the login itself — and when the browser is already signed in to the
-    // workspace, it skips that entirely and answers on the spot.
-    this._deps.openExternal(
-      `${origin}/auth/desktop?port=${handoff.port}&state=${encodeURIComponent(handoff.state)}`,
-    )
+    const redirectTo = `${origin}/auth/desktop?port=${handoff.port}&state=${encodeURIComponent(handoff.state)}`
+    const { url, codeVerifier } = supabase.buildOAuthAuthorizeUrl(provider, redirectTo)
+    this._pendingCodeVerifier = codeVerifier
+    this._deps.openExternal(url)
 
     try {
       const result = await handoff.result
       if (result.error) throw new Error(result.error)
+      if (!result.code) throw new Error("SIGN_IN_EMPTY_HANDOFF")
 
-      if (result.session?.token && result.session.email) {
-        this._set({
-          kind: "workspace",
-          token: result.session.token,
-          email: result.session.email,
-          displayName: result.session.displayName ?? null,
-          expiresAt: result.session.expiresAt,
-        })
-      } else if (result.customToken) {
-        this._set(await this._redeem(result.customToken))
-      } else {
-        throw new Error("SIGN_IN_EMPTY_HANDOFF")
-      }
+      const verifier = this._pendingCodeVerifier
+      if (!verifier) throw new Error("SIGN_IN_EMPTY_HANDOFF")
+      const session = await supabase.exchangeOAuthCode(result.code, verifier)
+      this._set(this._fromSupabase(session))
       return toAccountInfo(this._session!)
     } finally {
       handoff.close()
       if (this._pending === handoff) this._pending = null
+      this._pendingCodeVerifier = null
     }
   }
 
@@ -182,54 +180,52 @@ export class AccountManager {
     return { token, email, displayName, expiresAt }
   }
 
-  /**
-   * Sign in with an email and password, without leaving the app.
-   *
-   * Three calls, the last two of which the browser sign-in already ends with:
-   *
-   *   POST endpoint.openagents.org/v1/auth/login             → account token
-   *   POST endpoint.openagents.org/v1/auth/workspace-handoff → custom token
-   *   POST workspace-endpoint.../v1/auth/session             → 30-day session
-   *
-   * This is precisely what openagents.org/login does — its form posts to the
-   * first, and its "open workspace" mints the second. Nothing here needs Google,
-   * so it works from mainland China, and nothing here is new server-side.
-   *
-   * Speaking to Firebase instead is what the launcher used to do, and it is
-   * why a password the website accepts came back INVALID_LOGIN_CREDENTIALS:
-   * the site keeps its email accounts in the service above, not in Firebase,
-   * which now holds only the Google/GitHub/Apple identities. That path stays as
-   * the fallback for a deployment with no account service in front of it.
-   *
-   * Only accounts with a password can use this at all. Google, GitHub and Apple
-   * identities have none, and their providers refuse to authenticate inside an
-   * app window, so those still need a real browser.
-   */
-  async signInWithPassword(
-    email: string,
-    password: string,
-  ): Promise<AccountInfo> {
-    // A form submitted while a browser sign-in is pending replaces it: two
-    // live gates would race to be the session.
+  /** Sign in with an email and password, without leaving the app. */
+  async signInWithPassword(email: string, password: string): Promise<AccountInfo> {
     this.cancelSignIn()
-
-    let session: AccountSession
     try {
-      session = await this._passwordSession(email, password)
+      const session = await supabase.signInWithPassword(email, password)
+      this._set(this._fromSupabase(session))
+      return toAccountInfo(this._session!)
     } catch (err) {
-      if ((err as Error)?.message !== NO_ACCOUNT_SERVICE) throw err
-      session = await this._firebasePasswordSession(email, password)
+      throw new Error(translateSupabaseError((err as Error).message))
     }
-    this._set(session)
-    return toAccountInfo(session)
   }
 
-  /** Register through the same account service as openagents.org/signup. */
+  /** Sign in with a username and password — resolved to an email server-side
+   * only, by workspace/backend, which never returns it to us. */
+  async signInWithUsername(username: string, password: string): Promise<AccountInfo> {
+    this.cancelSignIn()
+    const res = await authFetch(`${apiBase(this._deps.endpoint())}/v1/auth/sign-in-username`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    })
+    const json = (await res.json().catch(() => null)) as {
+      code?: number
+      data?: Record<string, unknown>
+      message?: string
+    } | null
+    if (res.status === 429 || json?.code === 429) throw new Error(TOO_MANY_ATTEMPTS)
+    if (!res.ok || json?.code !== 200 || !json.data) {
+      throw new Error(BAD_CREDENTIALS)
+    }
+    const session = await supabase.sessionFromTokens(json.data)
+    this._set(this._fromSupabase(session))
+    return toAccountInfo(this._session!)
+  }
+
+  /** Register a new account. Returns needsEmailConfirmation: true (and a
+   * null account) when Supabase requires confirming the email first — the
+   * caller shows a "check your email" state rather than treating it as a
+   * failure. The username is sent as signup metadata immediately; it is
+   * attached to the workspace-backend account (claim-username) once a real
+   * session exists, here or after confirmation. */
   async signUpWithPassword(
     email: string,
     password: string,
-    displayName?: string,
-  ): Promise<AccountInfo> {
+    username: string,
+  ): Promise<SignUpOutcome> {
     const normalizedEmail = email.trim().toLowerCase()
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail))
       throw new Error("SIGN_UP_INVALID_EMAIL")
@@ -237,215 +233,76 @@ export class AccountManager {
     if (passwordError) throw new Error(passwordError)
     this.cancelSignIn()
 
-    const res = await authFetch(`${accountApiBase()}/v1/auth/register`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: normalizedEmail,
-        password,
-        display_name: displayName?.trim() || undefined,
-      }),
-    })
-    const json = (await res.json().catch(() => null)) as {
-      code?: number
-      data?: { access_token?: string }
-      message?: string
-    } | null
-    if (res.status === 429 || json?.code === 429) throw new Error(TOO_MANY_ATTEMPTS)
-    if (!res.ok || json?.code !== 200) {
-      if (res.status === 409 || /already (?:exists|registered)/i.test(json?.message || ""))
-        throw new Error("SIGN_UP_EMAIL_EXISTS")
-      throw new Error(json?.message || "SIGN_UP_FAILED")
+    const normalizedUsername = username.trim().toLowerCase()
+    if (!(await this._usernameAvailable(normalizedUsername))) {
+      throw new Error("SIGN_UP_USERNAME_TAKEN")
     }
 
-    // Registration already succeeded. If opening Workspace fails, the UI must
-    // offer sign-in rather than ask the user to create the same account again.
-    let session: AccountSession
+    let result: supabase.SignUpResult
     try {
-      if (!json.data?.access_token) throw new Error("Missing account token")
-      session = await this._redeem(await this._handoffToken(json.data.access_token))
-    } catch {
-      throw new Error("SIGN_UP_SESSION_FAILED")
-    }
-    this._set(session)
-    return toAccountInfo(session)
-  }
-
-  /** The password half: credentials in, a workspace session out. */
-  private async _passwordSession(
-    email: string,
-    password: string,
-  ): Promise<AccountSession> {
-    const handoff = await this._handoffToken(
-      await this._accountToken(email, password),
-    )
-    return this._redeem(handoff)
-  }
-
-  /** POST /v1/auth/login — the call the website's own sign-in form makes. */
-  private async _accountToken(
-    email: string,
-    password: string,
-  ): Promise<string> {
-    const res = await authFetch(`${accountApiBase()}/v1/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, password }),
-    })
-    if (res.status === 401) throw new Error(BAD_CREDENTIALS)
-    if (res.status === 429) throw new Error(TOO_MANY_ATTEMPTS)
-    if (res.status === 404) throw new Error(NO_ACCOUNT_SERVICE)
-    const json = (await res.json().catch(() => null)) as {
-      code?: number
-      data?: { access_token?: string }
-      message?: string
-    } | null
-    // This service reports itself twice — an HTTP status and a `code` in the
-    // body — and the website checks both, so a 200 carrying a failure code is
-    // a shape that happens.
-    if (!res.ok || json?.code !== 200 || !json.data?.access_token)
-      throw new Error(json?.message || `HTTP ${res.status}`)
-    return json.data.access_token
-  }
-
-  /**
-   * POST /v1/auth/workspace-handoff — trade the account token for the one-time
-   * custom token that opens a workspace.
-   *
-   * The same token the browser round trip carries back, so from here on the two
-   * sign-ins are the same code path.
-   */
-  private async _handoffToken(accountToken: string): Promise<string> {
-    const res = await authFetch(
-      `${accountApiBase()}/v1/auth/workspace-handoff`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${accountToken}`,
-        },
-        body: "{}",
-      },
-    )
-    const json = (await res.json().catch(() => null)) as {
-      data?: { custom_token?: string }
-      message?: string
-    } | null
-    if (!res.ok || !json?.data?.custom_token)
-      throw new Error(json?.message || `HTTP ${res.status}`)
-    return json.data.custom_token
-  }
-
-  /** Firebase, spoken directly — only where the account service is absent. */
-  private async _firebasePasswordSession(
-    email: string,
-    password: string,
-  ): Promise<AccountSession> {
-    try {
-      const tokens = await firebaseSignInWithPassword(email, password)
-      return {
-        kind: "firebase",
-        token: tokens.idToken,
-        refreshToken: tokens.refreshToken,
-        email: tokens.email || email,
-        displayName: tokens.displayName,
-        expiresAt: tokens.expiresAt,
-      }
+      result = await supabase.signUpWithPassword(normalizedEmail, password, normalizedUsername)
     } catch (err) {
-      throw new Error(translateFirebaseError((err as Error).message))
+      const message = (err as Error).message
+      if (/already registered|user_already_exists/i.test(message)) throw new Error("SIGN_UP_EMAIL_EXISTS")
+      throw new Error(translateSupabaseError(message))
     }
+
+    if (!result.session) return { account: null, needsEmailConfirmation: true }
+
+    this._set(this._fromSupabase(result.session))
+    await this._claimUsername(result.session.accessToken, normalizedUsername).catch((error) => {
+      throw error
+      /* non-fatal — the account exists either way */
+    })
+    return { account: toAccountInfo(this._session!), needsEmailConfirmation: false }
+  }
+
+  private async _usernameAvailable(username: string): Promise<boolean> {
+    const res = await authFetch(`${apiBase(this._deps.endpoint())}/v1/auth/username-available`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username }),
+    })
+    const json = (await res.json().catch(() => null)) as { data?: { available?: boolean }; message?: string } | null
+    if (!res.ok) throw new Error(json?.message || `HTTP ${res.status}`)
+    return json?.data?.available === true
+  }
+
+  private async _claimUsername(accessToken: string, username: string): Promise<void> {
+    const res = await authFetch(`${apiBase(this._deps.endpoint())}/v1/auth/claim-username`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ username }),
+    })
+    if (res.status === 409) throw new Error("SIGN_UP_USERNAME_RACE")
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
   }
 
   /** Give the loopback port back without waiting for the browser. */
   cancelSignIn(): void {
     this._pending?.close()
     this._pending = null
+    this._pendingCodeVerifier = null
   }
 
   signOut(): void {
     this.cancelSignIn()
+    const session = this._session
     this._set(null)
+    if (session) void supabase.signOut(session.token)
   }
 
-  /**
-   * Turn the one-time custom token into a session we can keep.
-   *
-   * Both sign-ins end here: the password form mints its own handoff token, and
-   * the browser round trip forwards one unspent when the callback page could
-   * not spend it (an older front end, or a backend with no session secret).
-   */
-  private async _redeem(customToken: string): Promise<AccountSession> {
-    try {
-      return await this._mintWorkspaceSession(customToken)
-    } catch (err) {
-      // The session endpoint is the one that works everywhere; Firebase is the
-      // consolation prize, and where it is blocked there is nothing left to try.
-      console.error(
-        "workspace session unavailable, falling back to Firebase:",
-        (err as Error).message,
-      )
-    }
-    try {
-      const tokens = await signInWithCustomToken(customToken)
-      return {
-        kind: "firebase",
-        token: tokens.idToken,
-        refreshToken: tokens.refreshToken,
-        email: tokens.email,
-        displayName: tokens.displayName,
-        expiresAt: tokens.expiresAt,
-      }
-    } catch (err) {
-      const message = (err as Error).message
-      throw new Error(
-        /abort|fetch failed|network/i.test(message)
-          ? FIREBASE_UNREACHABLE
-          : message,
-      )
-    }
-  }
-
-  private async _mintWorkspaceSession(
-    customToken: string,
-  ): Promise<AccountSession> {
-    const res = await authFetch(
-      `${apiBase(this._deps.endpoint())}/v1/auth/session`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ custom_token: customToken }),
-      },
-    )
-    const json = (await res.json().catch(() => null)) as {
-      data?: SessionPayload
-      message?: string
-    } | null
-    if (!res.ok || !json?.data?.session_token)
-      throw new Error(json?.message || `HTTP ${res.status}`)
-    return sessionFrom(json.data)
-  }
-
-  /**
-   * The bearer to send, renewed if it is about to lapse.
-   *
-   * A workspace session cannot be renewed — it is minted from a one-time token
-   * and lasts 30 days — so an expired one ends the session outright and the UI
-   * asks for a sign-in. A Firebase ID token renews itself hourly.
-   */
+  /** The bearer to send, renewed if it is about to lapse. */
   async bearer(): Promise<string> {
     this._ensureLoaded()
     const session = this._session
     if (!session) throw new Error("NOT_SIGNED_IN")
     if (isFresh(session)) return session.token
 
-    if (session.kind !== "firebase" || !session.refreshToken) {
-      this._set(null)
-      throw new Error("SESSION_EXPIRED")
-    }
     try {
-      const renewed = await refreshIdToken(session.refreshToken)
-      this._set({ ...session, ...renewed, token: renewed.idToken })
-      return renewed.idToken
+      const renewed = await supabase.refreshSession(session.refreshToken)
+      this._set(this._fromSupabase(renewed))
+      return renewed.accessToken
     } catch {
       this._set(null)
       throw new Error("SESSION_EXPIRED")
@@ -459,24 +316,6 @@ export class AccountManager {
    */
   async listWorkspaces(): Promise<AccountWorkspace[]> {
     return this._get<AccountWorkspace[]>("/v1/account/workspaces")
-  }
-
-  /**
-   * Mint a pairing code for this device, as the signed-in user.
-   *
-   * This is the whole of "authorize this machine": the backend gains nothing
-   * new — the same owner/admin-only endpoint the workspace UI calls — the
-   * launcher just carries the code across instead of the user retyping it.
-   * A member (below admin) is refused here, which is correct and is why the
-   * manual code entry stays.
-   */
-  async createPairingCode(workspaceId: string): Promise<string> {
-    const data = await this._request<{ code: string }>(
-      `/v1/workspaces/${encodeURIComponent(workspaceId)}/pairing-codes`,
-      { method: "POST", body: "{}" },
-    )
-    if (!data.code) throw new Error("PAIRING_CODE_MISSING")
-    return data.code
   }
 
   private _get<T>(path: string): Promise<T> {
@@ -507,21 +346,17 @@ export class AccountManager {
   }
 }
 
-/** What both session endpoints return. */
-interface SessionPayload {
-  session_token?: string
-  expires_at?: string
-  email?: string
-  display_name?: string | null
-}
-
-function sessionFrom(data: SessionPayload): AccountSession {
+/** POST /v1/auth/sign-in-username relays Supabase's own token response
+ * shape verbatim — parse it the same way supabase.ts does. */
+function supabaseSessionFromBackend(data: Record<string, unknown>): supabase.SupabaseSession {
+  const user = (data.user as Record<string, unknown>) || {}
+  const metadata = (user.user_metadata as Record<string, unknown>) || {}
   return {
-    kind: "workspace",
-    token: data.session_token!,
-    email: data.email || "",
-    displayName: data.display_name ?? null,
-    expiresAt: Math.floor(new Date(data.expires_at || 0).getTime() / 1000),
+    accessToken: String(data.access_token || ""),
+    refreshToken: String(data.refresh_token || ""),
+    expiresAt: Math.floor(Date.now() / 1000) + (Number(data.expires_in) || 3600),
+    email: String(user.email || ""),
+    username: (metadata.username as string) || null,
   }
 }
 
@@ -539,10 +374,8 @@ async function landingPageExists(webOrigin: string): Promise<boolean> {
   }
 }
 
-function translateFirebaseError(message: string): string {
+function translateSupabaseError(message: string): string {
   if (REJECTION_PATTERN.test(message)) return BAD_CREDENTIALS
-  if (/TOO_MANY_ATTEMPTS/i.test(message)) return TOO_MANY_ATTEMPTS
-  if (/abort|fetch failed|network|ERR_/i.test(message))
-    return FIREBASE_UNREACHABLE
+  if (/rate limit|too many/i.test(message)) return TOO_MANY_ATTEMPTS
   return message
 }

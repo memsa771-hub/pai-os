@@ -20,14 +20,6 @@
     },
     "messagesToday_zero": "No new messages today."
   },
-  "updates": {
-    "oneAvailable": "Update available for {{name}}",
-    "manyAvailable": "{{count}} agent updates available",
-    "ignore": "Ignore",
-    "later": "Later",
-    "updateNow": "Update now",
-    "view": "View details"
-  },
   "agentToggle": {
     "stopping": "Stopping {{name}}...",
     "stopped": "{{name}} stopped",
@@ -45,7 +37,6 @@
       "lastActive": "Last active",
       "actions": "Actions"
     },
-    "openTerminal": "Open terminal",
     "start": "Start",
     "stop": "Stop",
     "manage": "Manage agent",

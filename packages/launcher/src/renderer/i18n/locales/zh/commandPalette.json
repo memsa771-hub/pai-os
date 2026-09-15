@@ -17,7 +17,6 @@
     "connections": "连接",
     "credentials": "凭据",
     "github": "GitHub",
-    "install": "智能体市场",
     "logs": "日志",
     "settings": "设置"
   },
@@ -29,7 +28,6 @@
     "startAll": "启动所有智能体",
     "stopAll": "停止所有智能体",
     "addWorkspace": "$t(common.actions.addWorkspace)",
-    "installAgent": "安装新智能体",
     "theme": "主题：{{mode}}"
   },
   "themes": {

@@ -2,8 +2,7 @@
 
 import { useCallback, useRef, useState, useEffect, useMemo } from 'react';
 import { ChatMessages } from './chat-messages';
-import { YumiGuide } from './yumi-guide';
-import { YumiDmIntro } from './yumi-dm-intro';
+import { PaiDmIntro } from './pai-dm-intro';
 import { ChatInput, type PendingFile } from './chat-input';
 import { ThreadStatusBar } from './thread-status-bar';
 import { EmptyState } from './empty-state';
@@ -135,49 +134,6 @@ export function ChatView() {
   const { agents, currentUser, currentSessionId, sessions, updateLastMessage, setSessionActive, updateAgentMode, stopAllAgents, activeSessionIds, stoppingSessionIds, renameSession, addParticipant, removeParticipant, setSessionMaster, setSessionOrchestration, consumeSkipFocus, createRoutine, knowledge } = useWorkspace();
   const t = useT();
   const [showCreateRoutine, setShowCreateRoutine] = useState(false);
-
-  // Per-agent smoke-test results ride the node heartbeat's roster. A failing
-  // probe means a participant will likely never answer even though it shows
-  // online — surface it in the thread BEFORE the user invests in a message.
-  // Probes refresh hourly on the device, so a slow poll here is plenty.
-  const [agentProbes, setAgentProbes] = useState<Map<string, { probe: import('@/lib/types').NodeProbe; nodeId: string }>>(new Map());
-  const [retesting, setRetesting] = useState<Set<string>>(new Set());
-  const loadProbes = useCallback(async () => {
-    const nodes = await workspaceApi.listNodes();
-    const m = new Map<string, { probe: import('@/lib/types').NodeProbe; nodeId: string }>();
-    for (const n of nodes) {
-      for (const a of n.agents || []) if (a.probe) m.set(a.name, { probe: a.probe, nodeId: n.nodeId });
-    }
-    setAgentProbes(m);
-    return m;
-  }, []);
-  useEffect(() => {
-    let cancelled = false;
-    const load = () => loadProbes().catch(() => { /* transient — banner stays */ });
-    load();
-    const id = setInterval(() => { if (!cancelled) load(); }, 90_000);
-    return () => { cancelled = true; clearInterval(id); };
-  }, [loadProbes]);
-
-  // Re-run the smoke test on demand: enqueue probe_agent on the agent's node,
-  // then fast-poll until a probe with a NEWER timestamp arrives (the daemon
-  // picks the command up on its next poll and reports via heartbeat).
-  const retestAgent = useCallback(async (name: string, nodeId: string, prevAt: string) => {
-    setRetesting((s) => new Set(s).add(name));
-    try {
-      await workspaceApi.enqueueNodeCommand(nodeId, 'probe_agent', { name });
-      for (let i = 0; i < 30; i++) {
-        await new Promise((r) => setTimeout(r, 5000));
-        const m = await loadProbes().catch(() => null);
-        const fresh = m?.get(name);
-        if (fresh && fresh.probe.at !== prevAt) return; // new verdict rendered
-      }
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRetesting((s) => { const n = new Set(s); n.delete(name); return n; });
-    }
-  }, [loadProbes]);
   const {
     isMobile,
     openMobileList,
@@ -950,57 +906,8 @@ export function ChatView() {
         );
       })()}
 
-      {/* Failing smoke test — a participant's last health check failed, so it
-          will likely not answer even if it shows online. Includes the probe's
-          own guidance so the user can fix it before starting a conversation. */}
-      {(() => {
-        const participants = currentSession?.participants || [];
-        const failing = participants
-          .map((name) => ({ name, entry: agentProbes.get(name) }))
-          .filter((x): x is { name: string; entry: { probe: import('@/lib/types').NodeProbe; nodeId: string } } =>
-            !!x.entry && x.entry.probe.ok === false && x.entry.probe.code !== 'static_only');
-        if (failing.length === 0) return null;
-        return (
-          <div className="px-2 lg:px-4 py-2 border-b shrink-0 bg-red-50 dark:bg-red-950/25 text-red-800 dark:text-red-300 space-y-1.5">
-            {failing.map(({ name, entry }) => {
-              const busy = retesting.has(name);
-              return (
-                <div key={name} className="text-[11px] leading-snug">
-                  <div className="flex items-center gap-1.5 font-medium">
-                    <AlertTriangle className="size-3.5 shrink-0" />
-                    <span className="min-w-0 break-words">
-                      {t('chat.probeFailing', { agent: name })}
-                      {entry.probe.message ? ` — ${entry.probe.message}` : ''}
-                    </span>
-                    <button
-                      onClick={() => retestAgent(name, entry.nodeId, entry.probe.at)}
-                      disabled={busy}
-                      className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-md border border-red-300 dark:border-red-800 bg-white dark:bg-red-950/40 px-2 py-0.5 text-[11px] font-medium text-red-700 dark:text-red-300 transition-colors hover:bg-red-100 dark:hover:bg-red-900/40 disabled:opacity-60"
-                      title={t('chat.probeRetest')}
-                    >
-                      <RefreshCw className={`size-3 ${busy ? 'animate-spin' : ''}`} />
-                      {busy ? t('chat.probeRetesting') : t('chat.probeRetest')}
-                    </button>
-                  </div>
-                  {(entry.probe.guidance || []).slice(0, 3).map((line, i) => (
-                    <div key={i} className="pl-5 text-red-700/90 dark:text-red-300/80">→ {line}</div>
-                  ))}
-                </div>
-              );
-            })}
-          </div>
-        );
-      })()}
-
       {/* Messages */}
       <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
-        {/* Yumi guidance — pinned above the thread when the built-in
-            assistant is a participant; collapsible, remembered per browser. */}
-        {!isDM && (() => {
-          const participants = currentSession?.participants || [];
-          const hasYumi = agents.some((a) => a.builtin && participants.includes(a.agentName));
-          return hasYumi ? <YumiGuide /> : null;
-        })()}
         {loading ? (
           <div className="flex items-center justify-center flex-1">
             <div className="w-6 h-6 border-2 border-primary border-t-transparent rounded-full animate-spin" />
@@ -1013,7 +920,7 @@ export function ChatView() {
               ? agents.find((a) => a.builtin && `openagents:${a.agentName}` === dmCounterpart)
               : undefined;
             return dmBuiltin ? (
-              <YumiDmIntro agentLabel={agentLabel(dmBuiltin)} onQuick={(text) => handleSend(text)} />
+              <PaiDmIntro agentLabel={agentLabel(dmBuiltin)} onQuick={(text) => handleSend(text)} />
             ) : (
               <EmptyState />
             );

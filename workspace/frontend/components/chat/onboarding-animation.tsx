@@ -10,9 +10,9 @@ import { RotateCcw } from 'lucide-react';
    ═══════════════════════════════════════════════ */
 
 const AGENTS = [
-  { name: 'claude', label: 'Claude', color: '#6366f1' },
-  { name: 'cursor', label: 'Cursor', color: '#a855f7' },
-  { name: 'gemini', label: 'Gemini', color: '#10b981' },
+  { name: 'agent-researcher', label: 'Researcher', color: '#6366f1' },
+  { name: 'agent-writer', label: 'Writer', color: '#a855f7' },
+  { name: 'agent-analyst', label: 'Analyst', color: '#10b981' },
 ] as const;
 
 const BEAT_TIMES = [0, 500, 1500, 2500, 4000, 7200, 10400, 13000];

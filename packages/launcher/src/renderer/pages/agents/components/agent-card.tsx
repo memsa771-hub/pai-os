@@ -1,17 +1,14 @@
 import React from "react"
 import { useTranslation } from "react-i18next"
 import {
-  AlertTriangle,
   Boxes,
   ExternalLink,
   FolderClosed,
-  KeyRound,
   MoreHorizontal,
   Pencil,
   Play,
   SlidersHorizontal,
   Square,
-  Terminal,
   Trash2,
   Unplug,
 } from "lucide-react"
@@ -29,7 +26,6 @@ import AgentIcon from "@renderer/components/AgentIcon"
 import { relativeTimeAgo } from "@renderer/lib/relative-time"
 import { STATE_TEXT_CLASS } from "@renderer/lib/agent-state"
 import { cn } from "@renderer/lib/utils"
-import { formatHealthLabel } from "../format-health-label"
 import type { AgentRow } from "../use-agents-view"
 import { AgentErrorDialog } from "./agent-error-dialog"
 import { agentLabel, type AgentActionHandlers } from "./agent-actions"
@@ -63,7 +59,6 @@ export function AgentCard({
   row,
   pending,
   onToggle,
-  onOpenTerminal,
   onConfigure,
   onRename,
   onConnect,
@@ -72,7 +67,7 @@ export function AgentCard({
   onRemove,
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
-  const { agent, providerLabel, model, auth, workspace, status, lastActiveAt } = row
+  const { agent, providerLabel, model, workspace, status, lastActiveAt } = row
   // The status the tile is already showing, not a second opinion on the raw
   // state: an agent with no workspace has `running` written for it while
   // nothing drives it.
@@ -119,19 +114,6 @@ export function AgentCard({
       </div>
 
       <div className="flex flex-col gap-1.5 px-3.5 pb-3">
-        <Field icon={auth === "cli_login" ? <Terminal /> : <KeyRound />}>
-          {auth
-            ? t(
-                auth === "api_key"
-                  ? "agents.list.health.apiKey"
-                  : "agents.list.health.cliLogin",
-              )
-            : "—"}
-        </Field>
-        {/* Labelled, unlike the auth line above it: "ccc" on its own says
-            nothing to someone who has never met a workspace, and the same word
-            "connected" used to appear here, on the badge and on the button for
-            three different facts. */}
         {/* The field keeps its shape whether or not there is a workspace: an
             em dash where the name would be, not a second sentence — the status
             above already says this agent is not connected to one. */}
@@ -140,34 +122,15 @@ export function AgentCard({
         </Field>
       </div>
 
-      {/* Health and age instead of the mock's success rate: nothing in the
-          launcher counts an agent's successes or failures, so the slot carries
-          what the health check actually reports. */}
+      {/* Status and age — the header badge already says whether the process is
+          running; this slot pairs it with when the agent last did something. */}
       <div className="grid grid-cols-2 gap-2 border-t px-3.5 py-2.5">
         <div className="min-w-0">
           <div className="text-2xs text-muted-foreground">
-            {t("agents.list.readiness")}
+            {t("agents.list.columns.status")}
           </div>
-          <div
-            className={
-              agent.runtimeMismatch || !agent.health?.ready
-                ? "flex items-center gap-1 truncate text-xs font-medium text-warning"
-                : "truncate text-xs font-medium text-success"
-            }
-          >
-            {agent.runtimeMismatch ? (
-              <>
-                <AlertTriangle className="size-3 shrink-0" />
-                {t("agents.list.coreUpdateRequired")}
-              </>
-            ) : agent.health?.ready ? (
-              t("agents.list.health.ready")
-            ) : (
-              <>
-                <AlertTriangle className="size-3 shrink-0" />
-                {formatHealthLabel(agent.health || null, t)}
-              </>
-            )}
+          <div className={cn("truncate text-xs font-medium", STATE_TEXT_CLASS[status])}>
+            {t(`agents.list.statuses.${status}`)}
           </div>
         </div>
         <div className="min-w-0 text-right">
@@ -181,19 +144,7 @@ export function AgentCard({
       </div>
 
       <div className="mt-auto flex items-center gap-1.5 border-t px-3.5 py-2.5">
-        {agent.network ? (
-          agent.hasCli && (
-            <Button
-              size="sm"
-              variant="outline"
-              className="flex-1"
-              onClick={() => onOpenTerminal(agent)}
-            >
-              <Terminal />
-              {t("agents.list.chat")}
-            </Button>
-          )
-        ) : (
+        {agent.network ? null : (
           <Button
             size="sm"
             className="flex-1"

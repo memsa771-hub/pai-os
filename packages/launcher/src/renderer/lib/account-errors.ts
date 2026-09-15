@@ -17,6 +17,8 @@ const CODES: Record<string, string> = {
   SIGN_UP_EMAIL_EXISTS: "account.error.emailExists",
   SIGN_UP_WEAK_PASSWORD: "account.error.weakPassword",
   SIGN_UP_INVALID_EMAIL: "account.error.invalidEmail",
+  SIGN_UP_USERNAME_TAKEN: "account.error.usernameTaken",
+  SIGN_UP_USERNAME_RACE: "account.error.usernameRace",
   SIGN_UP_SESSION_FAILED: "account.error.accountCreated",
   SIGN_UP_FAILED: "account.error.signUpFailed",
   SESSION_EXPIRED: "account.error.expired",

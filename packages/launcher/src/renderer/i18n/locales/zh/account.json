@@ -19,6 +19,8 @@
     "emailExists": "此邮箱已注册，请使用已有账号登录。",
     "weakPassword": "密码至少 8 位，并包含以下至少 3 类：大写字母、小写字母、数字和特殊字符。请避免使用常见密码。",
     "invalidEmail": "请输入有效的邮箱地址。",
+    "usernameTaken": "该用户名已被使用，请选择其他用户名。",
+    "usernameRace": "该用户名刚刚被占用，请选择其他用户名。",
     "accountCreated": "账号已创建，但工作区暂时无法打开。请登录后继续。",
     "signUpFailed": "无法创建账号，请重试。"
   },
@@ -30,12 +32,14 @@
   "signInPage": {
     "title": "登录 OpenAgents",
     "subtitle": "工作区随账号而来。本机 Agent 不登录也能使用。",
+    "identifier": "邮箱或用户名",
     "email": "邮箱",
     "emailPlaceholder": "you@example.com",
     "password": "密码",
     "submit": "登录",
-    "browser": "使用 Google、GitHub 或 Apple 登录",
-    "browserHint": "将打开浏览器——这几家不允许在应用内完成登录。",
+    "google": "使用 Google 继续",
+    "github": "使用 GitHub 继续",
+    "browserHint": "将打开浏览器——Google 和 GitHub 不允许在应用内完成登录。",
     "signUp": "注册账号",
     "noAccount": "还没有账号？"
   },
@@ -46,8 +50,6 @@
     "signIn": "登录工作区",
     "newHere": "第一次使用 OpenAgents？",
     "createAccount": "创建账号",
-    "joinWithCode": "已有配对码？把此电脑加入工作区",
-    "joinWithCodeHint": "适合服务器或远程电脑：加入后，智能体在此电脑上为该工作区运行，无需登录。",
     "back": "返回",
     "previewLabel": "OpenAgents 工作区，展示导航、话题列表，以及与 Claude 和 Codex 的对话",
     "previewKicker": "OpenAgents 工作区",
@@ -59,14 +61,18 @@
   "signUpPage": {
     "title": "创建 OpenAgents 账号",
     "subtitle": "一个账号，在应用和网页中访问你的工作区。",
-    "name": "姓名（选填）",
+    "username": "用户名",
     "confirmPassword": "确认密码",
     "passwordHint": "至少 8 位，并包含以下至少 3 类：大写字母、小写字母、数字、特殊字符。",
     "passwordMismatch": "两次输入的密码不一致。",
     "submit": "创建账号",
     "creating": "正在创建账号…",
     "hasAccount": "已有账号？",
-    "browser": "使用 Google、GitHub 或 Apple 继续",
     "terms": "继续即表示你同意我们的服务条款和隐私政策。"
+  },
+  "checkEmail": {
+    "title": "请查收邮箱",
+    "body": "我们已向 {{email}} 发送确认链接，点击链接即可完成账号创建。",
+    "backToSignIn": "返回登录"
   }
 }

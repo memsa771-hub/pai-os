@@ -1,9 +1,10 @@
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { capture, identify } from './analytics';
 import { desktopHost } from './desktop-host';
-import { clearWorkspaceSession, loadWorkspaceSession } from './workspace-session';
+import { clearAuthSession, loadAuthSession, saveAuthSession } from './auth-session';
+import { refreshSession, signOut as supabaseSignOut, type AuthSession } from './supabase-auth';
 
 interface OpenAgentsUser {
   email: string;
@@ -18,6 +19,9 @@ interface OpenAgentsAuthContextValue {
   isOpenAgentsDomain: boolean;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
+  /** Adopt a freshly obtained Supabase session (from /sign-in, /sign-up, or
+   * the OAuth/email-confirmation callback pages) without a page reload. */
+  applySession: (session: AuthSession) => void;
 }
 
 // `workspace` is the desktop build: the launcher serves the bundle from
@@ -25,6 +29,9 @@ interface OpenAgentsAuthContextValue {
 // workspace.openagents.org is on the web. Without it the desktop app would
 // decide it was a third-party deployment and show the marketing landing page.
 const OPENAGENTS_HOSTNAMES = ['workspace.openagents.org', 'localhost', 'workspace'];
+
+// Refresh well before expiry so a page load never races a lapsed token.
+const REFRESH_MARGIN_SECONDS = 60;
 
 const OpenAgentsAuthContext = createContext<OpenAgentsAuthContextValue | null>(null);
 
@@ -39,6 +46,34 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
   const [idToken, setIdToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [isOpenAgentsDomain, setIsOpenAgentsDomain] = useState(false);
+  const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const clearSession = useCallback(() => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    clearAuthSession();
+    setUser(null);
+    setIdToken(null);
+  }, []);
+
+  const applySession = useCallback((session: AuthSession) => {
+    saveAuthSession(session);
+    const displayName = session.user.username || session.user.email;
+    setUser({ email: session.user.email, displayName, photoURL: null });
+    setIdToken(session.accessToken);
+    // Email is the cross-surface person key: identify on every auth restore
+    // so sign-ins on different clients are attributed to the same person.
+    identify(session.user.email, { email: session.user.email, display_name: displayName });
+
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
+    const delayMs = Math.max(0, (session.expiresAt - REFRESH_MARGIN_SECONDS) * 1000 - Date.now());
+    refreshTimer.current = setTimeout(async () => {
+      try {
+        applySession(await refreshSession(session.refreshToken));
+      } catch {
+        clearSession();
+      }
+    }, delayMs);
+  }, [clearSession]);
 
   useEffect(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
@@ -50,118 +85,52 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
       return;
     }
 
-    // A workspace-issued session (the Google-free path, see lib/workspace-session)
-    // is authoritative on its own: restore it immediately, without waiting on
-    // — or being overridden by — Firebase, which may be unreachable.
-    const stored = loadWorkspaceSession();
-    if (stored) {
-      setUser({
-        email: stored.email,
-        displayName: stored.displayName || stored.email,
-        photoURL: null,
-      });
-      setIdToken(stored.token);
-      identify(stored.email, { email: stored.email, display_name: stored.displayName || stored.email });
+    // In the desktop app the launcher owns the session (native sign-in UI,
+    // main-process token refresh) and pushes it here — this page never signs
+    // itself in or manages a Supabase session of its own.
+    if (desktopHost()) {
       setLoading(false);
       return;
     }
 
-    if (desktopHost()) { setLoading(false); return; }
-
-    // Dynamically import firebase to avoid loading it on non-openagents domains
-    let unsubscribe: (() => void) | undefined;
-
-    // Firebase's initial auth-state resolution needs Google; where that is
-    // blocked, onAuthStateChanged never fires. Resolve to "signed out" after a
-    // short wait so the gate offers the sign-in button instead of spinning
-    // forever. The real listener still wins whenever it fires first.
-    let settled = false;
-    const settle = () => {
-      if (settled) return;
-      settled = true;
-      setLoading(false);
-    };
-    const fallbackTimer = setTimeout(settle, 5000);
-
-    import('./firebase').then(({ onAuthChange, getIdToken, getResolvedEmail }) => {
-      unsubscribe = onAuthChange(async (firebaseUser) => {
-        if (firebaseUser) {
-          const token = await getIdToken();
-          // Email/password users arrive via a custom token whose email lives in
-          // a custom claim, not firebaseUser.email — resolve both.
-          const email = firebaseUser.email || (await getResolvedEmail());
-          setUser({
-            email,
-            displayName: firebaseUser.displayName || email,
-            photoURL: firebaseUser.photoURL,
-          });
-          setIdToken(token);
-          // Email is the cross-surface person key: identify on every auth
-          // restore so handoff logins (openagents.org → /auth/callback) are
-          // attributed to the same person as their website activity. identify()
-          // is idempotent; the sign_in checkpoint is deduped per browser
-          // session so restores don't inflate the funnel.
-          if (email) {
-            identify(email, { email, display_name: firebaseUser.displayName || email });
-            if (!sessionStorage.getItem('oa_sign_in_tracked')) {
-              sessionStorage.setItem('oa_sign_in_tracked', '1');
-              const method =
-                firebaseUser.providerData[0]?.providerId?.replace('.com', '') || 'handoff';
-              capture('sign_in', { method });
-            }
-          }
-        } else {
-          setUser(null);
-          setIdToken(null);
-        }
-        settle();
-      });
-    });
+    const stored = loadAuthSession();
+    if (stored) {
+      applySession(stored);
+    }
+    setLoading(false);
 
     return () => {
-      clearTimeout(fallbackTimer);
-      unsubscribe?.();
+      if (refreshTimer.current) clearTimeout(refreshTimer.current);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // In the desktop app the launcher owns the session and pushes renewals here;
-  // the page never decides on its own that the account has ended.
   useEffect(() => desktopHost()?.onSession?.((session) => {
     setUser({ email: session.email, displayName: session.displayName || session.email, photoURL: null });
     setIdToken(session.token);
   }), []);
 
+  /** Web sign-in happens on /sign-in (see app/sign-in/page.tsx) instead of
+   * through this callback; this only covers the desktop path, where the
+   * embedded view asks the launcher chrome to bring up its own native
+   * sign-in UI (which offers the actual provider choice) rather than
+   * managing a Supabase session itself. */
   const signIn = useCallback(async () => {
-    const host = desktopHost();
-    if (host) { host.signIn(); return; }
-    const { signInWithGoogle, getIdToken } = await import('./firebase');
-    const firebaseUser = await signInWithGoogle();
-    const token = await getIdToken();
-    const email = firebaseUser.email || '';
-    setUser({
-      email,
-      displayName: firebaseUser.displayName || email,
-      photoURL: firebaseUser.photoURL,
-    });
-    setIdToken(token);
-    // identify + sign_in are captured by the onAuthChange listener above,
-    // which this popup sign-in also triggers.
+    desktopHost()?.signIn();
   }, []);
 
   const signOut = useCallback(async () => {
-    // Drop the workspace session first so a Firebase failure (Google
-    // unreachable) can't leave the user signed in.
-    clearWorkspaceSession();
-    setUser(null);
-    setIdToken(null);
+    const token = idToken;
+    clearSession();
     const host = desktopHost();
     if (host) { host.signOut(); return; }
-    const { signOutUser } = await import('./firebase');
-    await signOutUser();
-  }, []);
+    if (token) await supabaseSignOut(token);
+  }, [idToken, clearSession]);
 
   return (
-    <OpenAgentsAuthContext.Provider value={{ user, idToken, loading, isOpenAgentsDomain, signIn, signOut }}>
+    <OpenAgentsAuthContext.Provider
+      value={{ user, idToken, loading, isOpenAgentsDomain, signIn, signOut, applySession }}
+    >
       {children}
     </OpenAgentsAuthContext.Provider>
   );

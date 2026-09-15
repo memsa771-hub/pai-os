@@ -264,9 +264,9 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               required
             />
           </div>
-          
-          <button 
-            type="submit" 
+
+          <button
+            type="submit"
             className="auth-submit-button"
             disabled={isLoading}
           >
@@ -274,7 +274,7 @@ const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess }) => {
               ? 'Loading...' 
               : isAdminMode
                 ? 'Login as Admin'
-                : isSignUp 
+                : isSignUp
                   ? 'Sign Up with Email' 
                   : 'Sign In with Email'
             }

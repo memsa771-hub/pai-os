@@ -135,6 +135,25 @@ describe('Config', () => {
     assert.equal(cfg.getAgent('x').network, undefined);
   });
 
+  it('addNetwork upserts — re-registering refreshes token/endpoint/name', () => {
+    const cfg = new Config(tmpDir);
+    cfg.addNetwork({ id: 'w1', slug: 'ws', name: 'Old', token: 'tok-old' });
+    cfg.addNetwork({ id: 'w1', slug: 'ws', name: 'New', token: 'tok-new', endpoint: 'https://ep' });
+    const nets = cfg.getNetworks();
+    assert.equal(nets.length, 1);
+    assert.equal(nets[0].token, 'tok-new');
+    assert.equal(nets[0].name, 'New');
+    assert.equal(nets[0].endpoint, 'https://ep');
+  });
+
+  it('addNetwork upsert keeps existing fields when the update omits them', () => {
+    const cfg = new Config(tmpDir);
+    cfg.addNetwork({ id: 'w1', slug: 'ws', name: 'Name', token: 'tok-1' });
+    cfg.addNetwork({ id: 'w1', slug: 'ws' });
+    assert.equal(cfg.getNetworks()[0].token, 'tok-1');
+    assert.equal(cfg.getNetworks()[0].name, 'Name');
+  });
+
   it('persists to disk and reloads', () => {
     const cfg1 = new Config(tmpDir);
     cfg1.addAgent({ name: 'persist', type: 'aider', role: 'worker' });

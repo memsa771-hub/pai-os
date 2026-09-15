@@ -31,7 +31,6 @@ export function AgentsSection({
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
   const setCurrentTab = useUiStore((s) => s.setCurrentTab)
-  const goToInstallList = useUiStore((s) => s.goToInstallList)
 
   const running = agents.filter(isRunning).length
   const types = new Set(agents.map((a) => a.type).filter(Boolean)).size
@@ -54,13 +53,6 @@ export function AgentsSection({
         title={t("settings.agents.overviewGroup")}
         footer={
           <div className="flex justify-end gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => goToInstallList()}
-            >
-              {t("settings.agents.browseMarketplace")}
-            </Button>
             <Button
               size="sm"
               variant="outline"

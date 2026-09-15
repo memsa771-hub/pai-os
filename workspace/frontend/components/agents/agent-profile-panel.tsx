@@ -13,6 +13,7 @@ import { agentLabel } from '@/lib/helpers';
 import { toast } from 'sonner';
 import type { CloudAgentConfig, AgentCatalogModel } from '@/lib/types';
 import { useT } from '@/lib/i18n';
+import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import {
   Select,
   SelectContent,
@@ -28,7 +29,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
   const {
     selectedAgentName, setSelectedAgentName, isMobile, setViewMode, openMobileDetail,
   } = useLayout();
-  const { agents, refreshWorkspace, createSession } = useWorkspace();
+  const { agents, refreshWorkspace, createSession, setCurrentSessionId } = useWorkspace();
   const { isCopied, copyToClipboard } = useCopyToClipboard();
   const confirm = useConfirm();
   const t = useT();
@@ -40,11 +41,11 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
   // Cloud agent config
   const [cloudConfig, setCloudConfig] = useState<CloudAgentConfig | null>(null);
   useEffect(() => {
-    if (!isCloud || !agent) { setCloudConfig(null); return; }
+    if (!isCloud || !agent || agent.builtin) { setCloudConfig(null); return; }
     workspaceApi.listCloudAgents().then((configs) => {
       setCloudConfig(configs.find((c) => c.agentName === agent.agentName) || null);
     }).catch(() => {});
-  }, [isCloud, agent?.agentName]);
+  }, [isCloud, agent?.agentName, agent?.builtin]);
 
   const handleRemoveCloudAgent = useCallback(async () => {
     if (!agent) return;
@@ -111,7 +112,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
   const agentType = agent?.agentType || null;
   useEffect(() => {
     setModelOptions(null);
-    if (!agentType) return;
+    if (!agentType || agent?.builtin) return;
     let cancelled = false;
     if (agentType.startsWith('cloud:')) {
       const provider = agentType.replace('cloud:', '');
@@ -127,7 +128,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
       }).catch(() => {});
     }
     return () => { cancelled = true; };
-  }, [agentType]);
+  }, [agentType, agent?.builtin]);
 
   const currentModel = isCloud ? (cloudConfig?.model || '') : (agent?.model || '');
 
@@ -235,6 +236,13 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
 
   const handleStartThread = useCallback(async () => {
     if (!agent) return;
+    if (agent.builtin) {
+      setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
+      setSelectedAgentName(null);
+      setViewMode('threads');
+      if (isMobile) openMobileDetail();
+      return;
+    }
     await createSession({ master: agent.agentName, participants: [agent.agentName] });
     setSelectedAgentName(null);
     setViewMode('threads');
@@ -242,20 +250,28 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
     // the detail pane explicitly — otherwise the new thread is created behind
     // the thread list and the tap looks like it did nothing.
     if (isMobile) openMobileDetail();
-  }, [agent, createSession, setSelectedAgentName, setViewMode, isMobile, openMobileDetail]);
+  }, [agent, createSession, setCurrentSessionId, setSelectedAgentName, setViewMode, isMobile, openMobileDetail]);
 
   if (!agent) return null;
 
   const isOnline = agent.status === 'online';
+  const isSystem = Boolean(agent.builtin);
 
   // Capitalize agent type for display (e.g. "claude" → "Claude", "cloud:openai" → "Cloud: OpenAI")
-  const displayType = isCloud
+  const displayType = isSystem
+    ? 'Built-in / System Agent'
+    : isCloud
     ? `Cloud: ${(agent.agentType || '').replace('cloud:', '').charAt(0).toUpperCase()}${(agent.agentType || '').replace('cloud:', '').slice(1)}`
     : agent.agentType
       ? agent.agentType.charAt(0).toUpperCase() + agent.agentType.slice(1)
       : t('common.unknown');
 
-  const infoItems = isCloud
+  const infoItems = isSystem
+    ? [
+        { icon: <Cloud className="size-3.5" />, label: 'Role', value: "Placement AI's primary education counselor" },
+        { icon: <Sparkles className="size-3.5" />, label: 'Capabilities', value: 'Education planning, university guidance, application guidance, and future specialist coordination' },
+      ]
+    : isCloud
     ? [
         { icon: <Cloud className="size-3.5" />, label: t('agents.fieldType'), value: displayType },
         { icon: <Globe className="size-3.5" />, label: t('agents.fieldApiKey'), value: cloudConfig?.apiKeyMasked || '—' },
@@ -329,19 +345,24 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
               ) : (
                 <div className="group/name flex items-center gap-1.5 min-w-0">
                   <h3 className="text-[15px] font-semibold leading-tight truncate">{agentLabel(agent)}</h3>
-                  <button
+                  {!isSystem && <button
                     onClick={() => setEditingName(true)}
                     className="shrink-0 text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover/name:opacity-100"
                     title={t('agents.editDisplayName')}
                   >
                     <Pencil className="size-3" />
-                  </button>
+                  </button>}
                 </div>
               )}
-              {agent.displayName && agent.displayName !== agent.agentName && (
+              {!isSystem && agent.displayName && agent.displayName !== agent.agentName && (
                 <p className="mt-0.5 truncate text-[11px] text-muted-foreground">@{agent.agentName}</p>
               )}
               <div className="flex items-center gap-1.5 mt-1">
+                {isSystem && (
+                  <span className="inline-flex items-center text-[11px] px-1.5 py-px rounded font-medium bg-primary/10 text-primary">
+                    Placement AI
+                  </span>
+                )}
                 <span className={cn(
                   'inline-flex items-center gap-1 text-[11px] px-1.5 py-px rounded font-medium',
                   isOnline ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
@@ -357,7 +378,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
         {/* Scrollable content */}
         <div className="flex-1 overflow-y-auto px-3.5 space-y-3">
           {/* Description */}
-          <div className="rounded-lg border overflow-hidden">
+          {!isSystem && <div className="rounded-lg border overflow-hidden">
             <div className="px-3.5 py-2.5 border-b flex items-center justify-between gap-2">
               <span className="text-xs font-medium">{t('agents.description')}</span>
               <button
@@ -396,12 +417,14 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
                 </div>
               )}
             </div>
-          </div>
+          </div>}
 
           {/* Connection Details */}
           <div className="rounded-lg border overflow-hidden">
             <div className="px-3.5 py-2.5 border-b">
-              <span className="text-xs font-medium">{t('agents.connectionDetails')}</span>
+              <span className="text-xs font-medium">
+                {isSystem ? 'About PAI Counselor' : t('agents.connectionDetails')}
+              </span>
             </div>
             <div className="divide-y">
               {infoItems.map((item) => (
@@ -413,7 +436,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
                   <div className="flex-1 min-w-0 flex items-start gap-1">
                     <span className={cn(
                       'text-[13px] break-all leading-snug',
-                      item.label !== 'Type' ? 'font-mono' : 'font-medium capitalize'
+                      isSystem ? 'font-medium' : item.label !== 'Type' ? 'font-mono' : 'font-medium capitalize'
                     )}>
                       {item.value}
                     </span>
@@ -434,7 +457,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
 
           {/* Model — picker fed by the agent/provider catalog; free-form ids
               stay selectable (they're prepended when not in the catalog). */}
-          {(currentModel || (modelOptions?.length ?? 0) > 0) && (
+          {!isSystem && (currentModel || (modelOptions?.length ?? 0) > 0) && (
             <div className="rounded-lg border overflow-hidden">
               <div className="px-3.5 py-2.5 border-b flex items-center gap-1.5">
                 <Cpu className="size-3 text-muted-foreground" />
@@ -480,7 +503,7 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
           )}
 
           {/* Cloud config management */}
-          {isCloud && cloudConfig && (
+          {isCloud && !isSystem && cloudConfig && (
             <div className="rounded-lg border overflow-hidden">
               <div className="px-3.5 py-2.5 border-b">
                 <span className="text-xs font-medium">{t('agents.cloudConfiguration')}</span>
@@ -651,9 +674,9 @@ export function AgentProfilePanel({ docked = false }: { docked?: boolean } = {})
               className="flex-1 flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border bg-background hover:bg-zinc-50 dark:hover:bg-zinc-800 transition-colors"
             >
               <Plus className="size-3" />
-              {t('agents.startThread')}
+              {isSystem ? 'Open conversation' : t('agents.startThread')}
             </button>
-            {isCloud && (
+            {isCloud && !isSystem && (
               <button
                 onClick={handleRemoveCloudAgent}
                 className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs font-medium rounded-lg border border-red-200 dark:border-red-900/50 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"

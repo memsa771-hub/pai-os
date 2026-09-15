@@ -7,12 +7,8 @@ import type { NotifRecord } from "@renderer/types"
 
 /**
  * Where a notification leads, as the main process describes it when pushing.
- * Read most specific first — `agent` always travels with `tab: "install"`
- * beside it, and honouring the tab alone is what dropped "amp has an update" on
- * the marketplace list with amp nowhere in sight.
  *
  *   settingsSection  a Settings sub-page
- *   agent            the marketplace, opened on that agent's detail page
  *   tab              a plain page
  *
  * `unknown` rather than `string`: this arrives over IPC from a store on disk,
@@ -20,7 +16,6 @@ import type { NotifRecord } from "@renderer/types"
  */
 interface NotificationRoute {
   tab?: unknown
-  agent?: unknown
   settingsSection?: unknown
 }
 
@@ -35,7 +30,6 @@ export function canRouteNotification(record: NotifRecord): boolean {
   return (
     record.source === "launcher-update" ||
     typeof payload.settingsSection === "string" ||
-    typeof payload.agent === "string" ||
     typeof payload.tab === "string"
   )
 }
@@ -64,25 +58,6 @@ export function routeNotification(record: NotifRecord): boolean {
 
   if (typeof payload.settingsSection === "string") {
     ui.openSettingsSection(payload.settingsSection)
-    return true
-  }
-
-  // Straight to the agent the notification is about. Both calls are needed and
-  // neither is enough alone: the tab mounts the page, the focus request tells it
-  // which agent to open. Setting the tab it is already on is a no-op in the
-  // store, which is why a click from an agent's own detail page used to do
-  // nothing at all — the focus request is what moves it.
-  if (typeof payload.agent === "string") {
-    ui.setCurrentTab("install")
-    ui.setInstallFocusAgent(payload.agent)
-    return true
-  }
-
-  // Marketplace with no particular agent in mind — go to the list, explicitly.
-  // `setCurrentTab("install")` would leave whatever detail page is open sitting
-  // there, so a notification about three agents would appear to do nothing.
-  if (payload.tab === "install") {
-    ui.goToInstallList()
     return true
   }
 

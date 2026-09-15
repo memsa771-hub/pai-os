@@ -9,7 +9,7 @@ import React, {
   useState,
 } from 'react';
 
-import { loadWorkspaceSession } from '@/lib/workspace-session';
+import { loadAuthSession } from '@/lib/auth-session';
 import { restorableRoute } from './navigation-state';
 
 /**
@@ -57,7 +57,7 @@ function readLocation(): { pathname: string; search: URLSearchParams } {
   let raw = window.location.hash.replace(/^#/, '') || '/';
   if (raw === '/?desktop_resume=1') {
     try {
-      const email = loadWorkspaceSession()?.email;
+      const email = loadAuthSession()?.user.email;
       raw = (email && restorableRoute(localStorage.getItem(`oa:desktop:route:${email}`))) || '/';
     } catch { raw = '/'; }
   }
@@ -119,7 +119,7 @@ export function DesktopRouter({
 
   useEffect(() => {
     try {
-      const email = loadWorkspaceSession()?.email;
+      const email = loadAuthSession()?.user.email;
       const route = restorableRoute(location.pathname + (location.search.size ? '?' + location.search : ''));
       if (email && route) localStorage.setItem(`oa:desktop:route:${email}`, route);
     } catch { /* Optional restore preference. */ }

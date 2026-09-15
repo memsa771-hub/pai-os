@@ -6,7 +6,6 @@ import type { Agent } from "@renderer/types"
  */
 export interface AgentActionHandlers {
   onToggle: (a: Agent) => void
-  onOpenTerminal: (a: Agent) => void
   onConfigure: (a: Agent) => void
   onRename: (a: Agent) => void
   onConnect: (a: Agent) => void

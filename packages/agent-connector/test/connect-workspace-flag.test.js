@@ -1,9 +1,9 @@
 'use strict';
 
-// `agn connect <agent> --workspace <slug>` — bind to an already-known
-// workspace (registered network or device pairing) with no token and no
-// server round-trip. The pairing-first path; the token form stays for
-// manual connection.
+// `agn connect <agent> --workspace <slug>` — bind to an already-registered
+// network with no token and no server round-trip. The token form
+// (`agn connect <agent> <token>`) is what registers a network in the first
+// place.
 
 const { describe, it, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
@@ -89,29 +89,6 @@ describe('agn connect --workspace', () => {
     const r = run('connect', 'wsbot', '--workspace', 'wid-1');
     assert.equal(r.code, 0, r.stdout);
     assert.match(readDaemonYaml(), /network: myws/);
-  });
-
-  it('falls back to a device pairing and registers its network', () => {
-    writeDaemonYaml({ agents: [{ name: 'wsbot', type: 'nanoclaw' }], networks: [] });
-    const oaDir = path.join(tmpHome, '.openagents');
-    fs.mkdirSync(oaDir, { recursive: true });
-    fs.writeFileSync(path.join(oaDir, 'node.json'), JSON.stringify({
-      node_key: 'nk-1',
-      pairings: [{
-        node_id: 'n-1',
-        workspace_id: 'wid-9',
-        workspace_slug: 'paired-ws',
-        workspace_name: 'Paired WS',
-        endpoint: 'https://example.test',
-        token: 'pairing-token',
-        paired_at: '2026-08-23T00:00:00Z',
-      }],
-    }));
-    const r = run('connect', 'wsbot', '--workspace', 'paired-ws');
-    assert.equal(r.code, 0, r.stdout);
-    const yaml = readDaemonYaml();
-    assert.match(yaml, /network: paired-ws/);
-    assert.match(yaml, /token: pairing-token/, 'pairing token must be registered for the daemon');
   });
 
   it('fails with the known-workspace list when the reference is unknown', () => {

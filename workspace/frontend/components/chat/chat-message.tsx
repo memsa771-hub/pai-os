@@ -243,7 +243,7 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [], isL
             <MarkdownContent content={message.content} agentNames={agentNames} agentLabels={agentLabels} />
             <Attachments items={attachments} />
 
-            {/* Tap-to-ask chips (e.g. Yumi's seeded welcome). Only on the
+            {/* Tap-to-ask chips (e.g. PAI Counselor's seeded welcome). Only on the
                 trailing message: once the user replies, the moment is over. */}
             {isLast && onSuggestion && Array.isArray(message.metadata?.suggestions) && (
               <div className="mt-2.5 flex flex-wrap gap-2">

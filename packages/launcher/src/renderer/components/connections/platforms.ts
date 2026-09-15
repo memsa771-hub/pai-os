@@ -56,21 +56,6 @@ export const PLATFORMS: PlatformDef[] = [
     defaultEnvKey: 'GITHUB_TOKEN',
   },
   {
-    id: 'google',
-    label: 'Google',
-    support: 'ready',
-    blurb: 'Gemini, AI Studio',
-    glyph: 'G',
-    tint: '#4285F4',
-    authKinds: ['token', 'oauth'],
-    defaultCredentialKind: 'api_key',
-    docs: 'https://aistudio.google.com/app/apikey',
-    // registry.json lists both GEMINI_API_KEY and GOOGLE_API_KEY for the
-    // gemini agent, but GEMINI_API_KEY is its `saved_env_key` — use that so a
-    // key applied here is the one the readiness check looks at.
-    defaultEnvKey: 'GEMINI_API_KEY',
-  },
-  {
     id: 'linear',
     label: 'Linear',
     support: 'ready',

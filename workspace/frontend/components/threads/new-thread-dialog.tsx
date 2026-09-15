@@ -13,35 +13,19 @@ import {
 } from '@/components/ui/responsive-dialog';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
-import { History, Check, Minus, Users } from 'lucide-react';
-import type { WorkspaceAgent, WorkspaceSession } from '@/lib/types';
+import { Check, Minus, Users } from 'lucide-react';
+import type { WorkspaceAgent } from '@/lib/types';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { agentLabel } from '@/lib/helpers';
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
-
-/**
- * Stands in for "start fresh" in the resume picker. Radix rejects an empty
- * string as an item value — it reserves that for "nothing selected" — so the
- * no-context choice needs a value of its own, unwrapped again on submit.
- */
-const NO_RESUME = 'none';
 
 interface NewThreadDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   agents: WorkspaceAgent[];
-  sessions?: WorkspaceSession[];
-  onCreateThread: (opts: { participants: string[]; resumeFrom?: string }) => void;
+  onCreateThread: (opts: { participants: string[] }) => void;
 }
 
-export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreateThread }: NewThreadDialogProps) {
+export function NewThreadDialog({ open, onOpenChange, agents, onCreateThread }: NewThreadDialogProps) {
   const t = useT();
   // Only show online agents in the picker
   const onlineAgents = agents.filter((a) => a.status === 'online');
@@ -49,7 +33,6 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
   const agentNames = onlineAgents.map((a) => a.agentName);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [resumeFrom, setResumeFrom] = useState<string>(NO_RESUME);
 
   const isAllSelected = onlineAgents.length > 0 && selected.size === onlineAgents.length;
   const isPartiallySelected = selected.size > 0 && selected.size < onlineAgents.length;
@@ -63,7 +46,6 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
   useEffect(() => {
     if (open) {
       setSelected(onlineAgents.length === 1 ? new Set([onlineAgents[0].agentName]) : new Set());
-      setResumeFrom(NO_RESUME);
     }
   }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -84,19 +66,9 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
     // need one. A leader can be set later from the thread's agent menu (and is
     // only required by "master" orchestration mode).
     const participants = agentNames.filter((n) => selected.has(n));
-    onCreateThread({ participants, resumeFrom: resumeFrom === NO_RESUME ? undefined : resumeFrom });
+    onCreateThread({ participants });
     onOpenChange(false);
   };
-
-  // Filter sessions that have messages (lastEventAt != null) for resume picker
-  const resumableSessions = (sessions || []).filter(
-    (s) => s.status === 'active' && s.lastEventAt != null
-  );
-
-  // Check if any selected agent is a Claude Code agent (heuristic: agent type or name contains 'claude')
-  const hasClaudeAgent = onlineAgents.some(
-    (a) => selected.has(a.agentName) && /claude/i.test(a.agentName)
-  );
 
   const multipleAgents = onlineAgents.length > 1;
 
@@ -196,31 +168,6 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
               })}
             </div>
           )}
-
-          {/* Resume from past session — show when there are resumable sessions */}
-          {hasClaudeAgent && resumableSessions.length > 0 && (
-            <div className="pt-1">
-              <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-1.5">
-                <History className="size-3" />
-                {t('newThread.resumeLabel')}
-              </label>
-              <Select value={resumeFrom} onValueChange={setResumeFrom}>
-                <SelectTrigger className="w-full h-8.5">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value={NO_RESUME}>{t('newThread.resumeNone')}</SelectItem>
-                    {resumableSessions.map((s) => (
-                      <SelectItem key={s.sessionId} value={s.sessionId}>
-                        {s.title || s.sessionId}
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </div>
-          )}
         </DialogBody>
 
         <DialogFooter className="px-7 pt-7 pb-7 sm:space-x-3">
@@ -228,7 +175,7 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
             {t('common.cancel')}
           </Button>
           <Button className="min-w-24" onClick={handleCreate} disabled={selected.size === 0}>
-            {resumeFrom !== NO_RESUME ? t('newThread.resume') : t('newThread.start')}
+            {t('newThread.start')}
           </Button>
         </DialogFooter>
       </DialogContent>

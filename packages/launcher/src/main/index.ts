@@ -25,10 +25,7 @@ import { readPathEnv, writePathEnv, withPathEnv } from "./env"
 import {
   AgentManager,
   type ChatStreamEvent,
-  type NodeStatus,
 } from "./agent-manager"
-import { CliLoginManager } from "./cli-login"
-import { prepareGeminiSignIn } from "./agents/gemini-signin"
 import {
   ConnectionsStore,
   CredentialsStore,
@@ -82,12 +79,10 @@ import {
   slog,
   STARTUP_LOG,
 } from "./bootstrap/startup-log"
-import { InstallProgress } from "./install-progress"
 import {
   configuredControlPort,
   startControlServer,
 } from "./control-server"
-import { clearRevocation } from "./node-pairing"
 import { registerAccountIpc } from "./auth/ipc"
 import type { ThemeMode } from "../shared/appearance-bridge"
 import {
@@ -259,14 +254,11 @@ const githubBindingsStore = new GitHubBindingsStore()
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let agentManager: AgentManager | null = null
-let cliLogin: CliLoginManager | null = null
 let coreVersion: string | null = null
 // Last launcher-update version we notified about, so re-emitted
 // update-downloaded events (electron-updater fires it from cache on every
 // subsequent check) don't spam the same "update ready" toast.
 let _lastUpdateNotifiedVersion: string | null = null
-
-const installProgress = new InstallProgress(() => mainWindow)
 
 let _launcherVersionCache: string | null = null
 function getLauncherVersion(): string {
@@ -752,12 +744,6 @@ function createTray(): void {
   tray.on("click", () => createWindow())
 }
 
-let _pendingAgentUpdates: Array<{
-  name: string
-  current: string | null
-  latest: string | null
-}> = []
-
 function updateTrayMenu(): void {
   if (!tray) return
 
@@ -768,30 +754,6 @@ function updateTrayMenu(): void {
     agents.length > 0
       ? agents.map((a) => ({ label: `${a.name} (${a.state})`, enabled: false }))
       : [{ label: t("trayNoAgents"), enabled: false }]
-
-  const updateItems: Electron.MenuItemConstructorOptions[] =
-    _pendingAgentUpdates.length > 0
-      ? [
-          { type: "separator" },
-          {
-            label: t("trayAgentUpdates", {
-              count: _pendingAgentUpdates.length,
-            }),
-            enabled: false,
-          },
-          ..._pendingAgentUpdates.slice(0, 5).map(
-            (u): Electron.MenuItemConstructorOptions => ({
-              label: `${u.name}: v${u.current ?? "?"} → v${u.latest ?? "?"}`,
-              click: () => {
-                createWindow()
-                if (mainWindow && !mainWindow.isDestroyed()) {
-                  mainWindow.webContents.send("navigate-to-install", u.name)
-                }
-              },
-            }),
-          ),
-        ]
-      : []
 
   // Launcher self-update: once a background download has landed, offer an
   // immediate "restart to update" instead of waiting for the next quit.
@@ -819,7 +781,6 @@ function updateTrayMenu(): void {
     { label: t("trayOpenDashboard"), click: () => createWindow() },
     { type: "separator" },
     ...agentItems,
-    ...updateItems,
     ...launcherUpdateItems,
     { type: "separator" },
     {
@@ -845,84 +806,7 @@ function updateTrayMenu(): void {
   ])
 
   tray.setContextMenu(menu)
-  if (_pendingAgentUpdates.length > 0) {
-    tray.setToolTip(
-      _pendingAgentUpdates.length === 1
-        ? t("trayTooltipUpdatesOne")
-        : t("trayTooltipUpdates", { count: _pendingAgentUpdates.length }),
-    )
-  } else {
-    tray.setToolTip(t("trayTooltip"))
-  }
-}
-
-/** Agent → version we have already announced, so a re-check stays quiet. */
-const _notifiedAgentUpdates = new Map<string, string>()
-
-/**
- * Announces pending agent updates in the notification centre — the same place
- * the launcher's own update lands, so "something needs your attention" has one
- * home rather than a badge here and a card there.
- */
-function notifyAgentUpdates(
-  updates: Array<{ name: string; latest: string | null }>,
-): void {
-  // Everything got upgraded — retire the entry instead of leaving a count the
-  // user already acted on sitting unread.
-  if (updates.length === 0) {
-    _notifiedAgentUpdates.clear()
-    try {
-      clearNotificationsBySource("agent-update")
-    } catch {}
-    return
-  }
-
-  const fresh = updates.filter(
-    (u) => u.latest && _notifiedAgentUpdates.get(u.name) !== u.latest,
-  )
-  if (fresh.length === 0) return
-  for (const u of fresh) _notifiedAgentUpdates.set(u.name, u.latest!)
-
-  const separator = getMainLanguage() === "zh" ? "、" : ", "
-  const names = updates.map((u) => u.name)
-  try {
-    // One rolling entry: a second unread badge for a list the user can read in
-    // full from the first one is just noise.
-    clearNotificationsBySource("agent-update")
-    pushNotification({
-      kind: "update_available",
-      title:
-        updates.length === 1
-          ? t("agentUpdatesTitleOne", { name: names[0] })
-          : t("agentUpdatesTitle", { count: updates.length }),
-      body: t("agentUpdatesBody", { names: names.join(separator) }),
-      source: "agent-update",
-      // Clicking the entry lands on the surface that performs the upgrade —
-      // and when the entry names one agent, on that agent's own page rather
-      // than on a list the user then has to search. With several there is no
-      // single destination, so `tab` alone sends them to the list.
-      payload:
-        updates.length === 1
-          ? { tab: "install", agent: names[0] }
-          : { tab: "install" },
-      priority: "low",
-    })
-  } catch {}
-}
-
-async function refreshAgentUpdates(): Promise<void> {
-  if (!agentManager) return
-  try {
-    const all = await agentManager.checkAgentUpdates({ force: true })
-    _pendingAgentUpdates = all.filter((u) =>
-      isUpgradeAvailable(u.current, u.latest),
-    )
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("agent-updates-changed", _pendingAgentUpdates)
-    }
-    updateTrayMenu()
-    notifyAgentUpdates(_pendingAgentUpdates)
-  } catch {}
+  tray.setToolTip(t("trayTooltip"))
 }
 
 // Bundled-only resolver — matches legacy. Settings/runtime info should
@@ -1107,13 +991,10 @@ function setupIPC(): void {
   ipcMain.handle("agents:list", () =>
     agentManager ? agentManager.getAgents() : [],
   )
-  ipcMain.handle("agents:supported-types", () =>
-    agentManager ? agentManager.getSupportedAgentTypes() : [],
-  )
   ipcMain.handle("agents:core-info", () =>
     agentManager
       ? agentManager.getCoreInfo()
-      : { version: null, supportedTypes: [], globalCorePresent: false },
+      : { version: null, globalCorePresent: false },
   )
   ipcMain.handle("agents:add", (_e, config) =>
     requireManager().addAgent(config),
@@ -1172,131 +1053,6 @@ function setupIPC(): void {
     requireManager().clearLogsInRange(start, end),
   )
 
-  ipcMain.handle("agents:install-type", (_e, agentType) => {
-    ensureBundledRuntimeFirstOnPath()
-    return requireManager().installAgentType(agentType)
-  })
-  ipcMain.handle("agents:install-type-streaming", async (_e, agentType) => {
-    ensureBundledRuntimeFirstOnPath()
-    const verb = agentManager?.getInstalledVersion(agentType)
-      ? "update"
-      : "install"
-    try {
-      const result = await installProgress.run(agentType, verb, (cb) =>
-        // Updating and installing are not the same npm operation — a bare
-        // `npm install <pkg>` no-ops ("up to date") once package.json holds a
-        // satisfied range, so updates have to pin @latest. See
-        // AgentManager.updateAgentTypeStreaming.
-        verb === "update"
-          ? requireManager().updateAgentTypeStreaming(agentType, cb)
-          : requireManager().installAgentTypeStreaming(agentType, cb),
-      )
-      // installAgentTypeStreaming clears the updates cache. Re-fetch now so
-      // the next `checkAgentUpdates()` call (from the post-job refresh) gets
-      // fresh data instead of an empty cache — otherwise a just-updated agent
-      // could keep showing "Update available" because the renderer overrides
-      // its store with the empty list before the hourly background refresh.
-      // Await the refresh before returning so the renderer's follow-up
-      // useEffect → checkAgentUpdates() call (no `force`) sees the freshly
-      // populated cache instead of the empty value clearCatalogCache() just
-      // wrote. Without the await, the rollback / install / uninstall returns,
-      // the detail page re-fetches, gets `[]`, and the "Update to v…" button
-      // disappears even when one is genuinely available.
-      await refreshAgentUpdates().catch(() => {})
-      return result
-    } catch (e: unknown) {
-      return { success: false, error: (e as Error).message }
-    }
-  })
-  ipcMain.handle("agents:uninstall-type", (_e, agentType) => {
-    ensureBundledRuntimeFirstOnPath()
-    return requireManager().uninstallAgentType(agentType)
-  })
-  ipcMain.handle("agents:uninstall-type-streaming", async (_e, agentType) => {
-    ensureBundledRuntimeFirstOnPath()
-    try {
-      const result = await installProgress.run(agentType, "uninstall", (cb) =>
-        requireManager().uninstallAgentTypeStreaming(agentType, cb),
-      )
-      // Await the refresh before returning so the renderer's follow-up
-      // useEffect → checkAgentUpdates() call (no `force`) sees the freshly
-      // populated cache instead of the empty value clearCatalogCache() just
-      // wrote. Without the await, the rollback / install / uninstall returns,
-      // the detail page re-fetches, gets `[]`, and the "Update to v…" button
-      // disappears even when one is genuinely available.
-      await refreshAgentUpdates().catch(() => {})
-      return result
-    } catch (e: unknown) {
-      return { success: false, error: (e as Error).message }
-    }
-  })
-
-  ipcMain.handle("agents:installed-list", () =>
-    agentManager ? agentManager.listInstalledAgents() : [],
-  )
-  // `force` skips the hour-long probe cache. Background polls leave it unset;
-  // a refresh the user asked for passes it, otherwise pressing refresh inside
-  // that hour re-rendered the exact same numbers and looked like a dead button.
-  ipcMain.handle("agents:check-updates", async (_e, force?: boolean) => {
-    if (!agentManager) return []
-    try {
-      return await agentManager.checkAgentUpdates({ force: !!force })
-    } catch {
-      return []
-    }
-  })
-  // Stage.md §2.5 — install at an arbitrary version/dist-tag. The renderer
-  // uses this for update-channel switches (Beta / Nightly) and any future
-  // "install specific version" flows. Shares the streaming + post-job
-  // cache-refresh harness with install / uninstall / rollback.
-  ipcMain.handle("agents:rollback", async (_e, agentType) => {
-    if (!agentManager) return { success: false, error: "Launcher initializing" }
-    ensureBundledRuntimeFirstOnPath()
-    try {
-      const result = await installProgress.run(agentType, "rollback", (cb) =>
-        agentManager!.rollbackAgentType(agentType, cb),
-      )
-      // Await the refresh before returning so the renderer's follow-up
-      // useEffect → checkAgentUpdates() call (no `force`) sees the freshly
-      // populated cache instead of the empty value clearCatalogCache() just
-      // wrote. Without the await, the rollback / install / uninstall returns,
-      // the detail page re-fetches, gets `[]`, and the "Update to v…" button
-      // disappears even when one is genuinely available.
-      await refreshAgentUpdates().catch(() => {})
-      return result
-    } catch (e: unknown) {
-      return { success: false, error: (e as Error).message }
-    }
-  })
-  ipcMain.handle("agents:changelog", async (_e, agentType) => {
-    if (!agentManager) return { versions: [], error: "Launcher initializing" }
-    try {
-      return await agentManager.getAgentChangelog(agentType)
-    } catch (e: unknown) {
-      return { versions: [], error: (e as Error).message }
-    }
-  })
-  ipcMain.handle("agents:check-type", (_e, agentType) => {
-    if (!agentManager) return { installed: false, binary: null }
-    try {
-      return agentManager.checkAgentType(agentType)
-    } catch {
-      return { installed: false, binary: null }
-    }
-  })
-  ipcMain.handle("agents:catalog", async (_e, force?: boolean) => {
-    if (!agentManager) return []
-    try {
-      return await agentManager.getCatalog(!!force)
-    } catch (err: unknown) {
-      slog(`agents:catalog failed: ${(err as Error)?.message || err}`)
-      return []
-    }
-  })
-
-  ipcMain.handle("agents:env-fields", (_e, agentType) =>
-    requireManager().getEnvFields(agentType),
-  )
   ipcMain.handle("agents:get-env", (_e, agentType) =>
     requireManager().getAgentEnv(agentType),
   )
@@ -1311,25 +1067,6 @@ function setupIPC(): void {
   )
   ipcMain.handle("agents:save-instance-env", (_e, agentName, env) =>
     requireManager().saveAgentInstanceEnv(agentName, env),
-  )
-  ipcMain.handle("agents:test-llm", (_e, env) => requireManager().testLLM(env))
-  ipcMain.handle("agents:list-models", (_e, agentType, env, path) =>
-    requireManager().listModels(agentType, env, path),
-  )
-  ipcMain.handle("agents:import-credentials-scan", (_e, agentType) =>
-    requireManager().scanCredentialImports(asName(agentType, "agentType")),
-  )
-  ipcMain.handle("agents:import-credentials-parse", (_e, agentType, text) =>
-    requireManager().parseCredentialImport(
-      asName(agentType, "agentType"),
-      asString(text, "text", { max: 20_000 }),
-    ),
-  )
-  ipcMain.handle("agents:import-credentials-resolve", (_e, agentType, id) =>
-    requireManager().resolveCredentialImport(
-      asName(agentType, "agentType"),
-      asName(id, "id"),
-    ),
   )
   ipcMain.handle("agents:signal-reload", () => requireManager().signalReload())
 
@@ -1411,50 +1148,6 @@ function setupIPC(): void {
     requireManager().renameWorkspace(workspaceId, name),
   )
 
-  // ── Connect this device (node pairing) ──
-  // Status is read from disk, so it answers even before the core loads.
-  ipcMain.handle("node:status", (): NodeStatus => {
-    if (agentManager) return agentManager.getNodeStatus()
-    return {
-      connected: false,
-      nodeId: null,
-      workspaceId: null,
-      workspaceSlug: null,
-      workspaceName: null,
-      endpoint: null,
-      hostname: os.hostname(),
-      deviceType: "unknown",
-      workspaces: [],
-      revoked: [],
-    }
-  })
-  // Verified against the workspace (throttled in the manager), so a device the
-  // workspace has since removed stops being reported as paired here.
-  ipcMain.handle("node:refresh", (_e, force) =>
-    agentManager
-      ? agentManager.refreshNodeStatus(!!force)
-      : Promise.resolve({
-          connected: false,
-          nodeId: null,
-          workspaceId: null,
-          workspaceSlug: null,
-          workspaceName: null,
-          endpoint: null,
-          hostname: os.hostname(),
-          deviceType: "unknown",
-          workspaces: [],
-          revoked: [],
-        }),
-  )
-  ipcMain.handle("node:connect", (_e, code, opts) =>
-    requireManager().connectNode(code, opts || {}),
-  )
-  // "I have seen that this workspace removed me." The record exists to tell
-  // the user once; dismissing it is how that ends without re-joining.
-  ipcMain.handle("node:dismiss-revocation", (_e, workspaceId: string) => {
-    clearRevocation(String(workspaceId || ""))
-    return agentManager ? agentManager.getNodeStatus() : null
-  })
   // Native folder picker for onboarding's "Create your first agent" step. The
   // chosen directory becomes the agent's working directory. Returns null when
   // the user cancels.
@@ -1476,20 +1169,6 @@ function setupIPC(): void {
     },
   )
 
-  // ── Onboarding ──
-  // Runnable-only picker + atomic, verified provisioning. See agent-manager.ts.
-  ipcMain.handle("onboarding:agents", async () => {
-    if (!agentManager) return []
-    try {
-      return await agentManager.getOnboardingAgents()
-    } catch (err: unknown) {
-      slog(`onboarding:agents failed: ${(err as Error)?.message || err}`)
-      return []
-    }
-  })
-  ipcMain.handle("onboarding:provision", (_e, opts) =>
-    requireManager().provisionFirstAgent(opts),
-  )
   // Renderer consumes the post-upgrade reset flag (set by the startup
   // migration) to clear its onboarding localStorage and re-open the flow.
   // Read-and-clear so it only fires once.
@@ -2119,39 +1798,6 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle("agents:health-check", (_e, type) => {
-    if (!agentManager) return null
-    try {
-      return agentManager.healthCheck(type)
-    } catch {
-      return null
-    }
-  })
-
-  // Run a fresh sign-in probe for a hosted-login agent (Cursor/Hermes) and
-  // return its health. Used by the Configure dialog after the user confirms
-  // they completed the terminal login, so the result reflects reality.
-  ipcMain.handle("agents:login-refresh", async (_e, type) => {
-    if (!agentManager) return null
-    try {
-      return await agentManager.refreshHostedLogin(type)
-    } catch {
-      return null
-    }
-  })
-
-  // Drop a stale/invalid API key (e.g. CURSOR_API_KEY) so a hosted-login agent
-  // uses its browser-login session instead. See clearHostedLoginApiKey.
-  ipcMain.handle("agents:login-clear-key", (_e, type, agentName) => {
-    if (!agentManager) return { success: false }
-    try {
-      agentManager.clearHostedLoginApiKey(type, agentName || undefined)
-      return { success: true }
-    } catch {
-      return { success: false }
-    }
-  })
-
   ipcMain.handle("core:update", async () => {
     // Run bundled `node npm-cli.js` directly (no shell, argv array) so a
     // non-ASCII home path survives on Windows — the `.cmd` shim does not.
@@ -2199,338 +1845,6 @@ function setupIPC(): void {
   // scheme to launch another installed app — neither is something any caller
   // here needs (every call site passes an https docs/repo/release link).
   ipcMain.handle("shell:open-external", (_e, url) => openExternalSafely(url))
-  // Open a terminal running `cmd`, optionally cd'd into `cwd` first. Shared by
-  // the CLI-login flow (no cwd) and the per-agent "Chat" button, which opens an
-  // interactive CLI session inside the agent's working folder.
-  const runTerminal = (
-    cmd: string,
-    cwd?: string,
-    agentType?: string,
-    extraEnv?: Record<string, string>,
-  ): void => {
-    const { spawn } = require("child_process")
-    // Resolve the CLI to an ABSOLUTE binary path so the terminal never depends
-    // on PATH. A CLI's own installer only edits the *registry* PATH (Cursor
-    // drops itself under %LOCALAPPDATA%\cursor-agent) or lands in a per-agent
-    // runtime prefix — either way a freshly-spawned terminal inherits a PATH
-    // that can't see it, and a bare command dies with "'x' is not recognized as
-    // an internal or external command". An absolute path sidesteps it entirely.
-    const resolvedCmd = agentManager
-      ? agentManager.resolveLoginCommand(cmd, agentType)
-      : cmd
-    // The dirs the core prepends to the daemon's PATH, so child tools the CLI
-    // spawns (node, git) and the fallback when abs-path resolution misses still
-    // resolve without a reboot. Taken from the core rather than rebuilt here:
-    // the local copy of this list was missing npm's configured global prefix,
-    // among others, so a CLI installed to a custom prefix was invisible in the
-    // terminal while the daemon found it fine.
-    const coreBins = agentManager?.extraBinDirs() ?? []
-    // One line above the command for a CLI whose sign-in isn't where the user
-    // would look for it — Gemini opens straight into chat when it remembers an
-    // API key, and the Google sign-in is behind its `/auth` command.
-    const hint = agentType ? agentManager?.loginHintFor(agentType) || "" : ""
-    // The proxy comes FIRST so a caller's own variable would still win, but in
-    // practice they never overlap. It has to be written into the script because
-    // the macOS terminal is not our child: `osascript` hands the script to the
-    // already-running Terminal.app, which knows nothing of this process's
-    // environment. Without it a machine whose proxy lives in System Settings
-    // completes the browser half of a sign-in and then fails the CLI's token
-    // exchange with a TLS socket disconnect — the CLI went direct.
-    const childEnv = { ...proxyEnvForChildren(), ...(extraEnv || {}) }
-    if (process.platform === "win32") {
-      const { execSync: exec } = require("child_process")
-      const home = process.env.USERPROFILE || os.homedir()
-      const portableNode = path.join(home, ".openagents", "nodejs")
-      const npmBin = path.join(process.env.APPDATA || "", "npm")
-      const runtimeBins: string[] = []
-      try {
-        const rd = path.join(home, ".openagents", "runtimes")
-        for (const d of fs.readdirSync(rd, { withFileTypes: true })) {
-          if (d.isDirectory())
-            runtimeBins.push(path.join(rd, d.name, "node_modules", ".bin"))
-        }
-      } catch {}
-      // Kept as a second layer under coreBins for the case the core failed to
-      // load (its own install is what the launcher is often busy repairing).
-      const localAppData =
-        process.env.LOCALAPPDATA || path.join(home, "AppData", "Local")
-      const cliBins = [
-        // Cursor: native win32 installer → %LOCALAPPDATA%\cursor-agent (the
-        // executables are copied to the root, not the versions\ subdir). The
-        // curl|bash layout uses ~/.local\bin or ~/.cursor\bin.
-        path.join(localAppData, "cursor-agent"),
-        path.join(home, ".local", "bin"),
-        path.join(home, ".cursor", "bin"),
-        // Hermes: native (no-WSL) installer puts hermes.exe in the portable
-        // venv's Scripts dir and the uv shim in %LOCALAPPDATA%\hermes\bin.
-        path.join(localAppData, "hermes", "hermes-agent", "venv", "Scripts"),
-        path.join(localAppData, "hermes", "bin"),
-      ]
-      const allBins = [
-        ...coreBins,
-        ...runtimeBins,
-        path.join(portableNode, "node_modules", ".bin"),
-        portableNode,
-        npmBin,
-        ...cliBins,
-      ]
-        .filter((d, i, all) => {
-          if (!d) return false
-          const first = all.findIndex((o) => o.toLowerCase() === d.toLowerCase())
-          if (first !== i) return false
-          try {
-            return fs.existsSync(d)
-          } catch {
-            return false
-          }
-        })
-        .join(";")
-      // Write the PATH prefix + command into a temp .cmd and launch a window
-      // that runs it. Putting the (long) PATH *inside the file* — not on an
-      // inline `set PATH=<huge> && cmd` on the `start` command line — avoids the
-      // cmd.exe command-line/env overflow ("Not enough memory resources") that
-      // silently aborted the `set`, leaving cursor-agent unresolved. The temp
-      // path is quoted so a space in the user's home dir survives.
-      try {
-        const lines = [
-          "@echo off",
-          "chcp 65001 >nul",
-          `set "PATH=${allBins};%PATH%"`,
-          ...Object.entries(childEnv).map(([k, v]) => `set "${k}=${v}"`),
-          ...(cwd ? [`cd /d "${cwd}"`] : []),
-          ...(hint ? [`echo ${hint.replace(/[&<>|^]/g, " ")}`, "echo."] : []),
-          resolvedCmd,
-        ]
-        const tmpCmd = path.join(
-          os.tmpdir(),
-          `openagents-login-${Date.now()}.cmd`,
-        )
-        // Prepend a UTF-8 BOM so cmd.exe reads the batch file as UTF-8 instead
-        // of the console's OEM codepage (GBK/936 on Chinese Windows). Without it
-        // a non-ASCII cwd (`cd /d "D:\重要资料"`) or home dir in PATH is decoded
-        // wrong and dies with "The system cannot find the path specified." The
-        // BOM + `chcp 65001` together make non-ASCII paths in the script work.
-        fs.writeFileSync(tmpCmd, "﻿" + lines.join("\r\n"), "utf-8")
-        exec(`start "OpenAgents Login" cmd /K "${tmpCmd}"`, {
-          stdio: "ignore",
-          shell: true,
-          // The one place a console window IS the feature — the user signs in
-          // there. Stated explicitly so the process-wide default in
-          // win-console.ts leaves it alone.
-          windowsHide: false,
-        })
-      } catch {}
-    } else if (process.platform === "darwin") {
-      const home = os.homedir()
-      const portableNode = path.join(home, ".openagents", "nodejs")
-      const portableNodeBin = path.join(portableNode, "bin")
-      const runtimeBins: string[] = []
-      try {
-        const rd = path.join(home, ".openagents", "runtimes")
-        for (const d of fs.readdirSync(rd, { withFileTypes: true })) {
-          if (d.isDirectory())
-            runtimeBins.push(path.join(rd, d.name, "node_modules", ".bin"))
-        }
-      } catch {}
-      const allBins = [
-        ...coreBins,
-        ...runtimeBins,
-        path.join(portableNode, "node_modules", ".bin"),
-        portableNodeBin,
-        portableNode,
-        "/usr/local/bin",
-      ]
-        .filter((d, i, all) => !!d && all.indexOf(d) === i)
-        .join(":")
-      // Quote every part for the shell. The launcher's own bundle dir
-      // ("/Applications/OpenAgents Launcher.app/Contents/MacOS") is on this
-      // list and contains a space: unquoted, zsh read the tail as a second
-      // assignment and failed with "export: not valid in this context" — and
-      // worse, it kept the truncated first half, so the user's terminal lost
-      // /usr/bin as well and the login command never ran at all.
-      const sq = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
-      const lines = [
-        `export PATH=${sq(allBins)}:"$PATH"`,
-        ...Object.entries(childEnv).map(([k, v]) => `export ${k}=${sq(v)}`),
-        ...(cwd ? [`cd ${sq(cwd)}`] : []),
-        ...(hint ? [`echo ${sq(hint)}`, "echo"] : []),
-        resolvedCmd,
-      ]
-      // Hand the new shell a temp script to source instead of one inline
-      // string: the command already carries an absolute binary path in double
-      // quotes, and squeezing that through AppleScript's string escaping on
-      // top of the shell's is where the quoting kept coming apart. Sourcing
-      // (`.`) leaves the PATH and cwd set in the user's own shell, so the CLI
-      // stays usable in that window once the sign-in returns.
-      try {
-        const tmpSh = path.join(
-          os.tmpdir(),
-          `openagents-login-${Date.now()}.sh`,
-        )
-        fs.writeFileSync(tmpSh, lines.join("\n") + "\n", "utf-8")
-        // `do script` ALWAYS opens a new window, which is right when Terminal
-        // is already up — taking over a window the user is working in would be
-        // worse. But when Terminal is NOT running, launching it makes it open
-        // its own default window first, and `do script` then adds a second one:
-        // the user gets two windows, one of which sits at a bare prompt having
-        // run nothing. So the not-running case targets `window 1`, the one
-        // Terminal just made for itself, instead of opening another.
-        //
-        // `in window 1` fails if the user configured Terminal to open no window
-        // at startup, hence the fallback — without it that configuration would
-        // get no window at all, which is worse than the spare one.
-        const target = `". ${sq(tmpSh)}"`
-        const osa = [
-          'if application "Terminal" is running then',
-          `  tell application "Terminal" to do script ${target}`,
-          "else",
-          '  tell application "Terminal"',
-          "    launch",
-          "    try",
-          `      do script ${target} in window 1`,
-          "    on error",
-          `      do script ${target}`,
-          "    end try",
-          "  end tell",
-          "end if",
-          'tell application "Terminal" to activate',
-        ]
-        spawn(
-          "osascript",
-          osa.flatMap((line) => ["-e", line]),
-          { detached: true, stdio: "ignore" },
-        )
-      } catch {}
-    } else {
-      const terminals = ["x-terminal-emulator", "gnome-terminal", "xterm"]
-      for (const term of terminals) {
-        try {
-          spawn(term, ["-e", resolvedCmd], {
-            detached: true,
-            stdio: "ignore",
-            // This branch used to drop `extraEnv` on the floor, so the sign-in
-            // overrides the other two platforms get — Gemini's workspace trust,
-            // CodeBuddy's site — never reached a Linux terminal at all.
-            env: { ...process.env, ...childEnv },
-            ...(cwd ? { cwd } : {}),
-          })
-          return
-        } catch {}
-      }
-    }
-  }
-
-  ipcMain.handle("shell:open-terminal", (_e, cmd) =>
-    runTerminal(asShellCommand(cmd, "command")),
-  )
-
-  // ── In-app CLI sign-in ──
-  // Drives `<cli> login` under pipes and surfaces its browser URL / code prompt
-  // in the launcher, with runTerminal above as the automatic fallback for CLIs
-  // that insist on a TTY. See cli-login.ts.
-  cliLogin = new CliLoginManager({
-    resolveBinary: (type) => agentManager?.resolveBinary(type) ?? null,
-    loginCommandFor: (type) => agentManager?.loginCommandFor(type) ?? null,
-    childEnv: (extra) => agentManager?.childEnv(extra) ?? { ...process.env },
-    verifyLogin: async (type) => {
-      if (!agentManager) return false
-      const h = (await agentManager.refreshHostedLogin(type)) as {
-        logged_in?: boolean
-        ready?: boolean
-      } | null
-      // `logged_in` distinguishes a CLI sign-in from "has an API key" for
-      // dual-auth agents; pure login agents only report `ready`.
-      return h?.logged_in === true || (h?.logged_in == null && !!h?.ready)
-    },
-    openExternal: (url) => {
-      void shell.openExternal(url)
-    },
-    // The type is passed explicitly: the fallback terminal must resolve the
-    // SAME binary the piped attempt just used, not re-guess it from the
-    // command's first word.
-    openTerminal: (cmd, type) => {
-      // Gemini opens straight into chat when it remembers an API key, so the
-      // sign-in runs in a directory of ours whose workspace settings ask for
-      // the Google flow.
-      const prep = type === "gemini" ? prepareGeminiSignIn() : null
-      // …and a CLI that fronts several services (CodeBuddy's international vs
-      // China sites) has to sign in against the SAME one the agent will run on,
-      // or a sign-in the user watched succeed authenticates nothing.
-      const env = {
-        ...(prep?.env || {}),
-        ...(agentManager?.loginEnvFor(type) || {}),
-      }
-      runTerminal(cmd, prep?.cwd, type, env)
-    },
-    emit: (ev) => {
-      if (mainWindow && !mainWindow.isDestroyed())
-        mainWindow.webContents.send("cli-login:event", ev)
-    },
-  })
-
-  ipcMain.handle(
-    "cli-login:start",
-    (_e, type: string, opts?: { terminal?: boolean }) => {
-      if (!cliLogin) throw new Error("Login manager not ready")
-      return cliLogin.start(type, opts)
-    },
-  )
-  ipcMain.handle("cli-login:submit-code", (_e, type: string, code: string) =>
-    cliLogin?.submitCode(type, String(code || "")),
-  )
-  ipcMain.handle("cli-login:cancel", (_e, type: string) =>
-    cliLogin?.cancel(type),
-  )
-
-  // Per-agent "Chat" entry: open a terminal in the agent's working folder and
-  // launch its CLI interactively. The agent's binary is resolved to an absolute
-  // path via the core's installer (PATH is also injected as a fallback), and
-  // the cwd is the agent's configured path or its default workspace dir.
-  ipcMain.handle("shell:open-agent-terminal", (_e, rawAgentName: string) => {
-    if (!agentManager) throw new Error("Agent manager not ready")
-    const agentName = asName(rawAgentName, "agent name")
-    const agents = agentManager.getAgents() as Array<{
-      name: string
-      type?: string
-      path?: string
-    }>
-    const agent = agents.find((a) => a.name === agentName)
-    if (!agent) throw new Error(`Agent '${agentName}' not found`)
-    const type = agent.type || ""
-    // Require a real CLI binary — API-only agents (e.g. kimi) have none and
-    // can't be driven interactively from a terminal.
-    const binary = agentManager.resolveBinary(type)
-    if (!binary)
-      throw new Error(`Agent type '${type}' has no interactive CLI to open.`)
-    const cwd = agent.path || os.homedir()
-    try {
-      fs.mkdirSync(cwd, { recursive: true })
-    } catch {}
-    // Quote the binary so a space in its path survives the shell; runTerminal
-    // re-resolves it through the type, which also routes a `.js` bin (an npm
-    // agent with no Windows shim) through node instead of Windows Script Host.
-    // The same site pinning the sign-in terminal gets: this window IS the
-    // agent's own CLI, so it has to reach the service the agent is configured
-    // for rather than the CLI's default one.
-    runTerminal(
-      /\s/.test(binary) ? `"${binary}"` : binary,
-      cwd,
-      type,
-      agentManager.loginEnvFor(type),
-    )
-  })
-
-  ipcMain.handle("icons:get-dir", () => {
-    const coreIconsDir = path.join(GLOBAL_MODULES, CORE_PKG, "icons")
-    if (fs.existsSync(coreIconsDir)) return coreIconsDir
-    return null
-  })
-  ipcMain.handle("icons:get-path", (_e, name) => {
-    const slug = (name || "").toLowerCase().replace(/[^a-z0-9-]/g, "")
-    const coreIcon = path.join(GLOBAL_MODULES, CORE_PKG, "icons", `${slug}.svg`)
-    if (fs.existsSync(coreIcon)) return coreIcon
-    return null
-  })
   ipcMain.handle("debug:env", () => ({
     ComSpec: process.env.ComSpec,
     SystemRoot: process.env.SystemRoot,
@@ -2544,8 +1858,6 @@ function setupIPC(): void {
   registerAccountIpc({
     endpoint: () => normalizeWorkspaceEndpoint(store.get("workspaceEndpoint")),
     getWindow: () => mainWindow,
-    connectNode: (code) => requireManager().connectNode(code),
-    nodeStatus: () => requireManager().refreshNodeStatus(true),
     // The launcher's own look and feel, which the hosted workspace shares.
     // `nativeTheme.themeSource` is already the mode the renderer put there
     // (see theme:set-source), so main does not keep a second copy of it.
@@ -2619,19 +1931,9 @@ app.whenReady().then(async () => {
         windowOpen: !!mainWindow && !mainWindow.isDestroyed(),
         coreReady: !!agentManager,
         daemonPid: agentManager?.getDaemonPid() ?? null,
-        node: agentManager ? agentManager.getNodeStatus() : null,
       }),
       getAgents: () => (agentManager ? agentManager.getAgents() : []),
-      pair: (code) => withCore().connectNode(code, {}),
-      catalog: async () => ({
-        core: withCore().getCoreInfo(),
-        supported: withCore().getSupportedAgentTypes(),
-        installed: withCore().listInstalledAgents(),
-        catalog: await withCore().getCatalog(false),
-      }),
-      envFields: (type) => withCore().getEnvFields(type),
-      install: (type, onData) =>
-        withCore().installAgentTypeStreaming(type, onData),
+      core: async () => withCore().getCoreInfo(),
       createAgent: (opts) =>
         withCore().addAgent({
           name: opts.name,
@@ -3059,7 +2361,6 @@ app.whenReady().then(async () => {
   setInterval(() => updateTrayMenu(), 5000)
 
   const FOUR_HOURS = 4 * 60 * 60 * 1000
-  const ONE_HOUR = 60 * 60 * 1000
   setInterval(() => checkCoreUpdate().catch(() => {}), FOUR_HOURS)
   setTimeout(() => checkCoreUpdate().catch(() => {}), 30000)
 
@@ -3113,9 +2414,6 @@ app.whenReady().then(async () => {
   // they look, not up to half an hour later. Throttled to at most once per 10 min.
   const onWindowForeground = (): void => launcherUpdateCheck(10 * 60 * 1000)
   app.on("browser-window-focus", onWindowForeground)
-
-  setTimeout(() => refreshAgentUpdates(), 45000)
-  setInterval(() => refreshAgentUpdates(), ONE_HOUR)
 }).catch(reportStartupError)
 
 app.on("window-all-closed", () => {
@@ -3128,9 +2426,6 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   ;(app as typeof app & { isQuitting: boolean }).isQuitting = true
-  try {
-    cliLogin?.disposeAll()
-  } catch {}
   try {
     if (agentManager) agentManager.stopAllChatPolling()
   } catch {}

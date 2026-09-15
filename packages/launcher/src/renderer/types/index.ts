@@ -1,50 +1,4 @@
-import type { ImportCandidate } from '../../shared/credential-import'
-
 export type AgentState = 'online' | 'running' | 'idle' | 'starting' | 'reconnecting' | 'stopped' | 'error'
-
-export interface HealthCheck {
-  ready: boolean
-  installed?: boolean
-  // Structured readiness/failure reason shared with the core + daemon
-  // (health-status.js REASON). The Agents list keys off this — NOT the free-text
-  // message — to decide "Not installed" vs "Login required". Values include
-  // 'ready' | 'not_installed' | 'login_required' | 'version_incompatible'.
-  reason?: string
-  // CLI sign-in state for dual-auth agents (e.g. Claude): true (signed in) /
-  // false (signed out) / null (unknown — never probed or undecidable).
-  logged_in?: boolean | null
-  binary?: string | null
-  version?: string | null
-  message?: string
-  auth_mode?: string
-  // Coarse auth classification from the core's readiness probe: 'ready' |
-  // 'no_credentials' | 'unknown' | null. Distinct from `ready` so the UI can
-  // tell "found a credential file but couldn't read it" (unknown) apart from
-  // "no credentials at all" (no_credentials).
-  auth_status?: string | null
-  execution_mode?: string
-}
-
-/**
- * Progress of an in-app CLI sign-in (main/cli-login.ts). "browser" carries the
- * authorize URL, "code" means the CLI is blocked waiting for the code the
- * browser showed, and "terminal" means it couldn't be hosted in-app and a real
- * terminal window was opened instead.
- */
-export interface CliLoginEvent {
-  agentType: string
-  phase:
-    | "starting"
-    | "browser"
-    | "code"
-    | "verifying"
-    | "success"
-    | "failed"
-    | "cancelled"
-    | "terminal"
-  url?: string
-  message?: string
-}
 
 export interface Agent {
   /** Identity. Keys config, working dir, sessions and workspace membership. */
@@ -56,11 +10,9 @@ export interface Agent {
   displayName?: string | null
   type: string
   state: AgentState
-  health: HealthCheck | null
   network?: string | null
   networkName?: string | null
   lastError?: string | null
-  runtimeMismatch?: boolean
   restarts?: number
   env?: Record<string, string>
   /**
@@ -71,220 +23,6 @@ export interface Agent {
    */
   model?: string | null
   path?: string
-  // True when the agent type has an interactive CLI that can be opened in a
-  // terminal. API-only types (e.g. kimi) are false — the "Chat" action hides.
-  hasCli?: boolean
-}
-
-/** One model an agent can be pointed at (main: agents/model-catalog). */
-export interface ModelChoice {
-  id: string
-  label?: string
-  note?: string
-  deprecated?: boolean
-}
-
-/** Where the model list came from — the UI says so rather than implying truth. */
-export interface ModelListResult {
-  models: ModelChoice[]
-  source: "cli" | "api" | "builtin" | "none"
-  error?: string
-  /** Translatable reason for an empty list; `error` is the raw fallback. */
-  code?: "need_key" | "need_login" | "no_list"
-}
-
-/**
- * Which auth path a model picker is attached to. The list follows the path: the
- * API-key form lists what that endpoint serves even when the same agent is
- * signed in through its CLI on this machine.
- */
-export type ModelListPath = "key" | "login"
-
-export interface EnvField {
-  name: string
-  description: string
-  required?: boolean
-  password?: boolean
-  placeholder?: string
-  default?: string
-  /** Optional fixed choices. Fields without options remain free-form inputs. */
-  options?: string[]
-}
-
-/**
- * A fully-resolved onboarding agent (mirror of the main-process type). Only
- * agents the loaded core can actually run are returned, and `authMode` is
- * resolved authoritatively so onboarding never mislabels auth requirements.
- */
-export interface OnboardingAgent {
-  name: string
-  label: string
-  description: string
-  featured: boolean
-  order: number
-  installed: boolean
-  authMode: "env" | "login" | "none"
-  loginCommand: string | null
-  envFields: EnvField[]
-  docsUrl: string | null
-  notReadyMessage: string | null
-}
-
-/** One workspace this device is registered with as a node. */
-export interface NodeConnection {
-  nodeId: string
-  workspaceId: string
-  workspaceSlug: string | null
-  workspaceName: string | null
-  endpoint: string | null
-}
-
-/**
- * This device's registrations ("connect a node"): paired with a code from the
- * workspace's Connect Agent → Nodes view, after which the workspace can install
- * and run agents here remotely.
- *
- * A device can be a node in several workspaces at once, so `workspaces` is the
- * real answer; the singular fields describe the most recent pairing.
- */
-export interface NodeStatus {
-  connected: boolean
-  nodeId: string | null
-  workspaceId: string | null
-  workspaceSlug: string | null
-  workspaceName: string | null
-  endpoint: string | null
-  hostname: string
-  deviceType: string
-  /** Every workspace this device is paired to, most recent first. */
-  workspaces: NodeConnection[]
-  /**
-   * Workspaces that removed this device. The local entry and its agent
-   * bindings go with the pairing, so these name workspaces that are no longer
-   * in the list — kept so the launcher can say what happened to them.
-   */
-  revoked: RevokedPairing[]
-}
-
-export interface RevokedPairing {
-  workspaceId: string
-  workspaceSlug: string | null
-  workspaceName: string | null
-  /** Agents unbound with it; re-joining files them back under the workspace. */
-  agents?: string[]
-}
-
-export interface CatalogEntry {
-  name: string
-  label?: string
-  description?: string
-  homepage?: string
-  tags?: string[]
-  featured?: boolean
-  order?: number
-  // Launcher-stamped (see CORE_AGENTS in agent-manager). Agents outside the
-  // supported core set are surfaced as "coming soon": visible, not installable,
-  // sorted to the bottom. `coreOrder` is the product-defined display order for
-  // the core set (999 for coming-soon agents).
-  comingSoon?: boolean
-  coreOrder?: number
-  builtin?: boolean
-  installed: boolean
-  managed?: boolean
-  location?: string
-  support?: {
-    install?: boolean
-    workspace?: boolean
-    collaboration?: boolean
-  }
-  requires?: string[]
-  install?: {
-    binary?: string
-    binary_aliases?: string[]
-    npm?: string
-    npm_package?: string
-    requires?: (string | null)[]
-    macos?: string
-    linux?: string
-    windows?: string
-    api_only?: boolean
-  }
-  check_ready?: {
-    login_command?: string
-    not_ready_message?: string
-    env_vars?: string[]
-    saved_env_key?: string
-    // Non-sensitive, human-readable labels for a READY auth_mode (e.g. Gemini
-    // maps cli_login → "Google account sign-in detected"). When present, the
-    // Configure dialog shows an auth-status banner distinguishing a CLI sign-in
-    // from an API key. Never contains a token, email, or path.
-    auth_detected_labels?: Record<string, string>
-  }
-  env_config?: EnvField[]
-  screenshots?: string[]
-  demo?: string
-  demo_url?: string
-  long_description?: string
-  // Stage.md §2.2 "使用入门指南" — optional structured getting-started hints.
-  // Renderer falls back to deriving from install.binary + check_ready when
-  // these aren't set, so older registry entries still get a useful section.
-  quick_start?: string
-  example_commands?: Array<{ cmd: string; description?: string }>
-  docs?: string
-  github?: string
-}
-
-export interface InstalledAgentRecord {
-  name: string
-  version: string | null
-  installedAt: string
-  previousVersion?: string | null
-  history?: Array<{ version: string; installedAt: string }>
-}
-
-export interface AgentUpdateInfo {
-  name: string
-  current: string | null
-  latest: string | null
-  changelog?: Array<{ version: string; date?: string }>
-}
-
-export type InstallPhase = 'idle' | 'preparing' | 'downloading' | 'installing' | 'verifying' | 'done' | 'error'
-
-/**
- * One dependency an agent's installer needs but the machine does not have,
- * as reported by the core's install preflight. `action` names a fix the
- * launcher can perform itself (currently only 'install-xcode-clt').
- */
-export interface PrereqRemedy {
-  name: string
-  action: string | null
-  summary: string
-  command: string
-  alternative: string | null
-  /**
-   * Key for the localized wording of `summary`; `summary` itself is the
-   * English fallback the core also writes to the CLI and the install log.
-   */
-  summaryKey?: string
-  /**
-   * Which tool `alternative` uses ("homebrew", "winget", "pipx"), so the row
-   * can be labelled for the platform the user is actually on.
-   */
-  alternativeKind?: string | null
-}
-
-export interface InstallProgressEvent {
-  agent: string
-  verb: 'install' | 'update' | 'uninstall' | 'rollback'
-  phase: InstallPhase
-  detail?: string
-  log?: string
-  error?: string
-  /** Set when the install was refused because a dependency is missing. */
-  missing?: PrereqRemedy[]
-  /** This run's log file under ~/.openagents/installs/. */
-  logFile?: string
 }
 
 export interface Workspace {
@@ -560,7 +298,6 @@ declare global {
       installSDK(): Promise<unknown>
       runtimeInfo(): Promise<RuntimeInfo>
       listAgents(): Promise<Agent[]>
-      getSupportedAgentTypes(): Promise<string[]>
       getAgentCoreInfo(): Promise<unknown>
       addAgent(config: { name: string; type: string; path?: string; env?: Record<string, string> }): Promise<unknown>
       removeAgent(
@@ -578,52 +315,11 @@ declare global {
       agentLogs(name: string, lines: number): Promise<{ lines: string[] }>
       tailAgentLogs(name: string, lines: number, offset: number): Promise<{ lines: string[]; size?: number }>
       clearLogsInRange(start: string, end: string): Promise<{ removed: number; remaining: number }>
-      installAgentType(type: string): Promise<unknown>
-      installAgentTypeStreaming(type: string): Promise<unknown>
-      onInstallOutput(callback: (data: string) => void): void
-      removeInstallOutputListener(): void
-      onInstallProgress(callback: (ev: InstallProgressEvent) => void): void
-      removeInstallProgressListener(): void
-      uninstallAgentType(type: string): Promise<unknown>
-      uninstallAgentTypeStreaming(type: string): Promise<unknown>
-      checkAgentType(type: string): Promise<{ installed: boolean; binary: string | null }>
-      getCatalog(force?: boolean): Promise<CatalogEntry[]>
-      getInstalledAgents(): Promise<InstalledAgentRecord[]>
-      checkAgentUpdates(force?: boolean): Promise<AgentUpdateInfo[]>
-      rollbackAgentType(type: string): Promise<{ success: boolean; version?: string | null; error?: string }>
-      getAgentChangelog(type: string): Promise<{ versions: Array<{ version: string; date?: string }>; homepage?: string; latest?: string | null; error?: string }>
-      getEnvFields(type: string): Promise<EnvField[]>
       getAgentEnv(type: string): Promise<Record<string, string>>
       saveAgentEnv(type: string, env: Record<string, string>): Promise<unknown>
       deleteAgentEnv(type: string): Promise<unknown>
       getAgentInstanceEnv(name: string): Promise<Record<string, string>>
       saveAgentInstanceEnv(name: string, env: Record<string, string>): Promise<unknown>
-      testLLM(env: Record<string, string>): Promise<{
-        success: boolean
-        model?: string
-        response?: string
-        error?: string
-        /** Nothing to test — a hosted platform, not a failed credential. */
-        unsupported?: boolean
-        /** Keys `agents.credentials.unprobeable.<reason>` for the copy. */
-        reason?: string
-      }>
-      listModels(
-        agentType: string,
-        env: Record<string, string>,
-        path?: ModelListPath,
-      ): Promise<ModelListResult>
-      /** Keys on this machine this agent's form can take, masked. */
-      scanCredentialImports(agentType: string): Promise<ImportCandidate[]>
-      parseCredentialImport(
-        agentType: string,
-        text: string,
-      ): Promise<ImportCandidate[]>
-      /** One candidate as form values — the only call that returns a key. */
-      resolveCredentialImport(
-        agentType: string,
-        id: string,
-      ): Promise<Record<string, string> | null>
       signalReload(): Promise<unknown>
       connectWorkspace(agentName: string, slug: string): Promise<unknown>
       disconnectWorkspace(agentName: string): Promise<unknown>
@@ -647,22 +343,7 @@ declare global {
         workspaceId: string,
         name: string,
       ): Promise<{ id: string; slug: string; name: string }>
-      getOnboardingAgents(): Promise<OnboardingAgent[]>
       consumeOnboardingReset(): Promise<boolean>
-      provisionFirstAgent(opts: {
-        agentType: string
-        agentName: string
-        path?: string | null
-      }): Promise<{ agentName: string; warning: string | null }>
-      getNodeStatus(): Promise<NodeStatus>
-      /** Same, but verified against the workspace first (throttled). */
-      refreshNodeStatus(force?: boolean): Promise<NodeStatus>
-      connectNode(
-        code: string,
-        opts?: { name?: string; deviceType?: string },
-      ): Promise<NodeStatus & { warning: string | null }>
-      /** Forget the notice that a workspace removed this device. */
-      dismissNodeRevocation(workspaceId: string): Promise<NodeStatus | null>
       getSetting(key: string): Promise<unknown>
       setSetting(key: string, value: unknown): Promise<unknown>
       /** Themes the OS-drawn window frame to match the app's theme. */
@@ -712,23 +393,8 @@ declare global {
       systemInfo(): Promise<SystemInfo>
       showPath(path: string): Promise<boolean>
       selectDirectory(defaultPath?: string): Promise<string | null>
-      healthCheck(type: string): Promise<HealthCheck>
-      refreshLogin(type: string): Promise<HealthCheck>
-      clearLoginKey(type: string, agentName?: string): Promise<{ success: boolean }>
       openExternal(url: string): Promise<void>
       installXcodeCommandLineTools(): Promise<{ ok: boolean; error?: string }>
-      openTerminal(cmd: string): Promise<void>
-
-      // ── In-app CLI sign-in ──
-      /** Runs `<cli> login` inside the launcher; falls back to a terminal. */
-      startCliLogin(
-        type: string,
-        opts?: { terminal?: boolean },
-      ): Promise<{ mode: "in-app" | "terminal" }>
-      submitCliLoginCode(type: string, code: string): Promise<void>
-      cancelCliLogin(type: string): Promise<void>
-      onCliLoginEvent(cb: (ev: CliLoginEvent) => void): () => void
-      openAgentTerminal(agentName: string): Promise<void>
       updateCore(): Promise<{ success: boolean; version?: string; error?: string }>
       onCoreUpdate(cb: (info: { current: string; latest: string }) => void): void
 
@@ -738,10 +404,6 @@ declare global {
       downloadLauncherUpdate(): Promise<UpdaterState>
       installLauncherUpdate(): Promise<boolean>
       onUpdaterEvent(cb: (state: UpdaterState) => void): () => void
-      onAgentUpdatesChanged(cb: (updates: AgentUpdateInfo[]) => void): void
-      onNavigateToInstall(cb: (agentName: string) => void): void
-      getIconPath(name: string): Promise<string | null>
-      getIconsDir(): Promise<string | null>
       debugEnv(): Promise<Record<string, string>>
 
       // ── Chat ──
@@ -860,12 +522,21 @@ declare global {
 
       // ── Account ──
       getAccount(): Promise<AccountInfo | null>
-      /** Opens the browser and resolves when the sign-in comes back. */
-      signIn(): Promise<AccountInfo>
+      /** Opens the browser at the provider's OAuth screen and resolves when
+       * the sign-in comes back over loopback. */
+      signIn(provider: 'google' | 'github'): Promise<AccountInfo>
       /** In-app sign-in; only for accounts that have a password. */
       signInWithPassword(email: string, password: string): Promise<AccountInfo>
-      /** Create an email account and open its Workspace session. */
-      signUpWithPassword(email: string, password: string, displayName?: string): Promise<AccountInfo>
+      /** In-app sign-in by username — resolved to an email server-side only. */
+      signInWithUsername(username: string, password: string): Promise<AccountInfo>
+      /** Create an email account and open its Workspace session. Returns
+       * needsEmailConfirmation: true (and a null account) when Supabase
+       * requires confirming the email first. */
+      signUpWithPassword(
+        email: string,
+        password: string,
+        username: string,
+      ): Promise<{ account: AccountInfo | null; needsEmailConfirmation: boolean }>
       cancelSignIn(): Promise<void>
       signOut(): Promise<void>
       listAccountWorkspaces(): Promise<AccountWorkspace[]>

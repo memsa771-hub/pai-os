@@ -28,13 +28,10 @@ function deps(overrides: Partial<ControlDeps> = {}): ControlDeps {
   return {
     getStatus: () => ({ version: "1.2.3", coreReady: true }),
     getAgents: () => [{ name: "oc-win", type: "opencode" }],
-    pair: async (code: string) => ({ paired: code }),
     screenshot: async () => null,
     window: () => true,
     logFiles: () => ({}),
-    catalog: async () => ({ supported: ["opencode"] }),
-    envFields: async () => [{ name: "LLM_API_KEY", required: true }],
-    install: async () => ({ ok: true }),
+    core: async () => ({ version: "1.2.3" }),
     createAgent: async () => ({ success: true }),
     saveEnv: async () => ({ success: true }),
     connectWorkspace: async () => ({ success: true }),
@@ -106,35 +103,6 @@ describe("startControlServer", () => {
     expect(await (await call(srv, "/agents")).json()).toEqual({
       agents: [{ name: "oc-win", type: "opencode" }],
     })
-  })
-
-  it("POST /pair forwards the code and surfaces handler errors as 500", async () => {
-    const srv = await start({
-      pair: async (code: string) => {
-        if (code === "BAD") throw new Error("PAIRING_CODE_INVALID_FORMAT")
-        return { ok: true, code }
-      },
-    })
-    const ok = await call(srv, "/pair", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: "ABCD-EFGH" }),
-    })
-    expect(ok.status).toBe(200)
-    expect(await ok.json()).toEqual({ result: { ok: true, code: "ABCD-EFGH" } })
-
-    const bad = await call(srv, "/pair", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code: "BAD" }),
-    })
-    expect(bad.status).toBe(500)
-    expect(((await bad.json()) as { error: string }).error).toMatch(
-      /PAIRING_CODE_INVALID_FORMAT/,
-    )
-
-    const missing = await call(srv, "/pair", { method: "POST", body: "{}" })
-    expect(missing.status).toBe(400)
   })
 
   it("GET /screenshot returns PNG bytes, or 409 when no window exists", async () => {
@@ -251,66 +219,11 @@ describe("startControlServer", () => {
     expect(calls).toHaveLength(6)
   })
 
-  it("POST /install runs in the background and GET /install reports the outcome", async () => {
-    let release: (() => void) | null = null
-    const srv = await start({
-      install: (type, onData) =>
-        new Promise((resolve, reject) => {
-          onData(`installing ${type}\n`)
-          release = (): void =>
-            type === "boom"
-              ? reject(new Error("installer exploded"))
-              : resolve({})
-        }),
+  it("GET /core serves the connector's core info", async () => {
+    const srv = await start({ core: async () => ({ version: "9.9.9" }) })
+    expect(await (await call(srv, "/core")).json()).toEqual({
+      version: "9.9.9",
     })
-    const post = (body: unknown): Promise<Response> =>
-      call(srv, "/install", { method: "POST", body: JSON.stringify(body) })
-
-    // Nothing started yet.
-    expect(await (await call(srv, "/install?type=opencode")).json()).toEqual({
-      type: "opencode",
-      state: "idle",
-    })
-
-    const started = await post({ type: "opencode" })
-    expect(started.status).toBe(202)
-    expect((await started.json()) as { state: string }).toMatchObject({
-      state: "running",
-    })
-
-    // A second POST joins the running job instead of starting a rival installer.
-    const again = await post({ type: "opencode" })
-    expect(((await again.json()) as { state: string }).state).toBe("running")
-
-    release!()
-    await new Promise((r) => setTimeout(r, 20))
-    const done = (await (await call(srv, "/install?type=opencode")).json()) as {
-      state: string
-      log: string
-    }
-    expect(done.state).toBe("done")
-    expect(done.log).toContain("installing opencode")
-
-    expect((await post({})).status).toBe(400)
-  })
-
-  it("GET /install surfaces an installer failure as state:error", async () => {
-    const srv = await start({
-      install: async () => {
-        throw new Error("installer exploded")
-      },
-    })
-    await call(srv, "/install", {
-      method: "POST",
-      body: JSON.stringify({ type: "hermes" }),
-    })
-    await new Promise((r) => setTimeout(r, 20))
-    const job = (await (await call(srv, "/install?type=hermes")).json()) as {
-      state: string
-      error: string
-    }
-    expect(job.state).toBe("error")
-    expect(job.error).toMatch(/installer exploded/)
   })
 
   it("serves the workspace + chat surface the respond check needs", async () => {
@@ -360,12 +273,12 @@ describe("startControlServer", () => {
       workspaces: () => {
         throw new Error("core not loaded yet — retry shortly")
       },
-      catalog: async () => {
+      core: async () => {
         throw new Error("registry unreachable")
       },
     })
     expect((await call(srv, "/workspaces")).status).toBe(503)
-    expect((await call(srv, "/catalog")).status).toBe(500)
+    expect((await call(srv, "/core")).status).toBe(500)
   })
 
   it("POST /quit answers before the app goes away", async () => {

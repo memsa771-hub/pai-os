@@ -30,55 +30,47 @@ async function post(
 }
 
 describe("startHandoffServer", () => {
-  it("resolves with the session posted for its own state", async () => {
+  it("resolves with the code posted for its own state", async () => {
     const handoff = (open = await startHandoffServer(ORIGIN))
-    const session = {
-      token: "jwt",
-      email: "a@example.com",
-      displayName: "A",
-      expiresAt: 4102444800,
-    }
 
     const [{ status }, result] = await Promise.all([
-      post(handoff, { state: handoff.state, session }),
+      post(handoff, { state: handoff.state, code: "auth-code-1" }),
       handoff.result,
     ])
 
     expect(status).toBe(200)
-    expect(result.session).toEqual(session)
+    expect(result.code).toBe("auth-code-1")
   })
 
   it("rejects a payload carrying someone else's state", async () => {
     const handoff = (open = await startHandoffServer(ORIGIN))
     const { status } = await post(handoff, {
       state: "not-the-state",
-      session: { token: "jwt", email: "a@example.com", expiresAt: 1 },
+      code: "auth-code-1",
     })
     expect(status).toBe(400)
   })
 
-  it("forwards an unspent custom token", async () => {
+  it("forwards a browser-side error", async () => {
     const handoff = (open = await startHandoffServer(ORIGIN))
     const [, result] = await Promise.all([
-      post(handoff, { state: handoff.state, ct: "custom-token" }),
+      post(handoff, { state: handoff.state, error: "access_denied" }),
       handoff.result,
     ])
-    expect(result.customToken).toBe("custom-token")
+    expect(result.error).toBe("access_denied")
   })
 
   it("accepts the query-string fallback for a browser that cannot POST", async () => {
     const handoff = (open = await startHandoffServer(ORIGIN))
     const query = new URLSearchParams({
       state: handoff.state,
-      session_token: "jwt",
-      email: "a@example.com",
-      expires_at: "4102444800",
+      code: "auth-code-1",
     })
     const [, result] = await Promise.all([
       fetch(`http://127.0.0.1:${handoff.port}/desktop-auth?${query}`),
       handoff.result,
     ])
-    expect(result.session?.token).toBe("jwt")
+    expect(result.code).toBe("auth-code-1")
   })
 
   it("names only the workspace origin as allowed to read its replies", async () => {
@@ -92,11 +84,11 @@ describe("startHandoffServer", () => {
   it("stops listening once the handoff is through", async () => {
     const handoff = (open = await startHandoffServer(ORIGIN))
     await Promise.all([
-      post(handoff, { state: handoff.state, ct: "one" }),
+      post(handoff, { state: handoff.state, code: "one" }),
       handoff.result,
     ])
     // The port is given back as soon as the reply is on the wire; a second
     // attempt has nothing to talk to.
-    await expect(post(handoff, { state: handoff.state, ct: "two" })).rejects.toThrow()
+    await expect(post(handoff, { state: handoff.state, code: "two" })).rejects.toThrow()
   })
 })

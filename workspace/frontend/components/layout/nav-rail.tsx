@@ -5,7 +5,7 @@ import { desktopHost } from '@/lib/desktop-host';
 import Image from 'next/image';
 import {
   BookOpen, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, FileText, Globe,
-  Inbox, KanbanSquare, MessageSquare, Monitor, PlusSquare, Sparkles, Users, Waypoints,
+  Inbox, KanbanSquare, MessageSquare, Monitor, Sparkles, Users, Waypoints,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -26,6 +26,7 @@ import { cn } from '@/lib/utils';
 import { agentLabel, isRecentAgent } from '@/lib/helpers';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
+import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import {
   useLayout,
   RAIL_WIDTH_COLLAPSED,
@@ -200,7 +201,7 @@ export function NavRail() {
   const [agentsOpen, setAgentsOpen] = React.useState(true);
 
   const recentAgents = agents.filter(isRecentAgent);
-  // Yumi (built-in) still appears in the roster, but does not satisfy the
+  // PAI Counselor (built-in) still appears in the roster, but does not satisfy the
   // "connect your first agent" call to action.
   const hasAgents = recentAgents.filter((a) => !a.builtin).length > 0;
   const onlineAgentCount = recentAgents.filter((a) => a.status === 'online').length;
@@ -247,8 +248,6 @@ export function NavRail() {
       : []),
   ];
 
-  const isConnectActive = viewMode === 'connect';
-  const connectLabel = hasAgents ? t('nav.connectAgent') : t('nav.connectFirstAgent');
   const workspaceLabel = workspace?.name || t('nav.workspaceFallback');
 
   // Mid-drag the rail previews the state it would snap to, so labels appear
@@ -385,6 +384,12 @@ export function NavRail() {
                         aria-label={agentLabel(agent)}
                         tooltip={{ children: agentLabel(agent), hidden: showLabels }}
                         onClick={() => {
+                          if (agent.builtin) {
+                            setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
+                            openView('threads');
+                            setSelectedAgentName(null);
+                            return;
+                          }
                           // Clicking a person anticipates a conversation: open
                           // the DM with them in the middle and dock their
                           // profile beside it. Same canonical sorted-pair id
@@ -492,26 +497,6 @@ export function NavRail() {
         {/* Credits-campaign progress (expanded rail only; self-hides when the
             campaign is off or complete). */}
         {showLabels && <CampaignSidebarCard />}
-        <SidebarMenu className="gap-0.5">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              className={cn(
-                !showLabels && 'justify-center!',
-                !hasAgents &&
-                  !isConnectActive &&
-                  'bg-primary/10 text-primary hover:bg-primary/20 hover:text-primary',
-              )}
-              aria-label={connectLabel}
-              tooltip={{ children: connectLabel, hidden: showLabels }}
-              isActive={isConnectActive}
-              onClick={() => openView('connect')}
-            >
-              <PlusSquare />
-              {showLabels && <span className="truncate">{connectLabel}</span>}
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
-
         <div className="px-1.5">
           <Separator />
         </div>

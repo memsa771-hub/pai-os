@@ -1,9 +1,8 @@
-import { ArrowRight, KeyRound } from "lucide-react"
+import { ArrowRight } from "lucide-react"
 import { useTranslation } from "react-i18next"
 import { Button } from "@renderer/components/ui/button"
 import { BrandMark } from "@renderer/components/ui-kit"
 import { useAccountStore } from "@renderer/store/account"
-import { useUiStore } from "@renderer/store/ui"
 import { useThemeStore } from "@renderer/store/theme"
 import previewEnLight from "./assets/workspace-en-light.png"
 import previewEnDark from "./assets/workspace-en-dark.png"
@@ -11,9 +10,8 @@ import previewZhLight from "./assets/workspace-zh-light.png"
 import previewZhDark from "./assets/workspace-zh-dark.png"
 
 /**
- * The signed-out Workspace. Sign in to work in a workspace; a server or remote
- * machine that only needs to join one goes straight to the pairing code, which
- * needs no account. Local tools stay a click away in This Computer.
+ * The signed-out Workspace. Sign in to work in a workspace; local tools stay a
+ * click away in This Computer.
  */
 export default function WelcomePage(): React.JSX.Element {
   const { t, i18n } = useTranslation()
@@ -24,11 +22,6 @@ export default function WelcomePage(): React.JSX.Element {
   const openSignIn = useAccountStore((s) => s.openSignIn)
   const openSignUp = useAccountStore((s) => s.openSignUp)
   const signingIn = useAccountStore((s) => s.signingIn)
-  // Connected Workspaces, with its pairing-code dialog open.
-  const joinWithCode = (): void => {
-    useAccountStore.getState().exitWorkspace()
-    useUiStore.getState().requestCreate("workspace")
-  }
 
   return (
     <main className="grid h-full overflow-y-auto bg-background lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.35fr)]" data-testid="app-welcome">
@@ -52,12 +45,6 @@ export default function WelcomePage(): React.JSX.Element {
               disabled={signingIn}
             >{t("account.welcome.createAccount")}</button>
           </p>
-          <div className="mt-8 border-t pt-5">
-            <Button variant="ghost" className="h-auto w-full justify-start px-0 py-3 hover:bg-transparent hover:text-primary" onClick={joinWithCode} data-testid="welcome-join-code">
-              <KeyRound className="size-4" /> {t("account.welcome.joinWithCode")} <ArrowRight className="ml-auto size-4" />
-            </Button>
-            <p className="text-xs leading-6 text-muted-foreground">{t("account.welcome.joinWithCodeHint")}</p>
-          </div>
         </div>
       </section>
       <section className="hidden min-w-0 flex-col justify-center px-6 py-12 lg:flex xl:pr-10" aria-label={t("account.welcome.previewLabel")}>

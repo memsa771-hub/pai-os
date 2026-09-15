@@ -10,11 +10,6 @@ interface UiState {
   currentTab: string
   setCurrentTab: (tab: string) => void
 
-  // Deep-link request: when set, the Install page should auto-open this agent's
-  // detail view (used by Dashboard banner click and tray-menu update items).
-  installFocusAgent: string | null
-  setInstallFocusAgent: (name: string | null) => void
-
   // Deep-link request for a page's own "create" dialog, so the dashboard's
   // "New agent" / "Create workspace" buttons open the real flow instead of just
   // dropping the user on the page. Consumed once and cleared by the page, which
@@ -22,12 +17,6 @@ interface UiState {
   pendingCreate: 'agent' | 'workspace' | null
   requestCreate: (what: 'agent' | 'workspace') => void
   clearPendingCreate: () => void
-
-  // Bumped each time the user explicitly clicks the Install sidebar tab.
-  // The Install page watches this and clears any open detail view so the
-  // user always lands on the marketplace list when entering via the tab.
-  installListSignal: number
-  goToInstallList: () => void
 
   // Deep-link into a specific Settings section (used by the update banner to
   // drop the user straight on Settings → Updates). The signal is bumped on
@@ -58,10 +47,6 @@ interface UiState {
   activityLog: ActivityEntry[]
   addActivity: (msg: string) => void
 
-  // Cached icons directory path — replaces legacy _coreIconsDir
-  coreIconsDir: string | null
-  setCoreIconsDir: (dir: string | null) => void
-
   // Guided spotlight tour (new-user orientation over the real UI).
   tourOpen: boolean
   startTour: () => void
@@ -75,9 +60,6 @@ export const useUiStore = create<UiState>((set) => ({
   // link — lands there and the rail shows where the user is.
   setCurrentTab: (tab) => set({ currentTab: tab === 'agents' ? 'dashboard' : tab }),
 
-  installFocusAgent: null,
-  setInstallFocusAgent: (name) => set({ installFocusAgent: name }),
-
   pendingCreate: null,
   requestCreate: (what) =>
     set({
@@ -85,10 +67,6 @@ export const useUiStore = create<UiState>((set) => ({
       pendingCreate: what,
     }),
   clearPendingCreate: () => set({ pendingCreate: null }),
-
-  installListSignal: 0,
-  goToInstallList: () =>
-    set((s) => ({ currentTab: 'install', installListSignal: s.installListSignal + 1 })),
 
   settingsSection: null,
   settingsSectionSignal: 0,
@@ -115,9 +93,6 @@ export const useUiStore = create<UiState>((set) => ({
       activityLog: [{ time, msg }, ...state.activityLog].slice(0, 50),
     }))
   },
-
-  coreIconsDir: null,
-  setCoreIconsDir: (dir) => set({ coreIconsDir: dir }),
 
   tourOpen: false,
   startTour: () => set({ tourOpen: true }),

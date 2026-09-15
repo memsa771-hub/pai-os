@@ -13,7 +13,7 @@ import { Skeleton } from "../../components/ui/skeleton"
 import { PageHeader } from "../../components/layout/page-header"
 import type { ToastType } from "../../hooks/useToast"
 import { ComputerSummary } from "./computer-summary"
-const LocalAgentSetup = React.lazy(() => import("./local-agent-setup").then((module) => ({ default: module.LocalAgentSetup })))
+import { ManageAgentDialog } from "./components/manage-agent-dialog"
 import { ConnectWorkspaceDialog } from "./components/connect-workspace-dialog"
 import { AgentCard, AddAgentCard } from "./components/agent-card"
 import { AgentsToolbar } from "./components/agents-toolbar"
@@ -28,8 +28,6 @@ import {
 import { useAgentActions } from "./use-agent-actions"
 import type { AgentActionHandlers } from "./components/agent-actions"
 import type { Agent } from "@renderer/types"
-
-export { formatHealthLabel } from "./format-health-label"
 
 interface AgentsProps {
   overview?: boolean
@@ -62,11 +60,7 @@ export default function Agents({ showToast, overview = false }: AgentsProps): Re
   const mounted = useRef(true)
 
   const [newAgentOpen, setNewAgentOpen] = useState(false)
-  const [configureOpen, setConfigureOpen] = useState(false)
-  const [configureAgent, setConfigureAgent] = useState<{
-    name: string
-    type: string
-  } | null>(null)
+  const [configureAgent, setConfigureAgent] = useState<Agent | null>(null)
   const [connectWsOpen, setConnectWsOpen] = useState(false)
   const [connectWsAgent, setConnectWsAgent] = useState<string>("")
   const [removeTarget, setRemoveTarget] = useState<string | null>(null)
@@ -121,17 +115,12 @@ export default function Agents({ showToast, overview = false }: AgentsProps): Re
     renameAgent,
     disconnectAgent,
     openWorkspace,
-    openAgentChat,
   } = useAgentActions(refresh, showToast, () => setRemoveTarget(null))
 
   // One set of row actions for both views.
   const handlers: AgentActionHandlers = {
     onToggle: (a) => toggleAgent(a),
-    onOpenTerminal: (a) => void openAgentChat(a),
-    onConfigure: (a) => {
-      setConfigureAgent({ name: a.name, type: a.type })
-      setConfigureOpen(true)
-    },
+    onConfigure: (a) => setConfigureAgent(a),
     onConnect: (a) => {
       setConnectWsAgent(a.name)
       setConnectWsOpen(true)
@@ -154,13 +143,6 @@ export default function Agents({ showToast, overview = false }: AgentsProps): Re
     setNewAgentOpen(true)
     clearPendingCreate()
   }, [pendingCreate, clearPendingCreate])
-
-  if (newAgentOpen || (configureOpen && configureAgent)) {
-    return <React.Suspense fallback={<div className="p-8"><Skeleton className="h-48" /></div>}><LocalAgentSetup agent={configureOpen ? agents.find((a) => a.name === configureAgent?.name) : undefined}
-      onManage={(agent) => { setNewAgentOpen(false); setConfigureAgent(agent); setConfigureOpen(true) }}
-      onBack={() => { setNewAgentOpen(false); setConfigureOpen(false); void refresh() }}
-      onCreated={(name) => { setConnectWsAgent(name); setConnectWsOpen(true) }} onChanged={() => void refresh()} /></React.Suspense>
-  }
 
   return (
     <section className="flex flex-col h-full">
@@ -281,6 +263,23 @@ export default function Agents({ showToast, overview = false }: AgentsProps): Re
         onClose={() => setConnectWsOpen(false)}
         showToast={showToast}
         onConnected={refresh}
+      />
+
+      <ManageAgentDialog
+        open={newAgentOpen || !!configureAgent}
+        agent={configureAgent}
+        onClose={() => {
+          setNewAgentOpen(false)
+          setConfigureAgent(null)
+        }}
+        onCreated={(name) => {
+          setNewAgentOpen(false)
+          void refresh()
+          setConnectWsAgent(name)
+          setConnectWsOpen(true)
+        }}
+        onChanged={() => void refresh()}
+        showToast={showToast}
       />
 
       <ConfirmDialog

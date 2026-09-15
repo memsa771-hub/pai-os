@@ -3,11 +3,11 @@ import { cn } from '@/lib/utils';
 
 const OA_PALETTE = ['#6366F1', '#8B5CF6', '#06B6D4', '#10B981', '#F59E0B'];
 
-// The built-in Yumi assistant has a fixed brand avatar instead of a generated
-// one. Its agent name is reserved/unique (provider "openagents"), so matching
+// The built-in PAI Counselor assistant has a fixed brand avatar instead of a generated
+// one. Its internal agent name is reserved/unique, so matching
 // on the name is sufficient to identify it wherever an avatar is rendered.
-const YUMI_AVATAR_SRC = '/yumi-avatar.png';
-const isYumi = (name: string) => (name || '').toLowerCase() === 'yumi';
+const PAI_AVATAR_SRC = '/pai-avatar.png';
+const isPai = (name: string) => (name || '').toLowerCase() === 'pai';
 
 interface AgentAvatarProps {
   name: string;
@@ -22,10 +22,10 @@ export function AgentAvatar({ name, size = 28, status, showStatus = false, class
   return (
     <div className={cn('relative shrink-0', className)} style={{ width: size, height: size }}>
       <div className={cn(square ? 'rounded-lg' : 'rounded-full', 'overflow-hidden')} style={{ width: size, height: size }}>
-        {isYumi(name) ? (
+        {isPai(name) ? (
           <img
-            src={YUMI_AVATAR_SRC}
-            alt="Yumi"
+            src={PAI_AVATAR_SRC}
+            alt="PAI Counselor"
             width={size}
             height={size}
             className="size-full object-cover"

@@ -496,26 +496,8 @@ function SkillDetail({ skill, onClose }: { skill: Skill; onClose: () => void }) 
                 </div>
               )}
 
-              {skill.sourceRepo && (
-                <div className="rounded-lg border border-border p-3.5 bg-muted/30">
-                  <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">{t('skills.cliInstall')}</div>
-                  <code className="text-xs font-mono block bg-background rounded-md p-3 border border-border select-all break-all">
-                    npx @anthropic-ai/skills install {skill.sourceRepo}/{skill.sourcePath}
-                  </code>
-                </div>
-              )}
             </>
           )}
-
-          <div className="rounded-lg border border-border p-3.5">
-            <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider mb-2">{t('skills.compatibleWith')}</div>
-            <div className="flex flex-wrap gap-1.5">
-              {['Claude Code', 'Codex', 'Cursor', 'Gemini CLI', 'OpenCode', 'VS Code', 'Roo Code'].map(a => (
-                <span key={a} className="text-[11px] px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">{a}</span>
-              ))}
-              <span className="text-[11px] text-muted-foreground self-center">{t('skills.moreCompatible')}</span>
-            </div>
-          </div>
         </DialogBody>
 
         <DialogFooter className="px-7 pt-7 pb-7 sm:space-x-3">

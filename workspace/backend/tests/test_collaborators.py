@@ -30,7 +30,13 @@ def _create_workspace(client, name="Test WS", agent_name="agent-alpha", creator_
 
 
 def _mock_firebase(email):
-    return patch("app.firebase_auth.verify_firebase_token", return_value=email)
+    """Make an identity bearer resolve to the given email."""
+    claims = (
+        {"provider": "supabase", "email": email, "supabase_uid": None, "display_name": None}
+        if email
+        else None
+    )
+    return patch("app.firebase_auth.verify_supabase_claims", return_value=claims)
 
 
 # ===========================================================================

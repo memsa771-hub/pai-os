@@ -163,52 +163,6 @@ describe('bridgeSpawn — everything else', () => {
   });
 });
 
-describe('an agent that only exists inside the distro', () => {
-  const { Installer } = require('../src/installer');
-  const fs = require('fs');
-
-  const registry = {
-    getEntry: (name) =>
-      name === 'claude'
-        ? { name: 'claude', install: { binary: 'claude', npm_package: '@anthropic-ai/claude-code' } }
-        : null,
-  };
-
-  function installer() {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oa-wsl-'));
-    return new Installer(registry, dir);
-  }
-
-  it('reports it as installed, and never as one the launcher manages', () => {
-    // The reported bug: a working `claude` in the distro read as "Not
-    // installed", so the marketplace offered to install a second copy.
-    const inst = installer();
-    inst._whichBinary = () => WSL_CLAUDE;
-    assert.deepEqual(inst.getInstallInfo('claude'), {
-      installed: true,
-      managed: false,
-      location: 'wsl',
-    });
-  });
-
-  it('asks it for its version through wsl.exe', () => {
-    const inst = installer();
-    assert.equal(
-      inst._versionProbeCommand(WSL_CLAUDE),
-      'wsl.exe -e "/home/u/.local/bin/claude" "--version"',
-    );
-    // Native resolution is untouched.
-    assert.equal(inst._versionProbeCommand('C:\\npm\\claude.cmd'), '"C:\\npm\\claude.cmd" --version');
-  });
-
-  it('resolves ~ against the host home for every native install', () => {
-    const inst = installer();
-    inst._whichBinary = () => 'C:\\npm\\claude.cmd';
-    assert.equal(inst._expandHome('~/.claude/sessions', 'claude'), path.join(os.homedir(), '.claude/sessions'));
-    assert.equal(inst._expandHome('~/.claude/sessions'), path.join(os.homedir(), '.claude/sessions'));
-  });
-});
-
 describe('bridgedCommandString', () => {
   it('builds a wsl.exe command line for a marked binary', () => {
     assert.equal(

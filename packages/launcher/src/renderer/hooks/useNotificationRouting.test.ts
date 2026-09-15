@@ -21,8 +21,6 @@ function notif(over: Partial<NotifRecord> = {}): NotifRecord {
 beforeEach(() => {
   useUiStore.setState({
     currentTab: "dashboard",
-    installFocusAgent: null,
-    installListSignal: 0,
     settingsSection: null,
     settingsSectionSignal: 0,
     updateBannerDismissed: "downloaded:1.0.0",
@@ -30,33 +28,6 @@ beforeEach(() => {
 })
 
 describe("routeNotification", () => {
-  // The reported bug: clicking "amp has an update" landed on the marketplace
-  // list with amp nowhere in sight, and did nothing at all when the user was
-  // already on an agent's detail page.
-  it("opens the named agent's detail page", () => {
-    expect(
-      routeNotification(notif({ payload: { tab: "install", agent: "amp" } })),
-    ).toBe(true)
-    expect(useUiStore.getState().currentTab).toBe("install")
-    expect(useUiStore.getState().installFocusAgent).toBe("amp")
-  })
-
-  // Setting the tab it is already on is a no-op in the store, so the focus
-  // request is the only thing that can move an open detail page.
-  it("still moves when the Install tab is already open", () => {
-    useUiStore.setState({ currentTab: "install" })
-    routeNotification(notif({ payload: { tab: "install", agent: "goose" } }))
-    expect(useUiStore.getState().installFocusAgent).toBe("goose")
-  })
-
-  // Several agents have no single destination — and a plain setCurrentTab
-  // would leave whatever detail page is open sitting there.
-  it("returns to the marketplace list when no agent is named", () => {
-    useUiStore.setState({ currentTab: "install" })
-    expect(routeNotification(notif({ payload: { tab: "install" } }))).toBe(true)
-    expect(useUiStore.getState().installListSignal).toBe(1)
-  })
-
   it("opens a Settings section", () => {
     expect(
       routeNotification(notif({ payload: { settingsSection: "updates" } })),
@@ -88,8 +59,7 @@ describe("routeNotification", () => {
 describe("canRouteNotification", () => {
   it("agrees with routeNotification about what leads somewhere", () => {
     const cases: Array<[NotifRecord, boolean]> = [
-      [notif({ payload: { tab: "install", agent: "amp" } }), true],
-      [notif({ payload: { tab: "install" } }), true],
+      [notif({ payload: { tab: "logs" } }), true],
       [notif({ payload: { settingsSection: "updates" } }), true],
       [notif({ source: "launcher-update" }), true],
       [notif({ kind: "system" }), false],

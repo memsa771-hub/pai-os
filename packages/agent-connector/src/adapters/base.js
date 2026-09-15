@@ -272,24 +272,21 @@ class BaseAdapter {
     // Announce agent to workspace
     await this._joinWorkspace();
 
-    // Sync workspace-managed skills into disabledModules
+    // Sync the workspace-assigned model (local coding-tool skill-directory
+    // install/disabledModules syncing was removed along with the coding-CLI
+    // adapters that used to consume it).
     try {
       const agents = await Promise.race([
         this.client.getAgents(this.workspaceId, this.token),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('skill sync timed out (10s)')), 10000)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('model sync timed out (10s)')), 10000)),
       ]);
       const self = agents.find((a) => a.agentName === this.agentName);
-      if (self && self.enabledSkills) {
-        const { skillsToDisabledModules } = require('../skill-catalog');
-        this.disabledModules = skillsToDisabledModules(self.enabledSkills);
-        this._log(`Synced skills from workspace: disabled=[${[...this.disabledModules].join(',')}]`);
-      }
       if (self && self.model) {
         this.workspaceModel = self.model;
         this._log(`Synced model from workspace: ${this.workspaceModel}`);
       }
     } catch (e) {
-      this._log(`Warning: skill sync failed (non-fatal): ${e.message}`);
+      this._log(`Warning: model sync failed (non-fatal): ${e.message}`);
     }
 
     // Fast-path operations (control-event cursor + heartbeat + control poll)
@@ -490,10 +487,12 @@ class BaseAdapter {
       await this._postStatusReport(payload);
     } else if (action === 'routines') {
       await this._postRoutinesReport(payload);
-    } else if (action === 'skill.install') {
-      await this._handleSkillInstall(payload);
-    } else if (action === 'skill.uninstall') {
-      await this._handleSkillUninstall(payload);
+    } else if (action === 'skill.install' || action === 'skill.uninstall') {
+      // Installing a skill onto a local coding-CLI's own skills directory
+      // was specific to the (now-removed) per-coding-tool adapters. This
+      // generic base has no on-disk skill target, so report back rather
+      // than leave the workspace UI stuck on "installing"/"uninstalling".
+      await this._reportUnsupportedSkillAction(action, payload);
     } else if (action === 'model.set') {
       // Adapters read workspaceModel when (re)spawning their CLI; ones with
       // a staleness check (claude.js) respawn on the next message.
@@ -503,111 +502,27 @@ class BaseAdapter {
   }
 
   /**
-   * Install a Skill Hub catalog skill into this agent's local skills
-   * directory, then report the result back to the workspace so the UI can
-   * show installing → installed / failed. Errors are logged loudly and
-   * surfaced as a `failed` status — never swallowed.
-   *
-   * payload: { action: "skill.install", skill: { id, name, source_repo, source_path } }
+   * `skill.install`/`skill.uninstall` used to write a Skill Hub catalog
+   * skill onto a local coding-CLI's own skills directory (agent-type- and
+   * working-dir-specific). That mechanism was removed along with the
+   * per-coding-tool adapters; this generic base has no on-disk skill target
+   * to install to, so just report the action as unsupported rather than
+   * leave the workspace UI's install/uninstall status stuck pending.
    */
-  async _handleSkillInstall(payload) {
-    const installer = require('../skill-installer');
+  async _reportUnsupportedSkillAction(action, payload) {
     const skill = (payload && payload.skill) || null;
     const skillId = skill && (skill.id || skill.skill_id);
     if (!skillId) {
-      this._log('skill.install: missing skill metadata in payload — ignoring');
+      this._log(`${action}: missing skill metadata in payload — ignoring`);
       return;
     }
-    this._log(`skill.install: starting install of "${skillId}" (type=${this.agentType}, dir=${this.workingDir || defaultAgentWorkdir(this.agentName)})`);
-
-    // Best-effort "installing" ping so the UI flips immediately even if the
-    // initial DB write from the request hasn't propagated to this client.
+    this._log(`${action}: not supported by this agent (no local skill directory) — reporting failed`);
     try {
       await this.client.reportSkillStatus(this.workspaceId, this.agentName, this.token, {
-        skillId, state: 'installing',
+        skillId, state: 'failed', error: `${action} is not supported by this agent`,
       });
     } catch (e) {
-      this._log(`skill.install: could not report 'installing' (non-fatal): ${e && e.message ? e.message : e}`);
-    }
-
-    try {
-      // Custom (uploaded) skills carry source_type=workspace_file + a file_id.
-      // Download the package bytes here (async), then hand them to the sync
-      // installer. Catalog skills keep their existing fetch-by-source path.
-      const sourceType = skill && (skill.source_type || skill.sourceType);
-      let result;
-      if (sourceType === 'workspace_file') {
-        const fileId = skill.file_id || skill.fileId;
-        if (!fileId) throw new Error('workspace_file skill is missing file_id');
-        this._log(`skill.install: downloading uploaded package (file_id=${fileId})`);
-        const buffer = await this.client.readFile(this.workspaceId, this.token, fileId);
-        if (!buffer || buffer.length === 0) throw new Error('uploaded skill file is empty');
-        result = installer.installUploadedSkill({
-          skill, buffer,
-          agentType: this.agentType,
-          workingDir: this.workingDir,
-          log: (m) => this._log(`skill.install: ${m}`),
-        });
-      } else {
-        result = installer.installSkill({
-          skill,
-          agentType: this.agentType,
-          workingDir: this.workingDir,
-          log: (m) => this._log(`skill.install: ${m}`),
-        });
-      }
-      try {
-        await this.client.reportSkillStatus(this.workspaceId, this.agentName, this.token, {
-          skillId, state: 'installed', path: result.path, partial: result.partial === true,
-        });
-      } catch (e) {
-        this._log(`skill.install: installed on disk but failed to report 'installed': ${e && e.message ? e.message : e}`);
-      }
-      this._log(`skill.install: SUCCESS "${skillId}" → ${result.path}${result.partial ? ' (partial)' : ''}`);
-      await this._onSkillsChanged();
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      this._log(`skill.install: FAILED "${skillId}": ${msg}`);
-      try {
-        await this.client.reportSkillStatus(this.workspaceId, this.agentName, this.token, {
-          skillId, state: 'failed', error: msg,
-        });
-      } catch (e2) {
-        this._log(`skill.install: also failed to report 'failed': ${e2 && e2.message ? e2.message : e2}`);
-      }
-    }
-  }
-
-  /**
-   * Remove a previously-installed skill from disk and report `uninstalled`.
-   */
-  async _handleSkillUninstall(payload) {
-    const installer = require('../skill-installer');
-    const skill = (payload && payload.skill) || null;
-    const skillId = skill && (skill.id || skill.skill_id);
-    if (!skillId) {
-      this._log('skill.uninstall: missing skill metadata in payload — ignoring');
-      return;
-    }
-    try {
-      const result = installer.uninstallSkill({
-        skill,
-        agentType: this.agentType,
-        workingDir: this.workingDir,
-        log: (m) => this._log(`skill.uninstall: ${m}`),
-      });
-      this._log(`skill.uninstall: "${skillId}" removed=${result.removed}`);
-      try {
-        await this.client.reportSkillStatus(this.workspaceId, this.agentName, this.token, {
-          skillId, state: 'uninstalled',
-        });
-      } catch (e) {
-        this._log(`skill.uninstall: failed to report status: ${e && e.message ? e.message : e}`);
-      }
-      await this._onSkillsChanged();
-    } catch (e) {
-      const msg = e && e.message ? e.message : String(e);
-      this._log(`skill.uninstall: FAILED "${skillId}": ${msg}`);
+      this._log(`${action}: failed to report unsupported status: ${e && e.message ? e.message : e}`);
     }
   }
 

@@ -12,7 +12,6 @@ import WorkspacePage from '@/app/[workspaceId]/page';
 import SettingsLayout from '@/app/[workspaceId]/settings/layout';
 import SettingsIndex from '@/app/[workspaceId]/settings/page';
 import SettingsApiCredits from '@/app/[workspaceId]/settings/api-credits/page';
-import SettingsDevices from '@/app/[workspaceId]/settings/devices/page';
 import SettingsGeneral from '@/app/[workspaceId]/settings/general/page';
 import SettingsIntegrations from '@/app/[workspaceId]/settings/integrations/page';
 import SettingsMembers from '@/app/[workspaceId]/settings/members/page';
@@ -139,7 +138,6 @@ const ROUTES: RouteTable = [
   },
   settingsRoute('/:workspaceId/settings', SettingsIndex),
   settingsRoute('/:workspaceId/settings/api-credits', SettingsApiCredits),
-  settingsRoute('/:workspaceId/settings/devices', SettingsDevices),
   settingsRoute('/:workspaceId/settings/general', SettingsGeneral),
   settingsRoute('/:workspaceId/settings/integrations', SettingsIntegrations),
   settingsRoute('/:workspaceId/settings/members', SettingsMembers),

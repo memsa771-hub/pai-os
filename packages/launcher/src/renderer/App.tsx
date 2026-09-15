@@ -1,8 +1,6 @@
 import React, { useEffect } from "react"
-import { useShallow } from "zustand/react/shallow"
 import { useUiStore } from "./store/ui"
 import { useAgentsStore } from "./store/agents"
-import { useInstallStore } from "./store/install"
 import { useThemeStore } from "./store/theme"
 import { useAppearanceStore } from "./store/appearance"
 import { useNotificationsStore } from "./store/notifications"
@@ -20,15 +18,12 @@ import { Spinner } from "./components/ui/spinner"
 import Connections from "./pages/connections"
 import Credentials from "./pages/credentials"
 import GitHubPage from "./pages/github"
-import Install from "./pages/install"
 import Logs from "./pages/logs"
 import Settings from "./pages/settings"
 import { WhatsNewDialog } from "./components/whats-new/whats-new-dialog"
 import { useWhatsNew } from "./components/whats-new/use-whats-new"
-import { InstallMiniBanner } from "./components/install-progress/install-mini-banner"
 import { LauncherUpdateBanner } from "./components/LauncherUpdateBanner"
 import { useToasts } from "./hooks/useToast"
-import { useInstallProgress } from "./hooks/useInstallProgress"
 import { useStartupPage } from "./hooks/useStartupPage"
 import { useNotificationClicks } from "./hooks/useNotificationRouting"
 import { useFullScreen } from "./hooks/useFullScreen"
@@ -59,32 +54,22 @@ export default function App(): React.JSX.Element {
     // Reads the stored session and subscribes to changes. Signed out is a
     // perfectly good outcome — the workspace half simply stays behind its gate.
     void initAccount()
-    // The app entry replaces automatic machine-pairing onboarding. Existing
+    // The app entry handles onboarding for new installations. Existing
     // local tools and the optional guided tour remain available in This Computer.
     void window.api.consumeOnboardingReset().catch(() => false)
   }, [initTheme, initAppearance, initNotifications, initAccount])
 
-  // Global install:progress + install:output subscription
-  useInstallProgress()
   // Settings → General → "Open on launch"
   useStartupPage()
   // Clicks on OS notification toasts
   useNotificationClicks()
 
-  const { jobs } = useInstallStore(useShallow((s) => ({ jobs: s.jobs })))
   const appMode = useAccountStore((s) => s.mode)
   const accountReady = useAccountStore((s) => s.ready)
 
   useEffect(() => {
     window.api.onCoreUpdate((info) => setCoreUpdateInfo(info))
-    window.api.onAgentUpdatesChanged((updates) =>
-      useInstallStore.getState().setUpdates(updates),
-    )
-    window.api.onNavigateToInstall((name?: string) => {
-      useAccountStore.getState().exitWorkspace("install")
-      if (name) useUiStore.getState().setInstallFocusAgent(name)
-    })
-  }, [setCoreUpdateInfo, setCurrentTab])
+  }, [setCoreUpdateInfo])
 
   // Track in-app navigation as pageviews so the launcher's page flow shows up in
   // PostHog like website navigation does. currentTab is the single value that
@@ -113,10 +98,6 @@ export default function App(): React.JSX.Element {
     return () => document.removeEventListener("keydown", handler)
   }, [])
 
-  const activeJob = Object.values(jobs)
-    .filter((j) => j.phase !== "done" && j.phase !== "error")
-    .sort((a, b) => b.startedAt - a.startedAt)[0]
-
   return (
     <>
       {/* Persistent desktop navigation above the welcome, Workspace, or local area. */}
@@ -141,20 +122,12 @@ export default function App(): React.JSX.Element {
                 <Credentials showToast={showToast} />
               )}
               {currentTab === "github" && <GitHubPage showToast={showToast} />}
-              {currentTab === "install" && <Install showToast={showToast} />}
               {currentTab === "logs" && <Logs showToast={showToast} />}
               {currentTab === "settings" && <Settings showToast={showToast} />}
             </AppShell>
           )}
         </div>
       </div>
-
-      {activeJob && currentTab !== "install" && appMode === "launcher" && (
-        <InstallMiniBanner
-          job={activeJob}
-          onOpen={() => setCurrentTab("install")}
-        />
-      )}
 
       {/* In the Workspace the mode bar carries it; see ModeBar. */}
       {appMode !== "workspace" && <LauncherUpdateBanner />}

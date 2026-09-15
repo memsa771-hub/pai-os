@@ -3,19 +3,15 @@ import { useShallow } from "zustand/react/shallow"
 
 import { useAgentsStore } from "@renderer/store/agents"
 import { useUiStore } from "@renderer/store/ui"
-import { useInstallStore } from "@renderer/store/install"
 import { useNotificationsStore } from "@renderer/store/notifications"
-import { useUpdateDismissals } from "@renderer/hooks/useUpdateDismissals"
 import { useWorkspacePrefs } from "@renderer/store/workspace-prefs"
 import { isRunning } from "@renderer/lib/agent-state"
 import { workspacePageUrl } from "@renderer/lib/workspace-urls"
-import { isUpgradeAvailable } from "../../../shared/version-compare"
 import type { ToastType } from "@renderer/hooks/useToast"
 import type { Workspace } from "@renderer/types"
 import { useDashboardData } from "./use-dashboard-data"
 import { useAgentActions } from "./use-agent-actions"
 import { mergeActivity, pickRecentAgents, pickRecentWorkspaces } from "./recent"
-import { PendingUpdatesBanner } from "./components/pending-updates-banner"
 import { WelcomeHero } from "./components/welcome-hero"
 import { ConnectWorkspaceDialog } from "../agents/components/connect-workspace-dialog"
 import { AgentsCard } from "./components/agents-card"
@@ -40,22 +36,14 @@ export default function Dashboard({
       pendingAgentActions: s.pendingAgentActions,
     })),
   )
-  const {
-    activityLog,
-    setCurrentTab,
-    setInstallFocusAgent,
-    requestCreate,
-  } = useUiStore(
+  const { activityLog, setCurrentTab, requestCreate } = useUiStore(
     useShallow((s) => ({
       activityLog: s.activityLog,
       setCurrentTab: s.setCurrentTab,
-      setInstallFocusAgent: s.setInstallFocusAgent,
       requestCreate: s.requestCreate,
     })),
   )
-  const updates = useInstallStore((s) => s.updates)
   const notifItems = useNotificationsStore((s) => s.items)
-  const { isDismissed, ignore, later } = useUpdateDismissals()
   const { lastUsedAt, markUsed } = useWorkspacePrefs(
     useShallow((s) => ({ lastUsedAt: s.lastUsedAt, markUsed: s.markUsed })),
   )
@@ -81,21 +69,6 @@ export default function Dashboard({
     (a) => a.state === "error" || !!a.lastError,
   ).length
 
-  const pendingUpdates = updates.filter(
-    (u) =>
-      isUpgradeAvailable(u.current, u.latest) && !isDismissed(u.name, u.latest!),
-  )
-
-  const openInstall = (): void => {
-    if (pendingUpdates.length === 1) setInstallFocusAgent(pendingUpdates[0].name)
-    setCurrentTab("install")
-  }
-
-  // Takes no agent, because there is nothing to do with one: the Agents page
-  // has no per-agent deep-link. It used to be handed the name and call
-  // `setInstallFocusAgent`, but that flag is only ever read by the marketplace
-  // — so the request sat unconsumed in the store and fired on some later,
-  // unrelated visit there, opening an agent nobody had asked for.
   const manageAgent = (): void => setCurrentTab("agents")
 
   // Joining a workspace is offered here as well as on the agents list, so the
@@ -127,13 +100,6 @@ export default function Dashboard({
           onNewWorkspace={() => requestCreate("workspace")}
         />
 
-        <PendingUpdatesBanner
-          updates={pendingUpdates}
-          onIgnore={(u) => u.latest && ignore(u.name, u.latest)}
-          onSnooze={(u) => u.latest && later(u.name, u.latest)}
-          onView={openInstall}
-        />
-
         {/* Side by side only past 1920px — below that a five-column table in
             half the window starts scrolling sideways. Both cards stretch to the
             taller of the two so the band has one bottom edge. */}
@@ -145,7 +111,6 @@ export default function Dashboard({
             loading={data.loading}
             pending={pendingAgentActions}
             onToggle={(a) => void actions.toggle(a)}
-            onOpenTerminal={(a) => actions.openTerminal(a)}
             onConnect={(a) => setConnectAgent(a.name)}
             onManage={() => manageAgent()}
             onViewAll={() => setCurrentTab("agents")}

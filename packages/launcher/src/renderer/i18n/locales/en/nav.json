@@ -9,10 +9,6 @@
       "label": "This Computer",
       "description": "Your device, workspace connections, and the agents running here."
     },
-    "install": {
-      "label": "Agent Marketplace",
-      "description": "Browse, install and update agents"
-    },
     "agents": {
       "label": "Agents",
       "description": "Step 2 · Create agents, set API keys, test and connect"

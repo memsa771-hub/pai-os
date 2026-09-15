@@ -9,7 +9,6 @@ import type { WorkspaceHealthState } from "@renderer/components/workspaces/Works
 import type {
   Agent,
   ChatSessionMeta,
-  RevokedPairing,
   Workspace,
 } from "@renderer/types"
 
@@ -21,22 +20,8 @@ const POLL_MS = 8000
  * connection is real even with no agent bound here yet (agents get installed
  * from the workspace side afterwards), so it must not read as "disconnected".
  */
-function deriveHealth(
-  agents: Agent[],
-  device: boolean,
-  revoked: boolean,
-  /** False while the node status is still loading — see `nodeWorkspaces`. */
-  nodeKnown: boolean,
-): WorkspaceHealthState {
-  // A revoked pairing outranks agent health: the workspace kicked this device,
-  // so whatever the agents report locally, the connection needs re-pairing.
-  if (revoked) return "revoked"
-  if (agents.length === 0) return device ? "device" : "disconnected"
-  // Agents bound here, but this machine is not in the workspace — nothing of
-  // theirs reaches it, whatever they last reported locally. Their stale errors
-  // used to surface here as a workspace in "Error", which named the wrong
-  // problem: the connection is gone, not broken.
-  if (nodeKnown && !device) return "disconnected"
+function deriveHealth(agents: Agent[]): WorkspaceHealthState {
+  if (agents.length === 0) return "disconnected"
   if (agents.some((a) => a.state === "error" || a.lastError)) return "error"
   if (agents.some((a) => a.state === "starting" || a.state === "reconnecting"))
     return "warning"
@@ -62,8 +47,6 @@ export type WorkspaceSort = (typeof WORKSPACE_SORTS)[number]
 
 interface WorkspacesData {
   workspaces: Workspace[]
-  /** Workspaces that removed this device, and are gone from the list. */
-  notices: RevokedPairing[]
   aliases: Record<string, string>
   setAliases: React.Dispatch<React.SetStateAction<Record<string, string>>>
   filtered: WorkspaceCardData[]
@@ -90,20 +73,6 @@ export function useWorkspacesData(
   const [workspaces, setWorkspaces] = useState<Workspace[]>([])
   const [aliases, setAliases] = useState<Record<string, string>>({})
   const [sessions, setSessions] = useState<ChatSessionMeta[]>([])
-  /**
-   * Workspaces this device is paired to as a node, by slug AND id (either can
-   * be what a workspace record is keyed by locally). A device can be a node in
-   * several workspaces at once, so this is a set rather than one value.
-   */
-  // null until the node has answered: an empty set means this device is in no
-  // workspace, which is a different thing to not knowing yet.
-  const [nodeWorkspaces, setNodeWorkspaces] = useState<Set<string> | null>(null)
-  /**
-   * Workspaces that removed this device. The local entry goes with the pairing
-   * (main-side), so these are no longer in `workspaces` at all — they are kept
-   * to say so once, rather than letting a workspace vanish without a word.
-   */
-  const [revocations, setRevocations] = useState<RevokedPairing[]>([])
   const [loading, setLoading] = useState(true)
   const mounted = useRef(true)
 
@@ -139,19 +108,6 @@ export function useWorkspacesData(
       setWorkspaces(ws)
       useAgentsStore.getState().setAgents(ag)
       setLoading(false)
-      try {
-        // Verified against the workspace (throttled main-side to once a
-        // minute), so a device the workspace has unpaired stops showing here.
-        const node = await window.api.refreshNodeStatus()
-        if (!mounted.current) return
-        const keys = new Set<string>()
-        for (const w of node.workspaces || []) {
-          if (w.workspaceSlug) keys.add(w.workspaceSlug)
-          if (w.workspaceId) keys.add(w.workspaceId)
-        }
-        setNodeWorkspaces(keys)
-        setRevocations(node.revoked || [])
-      } catch {}
       // Pull session metadata across all workspaces in parallel so we can
       // show "Last message" + previews on each card.
       try {
@@ -233,15 +189,10 @@ export function useWorkspacesData(
       // than folded into it: once an agent binds here, health becomes
       // "healthy" and the card would otherwise stop saying that this machine
       // is the node behind it.
-      const device = !!nodeWorkspaces?.has(slug) || !!nodeWorkspaces?.has(ws.id)
-      const revoked = revocations.some(
-        (r) => r.workspaceSlug === slug || r.workspaceId === ws.id,
-      )
       return {
         ws: aliasName ? { ...ws, name: aliasName } : ws,
         agents: linkedAgents,
-        health: deriveHealth(linkedAgents, device, revoked, !!nodeWorkspaces),
-        device,
+        health: deriveHealth(linkedAgents),
         lastActiveAt: topSession?.lastMessageAt || lastUsedAt[ws.id] || null,
         lastMessageAt: topSession?.lastMessageAt || null,
         lastMessagePreview: topSession?.lastMessagePreview || null,
@@ -256,8 +207,6 @@ export function useWorkspacesData(
     aliases,
     lastUsedAt,
     platformsByWorkspace,
-    nodeWorkspaces,
-    revocations,
   ])
 
   const filtered = useMemo(() => {
@@ -267,8 +216,7 @@ export function useWorkspacesData(
       if (
         filter === "problem" &&
         c.health !== "warning" &&
-        c.health !== "error" &&
-        c.health !== "revoked"
+        c.health !== "error"
       )
         return false
       if (filter === "disconnected" && c.health !== "disconnected") return false
@@ -311,7 +259,7 @@ export function useWorkspacesData(
     for (const c of cards) {
       if (c.health === "healthy") healthy++
       else if (c.health === "warning") warning++
-      else if (c.health === "error" || c.health === "revoked") error++
+      else if (c.health === "error") error++
       else if (c.health === "disconnected") disconnected++
     }
     return { healthy, warning, error, disconnected, total: cards.length }
@@ -319,17 +267,6 @@ export function useWorkspacesData(
 
   // Only the ones with nothing left on this machine: a revocation the user has
   // already answered by re-joining is settled, and says nothing worth saying.
-  const notices = useMemo(
-    () =>
-      revocations.filter(
-        (r) =>
-          !workspaces.some(
-            (w) => w.id === r.workspaceId || (w.slug || w.id) === r.workspaceSlug,
-          ),
-      ),
-    [revocations, workspaces],
-  )
-
   return {
     workspaces,
     aliases,
@@ -338,6 +275,5 @@ export function useWorkspacesData(
     stats,
     loading,
     reload,
-    notices,
   }
 }

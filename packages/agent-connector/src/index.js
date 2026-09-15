@@ -6,23 +6,25 @@ require('./win-console').installWindowsHideDefault();
 
 const { Config } = require('./config');
 const { EnvManager } = require('./env');
-const { Registry } = require('./registry');
-const { Installer } = require('./installer');
 const { Daemon } = require('./daemon');
 const { WorkspaceClient } = require('./workspace-client');
 const { GitHubClient } = require('./github-client');
 
 /**
  * Main entry point for the agent-connector library.
- * Provides agent management, configuration, and lifecycle control.
+ *
+ * Generic local-daemon control surface: workspace registration/config CRUD
+ * and daemon lifecycle control. This used to also drive a coding-tool catalog
+ * (install/uninstall runtimes, per-tool env resolution, native-auth
+ * special-casing for specific CLIs) — all of that was coding-agent-specific
+ * and has been removed; this package no longer has any concept of "which
+ * coding agent is this."
  */
 class AgentConnector {
   constructor(opts = {}) {
     const configDir = opts.configDir || AgentConnector.defaultConfigDir();
     this.config = new Config(configDir);
     this.env = new EnvManager(configDir);
-    this.registry = new Registry(configDir, opts.registryUrl);
-    this.installer = new Installer(this.registry, configDir);
     this.workspace = new WorkspaceClient(opts.workspaceEndpoint);
     this._configDir = configDir;
   }
@@ -33,54 +35,14 @@ class AgentConnector {
     return path.join(os.homedir(), '.openagents');
   }
 
-  // -- Registry --
-
-  async getCatalog() {
-    const catalog = await this.registry.getCatalog();
-    // Always re-check installed status (don't trust cached value)
-    return catalog.map((entry) => {
-      const info = this.installer.getInstallInfo(entry.name);
-      return { ...entry, installed: info.installed, managed: info.managed, location: info.location };
-    });
-  }
-
-  /**
-   * Clear catalog cache so next getCatalog re-checks installed status.
-   */
-  clearCatalogCache() {
-    this.registry._catalog = null;
-  }
-
-  getEnvFields(agentType) {
-    return this.registry.getEnvFields(agentType);
-  }
-
-  // -- Install / Uninstall --
-
-  async install(agentType) {
-    return this.installer.install(agentType);
-  }
-
-  async uninstall(agentType) {
-    return this.installer.uninstall(agentType);
-  }
-
-  isInstalled(agentType) {
-    return this.installer.isInstalled(agentType);
-  }
-
-  healthCheck(agentType) {
-    return this.installer.healthCheck(agentType);
-  }
-
   // -- Agent CRUD --
 
   listAgents() {
     const agents = this.config.getAgents();
     const networks = this.config.getNetworks();
     return agents.map((a) => {
-      const type = a.type || 'openclaw';
-      const typeEnv = this.env.load(type);
+      const type = a.type || null;
+      const typeEnv = type ? this.env.load(type) : {};
       const network = networks.find((n) => n.slug === a.network || n.id === a.network);
       return {
         name: a.name,
@@ -100,7 +62,11 @@ class AgentConnector {
   }
 
   addAgent({ name, type, role, path, env }) {
-    this.config.addAgent({ name, type: type || 'openclaw', role: role || 'worker', path, env });
+    // `type` is now just a free-form label — there is no coding-tool catalog
+    // to validate it against. Config.addAgent has its own internal fallback
+    // ('openclaw', a leftover from the coding-tool era) if this is left falsy,
+    // so pass an explicit generic default here instead of relying on it.
+    this.config.addAgent({ name, type: type || 'agent', role: role || 'worker', path, env });
     return { success: true };
   }
 
@@ -212,22 +178,6 @@ class AgentConnector {
 
   saveAgentEnv(agentType, env) {
     this.env.save(agentType, env);
-    // Configure native auth for agents that need it (e.g. OpenClaw auth-profiles.json)
-    try {
-      if (agentType === 'openclaw') {
-        const OpenClawAdapter = require('./adapters/openclaw');
-        const saved = this.env.load(agentType);
-        OpenClawAdapter.configureNativeAuth(saved);
-      }
-      // Hermes reads a custom endpoint only from its own config.yaml, so the
-      // saved LLM_* values must be pushed through `hermes config set` — the
-      // env file alone leaves it "No inference provider configured".
-      if (agentType === 'hermes') {
-        const HermesAdapter = require('./adapters/hermes');
-        const saved = this.env.load(agentType);
-        HermesAdapter.configureNativeAuth(saved);
-      }
-    } catch {}
     return { success: true };
   }
 
@@ -245,28 +195,19 @@ class AgentConnector {
   saveAgentInstanceEnv(agentName, env) {
     const agent = this.config.getAgent(agentName);
     if (!agent) throw new Error(`Agent '${agentName}' not found`);
-    const saved = this.config.updateAgentEnv(agentName, env);
-
-    // Preserve native auth side effects for agents that need them while
-    // keeping the model choice scoped to this individual agent.
-    try {
-      if ((agent.type || 'openclaw') === 'openclaw') {
-        const OpenClawAdapter = require('./adapters/openclaw');
-        const typeEnv = this.env.load(agent.type || 'openclaw');
-        OpenClawAdapter.configureNativeAuth({ ...typeEnv, ...saved });
-      }
-      if (agent.type === 'hermes') {
-        const HermesAdapter = require('./adapters/hermes');
-        const typeEnv = this.env.load('hermes');
-        HermesAdapter.configureNativeAuth({ ...typeEnv, ...saved });
-      }
-    } catch {}
-
+    this.config.updateAgentEnv(agentName, env);
     return { success: true };
   }
 
+  /**
+   * Apply generic LLM_* → provider-specific env resolution rules. There is no
+   * coding-tool registry supplying per-type rules any more, so this always
+   * resolves against the empty rule set (EnvManager.resolve treats a missing
+   * registry as "no rules") — kept as a passthrough for callers that still
+   * read `.env`/`.instanceEnv` shapes.
+   */
   resolveAgentEnv(agentType, saved) {
-    return this.env.resolve(agentType, saved, this.registry);
+    return this.env.resolve(agentType, saved, null);
   }
 
   // -- Workspace --
@@ -340,7 +281,7 @@ class AgentConnector {
    * Create a Daemon instance for this connector's config.
    */
   createDaemon() {
-    return new Daemon(this.config, this.env, this.registry);
+    return new Daemon(this.config);
   }
 
   /**
@@ -411,29 +352,7 @@ class AgentConnector {
   async resolveToken(token) {
     return this.workspace.resolveToken(token);
   }
-
-  async redeemNodePairingCode(code, deviceInfo) {
-    return this.workspace.redeemPairingCode(code, deviceInfo);
-  }
-
-  // -- LLM test --
-
-  async testLLM(env) {
-    const { testLLMConnection } = require('./utils');
-    return testLLMConnection(env);
-  }
-
-  /**
-   * Smoke-test an agent type end to end (tiny "hi" prompt through its CLI or
-   * LLM API) and classify any failure into actionable guidance. See probe.js.
-   */
-  async probeAgentType(agentType, opts) {
-    const { probeAgentType } = require('./probe');
-    return probeAgentType(this, agentType, opts);
-  }
 }
 
-const adapters = require('./adapters');
-
 const paths = require('./paths');
-module.exports = { AgentConnector, Daemon, WorkspaceClient, GitHubClient, adapters, paths };
+module.exports = { AgentConnector, Daemon, WorkspaceClient, GitHubClient, paths };
