@@ -197,9 +197,6 @@ local_test/
 
 settings.local.json
 .vscode*/
-sdk/demos/**/mods/
-sdk/demos/*/network.db
-
 
 # Network database
 network.db
@@ -207,7 +204,6 @@ message_dump_*
 message_history.json
 metadata.json
 _global.json
-sdk/demos/**/topics/*
 
 # Project management
 projects
