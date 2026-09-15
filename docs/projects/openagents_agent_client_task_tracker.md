@@ -1,4 +1,4 @@
-# OpenAgents Agent Client — Task Tracker
+# Placement AI Agent Client — Task Tracker
 
 **Last updated:** 2026-03-20
 

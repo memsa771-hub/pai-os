@@ -1,4 +1,4 @@
-# OpenAgents Agent Workspace
+# Placement AI Agent Workspace
 
 **Status:** Phase 5 In Progress (UI Redesign)
 **Created:** 2026-02-23
@@ -57,7 +57,7 @@ This is critical for scalability: thousands of workspaces can exist simultaneous
 
 ### Transport: Adaptive Polling + REST (Not WebSocket)
 
-The local agent communicates with the OpenAgents server via HTTP polling:
+The local agent communicates with the Placement AI server via HTTP polling:
 
 - **Inbound:** Agent polls the server for new messages/tasks
 - **Outbound:** Agent posts responses back via REST API
@@ -307,7 +307,7 @@ No adapter wrapper needed — the developer imports the SDK and uses workspace m
 
 ### Shared Component: `openagents mcp-server`
 
-A reusable MCP server command (`openagents mcp-server --workspace <id>`) that bridges workspace tools to the OpenAgents API. Used by Claude Code, Codex CLI, and Gemini CLI adapters. Exposes:
+A reusable MCP server command (`openagents mcp-server --workspace <id>`) that bridges workspace tools to the Placement AI API. Used by Claude Code, Codex CLI, and Gemini CLI adapters. Exposes:
 
 - `workspace_send_message(content, mentions=[])` → POST to workspace message API
 - `workspace_get_history(limit=20)` → GET workspace session messages
@@ -514,12 +514,12 @@ When an agent gets delegated to:
 - The bare URL without the token (`https://workspace.openagents.org/{workspace_id}`) is accessible but the user cannot control or invite agents without the password
 - The creator can share the full URL (with token) to grant others control access
 
-**Mode 2: Authenticated (via OpenAgents account)**
-- User logs in through OpenAgents and creates a workspace
+**Mode 2: Authenticated (via Placement AI account)**
+- User logs in through Placement AI and creates a workspace
 - Standard authentication — workspace appears in the user's dashboard
 - No password needed; access control via account authentication
 
-**Claiming an anonymous workspace:** An anonymous workspace can be **claimed** by logging in to an OpenAgents account. This links the workspace to the account and it appears in the dashboard. We encourage this — it registers the user on the platform.
+**Claiming an anonymous workspace:** An anonymous workspace can be **claimed** by logging in to an Placement AI account. This links the workspace to the account and it appears in the dashboard. We encourage this — it registers the user on the platform.
 
 ### Viewer Access & Settings
 

@@ -177,9 +177,9 @@ export function EmptyState() {
                 </p>
                 <div className="flex gap-2">
                   {[
-                    { label: 'macOS', platform: 'mac-arm64', href: 'https://openagents.org/api/download/launcher/mac' },
-                    { label: 'Windows', platform: 'windows', href: 'https://openagents.org/api/download/launcher/windows' },
-                    { label: 'Linux', platform: 'linux-appimage', href: 'https://openagents.org/api/download/launcher/linux-appimage' },
+                    { label: 'macOS', platform: 'mac-arm64', href: 'https://placement-ai.com/api/download/launcher/mac' },
+                    { label: 'Windows', platform: 'windows', href: 'https://placement-ai.com/api/download/launcher/windows' },
+                    { label: 'Linux', platform: 'linux-appimage', href: 'https://placement-ai.com/api/download/launcher/linux-appimage' },
                   ].map((dl) => (
                     <a
                       key={dl.label}
@@ -215,7 +215,7 @@ export function EmptyState() {
                   <CliStep
                     step="1"
                     label={t('onboarding.stepInstallCli')}
-                    command="curl -fsSL https://openagents.org/install.sh | bash"
+                    command="curl -fsSL https://placement-ai.com/install.sh | bash"
                     isCopied={isCopied}
                     onCopy={(cmd) => {
                       capture('cli_install_copied', {
@@ -228,7 +228,7 @@ export function EmptyState() {
                   />
                   <CliStep
                     label={t('onboarding.stepInstallCliWindows')}
-                    command="irm https://openagents.org/install.ps1 | iex"
+                    command="irm https://placement-ai.com/install.ps1 | iex"
                     isCopied={isCopied}
                     onCopy={(cmd) => {
                       capture('cli_install_copied', {

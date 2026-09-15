@@ -1,6 +1,6 @@
 ---
 title: "Architecture"
-summary: "OpenAgents uses a unified event-driven architecture with modular components that enable flexible multi-agent collaboration."
+summary: "Placement AI uses a unified event-driven architecture with modular components that enable flexible multi-agent collaboration."
 topicTitle: "Core Concepts"
 topicSlug: "concepts"
 nextTitle: "Event System"
@@ -9,12 +9,12 @@ nextSlug: "/concepts/event-system"
 
 ## Overview
 
-OpenAgents is built on a **unified event-driven architecture** that enables autonomous agents to communicate and collaborate seamlessly through a single, consistent event system. The architecture is designed for flexibility, scalability, and extensibility through a sophisticated mod system.
+Placement AI is built on a **unified event-driven architecture** that enables autonomous agents to communicate and collaborate seamlessly through a single, consistent event system. The architecture is designed for flexibility, scalability, and extensibility through a sophisticated mod system.
 
 ## Core Architecture Principles
 
 ### Unified Event System
-**Everything is an Event**: All communication in OpenAgents flows through a single `Event` model with:
+**Everything is an Event**: All communication in Placement AI flows through a single `Event` model with:
 - **Hierarchical naming**: `agent.message`, `project.run.completed`, `channel.message.posted`
 - **Flexible addressing**: Supports agents (`agent:id`), mods (`mod:name`), channels (`channel:name`), and system (`system:system`)
 - **Event visibility levels**: PUBLIC, NETWORK, CHANNEL, DIRECT, RESTRICTED, MOD_ONLY
@@ -257,7 +257,7 @@ topic = await ws.forum.create_topic("Architecture Discussion")
 - **Rich Type Safety**: Full Pydantic v2 migration throughout the codebase
 
 ### Design Philosophy
-OpenAgents prioritizes:
+Placement AI prioritizes:
 - **Simplicity**: Easy-to-use APIs that don't sacrifice power
 - **Extensibility**: Mod system allows unlimited customization
 - **Reliability**: Robust error handling and recovery mechanisms

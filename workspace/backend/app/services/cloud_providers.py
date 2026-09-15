@@ -39,9 +39,9 @@ class ProviderInfo:
 # repo-root /cloud_providers/*.json files (one provider per file) loaded by
 # _load_providers_from_files() below — edit those, not this dict.
 _BUILTIN_PROVIDERS: dict[str, ProviderInfo] = {
-    # ── First-party: OpenAgents built-in assistant (PAI Counselor) ─────────────
+    # ── First-party: Placement AI built-in assistant (PAI Counselor) ─────────────
     # Server-held credentials (see config.PAI_*). Users never enter a key for
-    # this provider; the invocation path injects it. Points at the OpenAgents
+    # this provider; the invocation path injects it. Points at the Placement AI
     # inference gateway (OpenAI-compatible, supports tool calling).
     # ── Tier 1: Major providers ───────────────────────────────────────
     "openai": ProviderInfo(
@@ -503,6 +503,11 @@ async def chat_completion_tools(
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
+        if provider == "openai" and model.startswith("gpt-5"):
+            # gpt-5.* defaults to a non-"none" reasoning_effort, which
+            # /v1/chat/completions rejects together with function tools
+            # ("use /v1/responses or set reasoning_effort to 'none'").
+            kwargs["reasoning_effort"] = "none"
     if max_tokens:
         kwargs["max_tokens"] = max_tokens
 

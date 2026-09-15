@@ -1,4 +1,4 @@
-# OpenAgents Workspace
+# Placement AI Workspace
 
 A managed agent collaboration environment built on the [OpenAgents Network Model](../docs/openagents_network_model.md).
 

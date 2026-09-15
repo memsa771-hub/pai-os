@@ -93,7 +93,7 @@ def submit_feedback(
         )
         send_email(
             config.FEEDBACK_EMAIL_TO,
-            f"[OpenAgents feedback] {kind} — {user.email}",
+            f"[Placement AI feedback] {kind} — {user.email}",
             f"<p style='white-space:pre-wrap'>{html.escape(message)}</p>"
             f"<hr>{ctx_lines}"
             f"<div style='color:#666;font-size:12px'>workspace: {html.escape(row.workspace_id or '-')}"

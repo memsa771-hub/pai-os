@@ -118,11 +118,6 @@ class WorkspaceUpdateRequest(BaseModel):
     browser_enabled: Optional[bool] = None
     browserfabric_api_key: Optional[str] = None
 
-class CollaboratorAddRequest(BaseModel):
-    email: str
-    role: str = Field(default="editor", pattern=r"^(editor|viewer)$")
-
-
 class PresencePingRequest(BaseModel):
     senderEmail: str
     senderDisplayName: Optional[str] = None
@@ -217,11 +212,14 @@ def create_workspace(
 ):
     """Create a new workspace (= ONM network).
 
-    When called with a verified identity bearer (the logged-in web flow), the
-    caller becomes the owner: their verified email is recorded as creator_email
-    and an owner WorkspaceMembership is created. Anonymous creation (no bearer)
-    still works for backward compatibility — creator_email falls back to the
-    request body, and ownership is reconciled the first time that user logs in.
+    Placement AI v2.0: a verified human account owns at most one active
+    workspace. When called with a verified identity bearer and that user
+    already has one (`owner_user_id`), this returns their EXISTING canonical
+    workspace instead of creating a second — idempotent-create semantics, so
+    any lingering client call can't produce duplicates. Anonymous creation (no
+    bearer) still works for backward/machine compatibility — creator_email
+    falls back to the request body, and no owner_user_id is set (the caller
+    isn't an authenticated student).
     """
     # The creating agent's name enters router prompts verbatim — same
     # character policy as the join handler.
@@ -232,20 +230,37 @@ def create_workspace(
                 ResponseCode.BAD_REQUEST, f"Invalid agent name: {name_problem}",
             )
 
+    now = datetime.now(timezone.utc)
+
+    from app.access import get_or_create_owned_workspace, resolve_current_user
+    owner = resolve_current_user(db, authorization)
+
+    if owner is not None:
+        # A verified human never gets a second workspace — regardless of what
+        # else the request asked for. (`agent_name` is ignored here; seeding
+        # an agent into an existing workspace is a separate operation.)
+        workspace = get_or_create_owned_workspace(db, owner)
+        db.commit()
+        db.refresh(workspace)
+        return success_response({
+            "workspaceId": str(workspace.id),
+            "slug": workspace.slug,
+            "name": workspace.name,
+            "token": workspace.password_hash,
+            "channel": None,
+        })
+
     # Generate slug and token
     slug = secrets.token_hex(4)
     token = secrets.token_urlsafe(32)
 
-    now = datetime.now(timezone.utc)
-
-    from app.access import resolve_current_user
-    owner = resolve_current_user(db, authorization)
     creator_email = owner.email if owner else body.creator_email
 
     workspace = Workspace(
         slug=slug,
         name=body.name,
         creator_email=creator_email,
+        owner_user_id=owner.id if owner else None,
         password_hash=token,
         # Every new workspace enforces login by default (secure-by-default).
         # Machine access via the workspace token is unaffected — agents, the
@@ -1558,31 +1573,6 @@ def _format_collaborator(c: WorkspaceCollaborator, cards: Optional[dict] = None)
     }
 
 
-@router.get("/{workspace_id}/collaborators")
-def list_collaborators(
-    workspace_id: str,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """List email-based collaborators for a workspace."""
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return _workspace_access_denied(authorization)
-
-    rows = workspace.collaborators or []
-    cards = _user_cards(db, [c.email for c in rows])
-    collabs = [_format_collaborator(c, cards) for c in rows]
-    return success_response({
-        "collaborators": collabs,
-        "owner": workspace.creator_email,
-    })
-
-
 @router.post("/{workspace_id}/presence")
 async def record_presence(
     workspace_id: str,
@@ -1591,12 +1581,17 @@ async def record_presence(
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Self-register the calling human as a workspace collaborator.
+    """Self-register the CALLING human's own presence (never anyone else's).
 
     Called by the web/Swift clients on workspace open once the user is
-    signed in. The mention picker reads from `workspace_collaborators`,
-    so this is what makes a freshly-logged-in human show up in @-picker
-    rows without having to post a message first.
+    signed in. The mention picker and push fan-out read from
+    `workspace_collaborators`, so this is what makes a freshly-logged-in
+    human show up without having to post a message first. There is no
+    invite/add-another-person product path — when a verified identity bearer
+    is present, the email is resolved from IT, never trusted from the request
+    body, so this endpoint can never be used to register someone else's
+    presence. `senderEmail` in the body is a fallback for the legacy
+    token-only (no bearer) case only.
     """
     workspace = db.execute(
         select(Workspace).where(_workspace_filter(workspace_id))
@@ -1606,7 +1601,13 @@ async def record_presence(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return _workspace_access_denied(authorization)
 
-    email = (body.senderEmail or "").strip().lower()
+    bearer_email = None
+    bearer = _extract_bearer(authorization)
+    if bearer:
+        from app.firebase_auth import verify_identity_token
+        bearer_email = verify_identity_token(bearer)
+
+    email = (bearer_email or body.senderEmail or "").strip().lower()
     if not email or "@" not in email:
         return json_response(ResponseCode.BAD_REQUEST, "Invalid email address")
 
@@ -1627,97 +1628,6 @@ async def record_presence(
     return success_response(
         _format_collaborator(existing, _user_cards(db, [email])) if existing else {"email": email}
     )
-
-
-@router.post("/{workspace_id}/collaborators")
-def add_collaborator(
-    workspace_id: str,
-    body: CollaboratorAddRequest,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """Add an email-based collaborator to a workspace."""
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return _workspace_access_denied(authorization)
-
-    email = body.email.strip().lower()
-    if not email or "@" not in email:
-        return json_response(ResponseCode.BAD_REQUEST, "Invalid email address")
-
-    # Can't add the owner as a collaborator
-    if workspace.creator_email and email == workspace.creator_email.lower():
-        return json_response(ResponseCode.CONFLICT, "This email is already the workspace owner")
-
-    # Determine who is adding (from bearer token if available)
-    added_by = None
-    bearer = _extract_bearer(authorization)
-    if bearer:
-        from app.firebase_auth import verify_identity_token
-        added_by = verify_identity_token(bearer)
-
-    # Upsert: update role if already exists
-    existing = db.execute(
-        select(WorkspaceCollaborator).where(
-            WorkspaceCollaborator.workspace_id == workspace.id,
-            WorkspaceCollaborator.email == email,
-        )
-    ).scalar_one_or_none()
-
-    if existing:
-        existing.role = body.role
-        db.commit()
-        db.refresh(existing)
-        return success_response(_format_collaborator(existing, _user_cards(db, [email])))
-
-    collab = WorkspaceCollaborator(
-        workspace_id=workspace.id,
-        email=email,
-        role=body.role,
-        added_by=added_by,
-    )
-    db.add(collab)
-    db.commit()
-    db.refresh(collab)
-    return success_response(_format_collaborator(collab, _user_cards(db, [email])))
-
-
-@router.delete("/{workspace_id}/collaborators/{email}")
-def remove_collaborator(
-    workspace_id: str,
-    email: str,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """Remove an email-based collaborator from a workspace."""
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return _workspace_access_denied(authorization)
-
-    email_lower = email.strip().lower()
-    collab = db.execute(
-        select(WorkspaceCollaborator).where(
-            WorkspaceCollaborator.workspace_id == workspace.id,
-            WorkspaceCollaborator.email == email_lower,
-        )
-    ).scalar_one_or_none()
-
-    if not collab:
-        return json_response(ResponseCode.NOT_FOUND, "Collaborator not found")
-
-    db.delete(collab)
-    db.commit()
-    return success_response({"email": email_lower, "removed": True})
 
 
 @router.get("/{workspace_id}/me")

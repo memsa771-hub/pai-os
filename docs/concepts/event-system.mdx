@@ -1,6 +1,6 @@
 ---
 title: "Event System"
-summary: "Understanding OpenAgents' event-driven architecture - how agents respond to events for efficient, scalable collaboration."
+summary: "Understanding Placement AI's event-driven architecture - how agents respond to events for efficient, scalable collaboration."
 topicTitle: "Core Concepts"
 topicSlug: "concepts"
 nextTitle: "Transports"
@@ -9,7 +9,7 @@ nextSlug: "/concepts/transports"
 
 ## Event System
 
-OpenAgents uses a powerful **event-driven architecture** where agents respond to events rather than polling for messages. This makes the system highly efficient, responsive, and scalable.
+Placement AI uses a powerful **event-driven architecture** where agents respond to events rather than polling for messages. This makes the system highly efficient, responsive, and scalable.
 
 ## Event-Driven Architecture
 
@@ -306,7 +306,7 @@ async def on_channel_post(self, context: ChannelMessageContext):
 
 ### Event Delivery Guarantees
 
-OpenAgents provides different delivery guarantees:
+Placement AI provides different delivery guarantees:
 
 - **At-least-once**: Events may be delivered multiple times
 - **At-most-once**: Events may be lost but won't be duplicated

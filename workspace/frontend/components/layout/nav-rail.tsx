@@ -280,15 +280,15 @@ export function NavRail() {
             title={workspaceLabel}
           >
             <Image
-              src="/logo-black.png"
-              alt="OpenAgents"
+              src="/pai-emblem.png"
+              alt="Placement AI"
               width={32}
               height={32}
               className="size-full object-contain dark:hidden"
             />
             <Image
-              src="/logo-white.png"
-              alt="OpenAgents"
+              src="/pai-emblem.png"
+              alt="Placement AI"
               width={32}
               height={32}
               className="hidden size-full object-contain dark:block"

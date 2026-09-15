@@ -1,16 +1,16 @@
 # Project information
-site_name: OpenAgents
-site_description: An Open Framework for Connecting AI Agents at Scale
-site_author: OpenAgents
-site_url: https://openagents.org
+site_name: Placement AI
+site_description: Placement AI — The Agentic Operating System for a Student's Education Journey
+site_author: Placement AI
+site_url: https://placement-ai.com
 
 # Repository
 repo_name: bestagents/openagents
-repo_url: https://github.com/bestagents/openagents
+repo_url: https://github.com/b--
 edit_uri: edit/main/docs/
 
 # Copyright
-copyright: Copyright &copy; 2023 OpenAgents Team
+copyright: Copyright &copy; 2026 Placement AI
 
 # Configuration
 theme:
@@ -88,11 +88,11 @@ extra_css:
 # Extra
 extra:
   404_page: 404.md
-  homepage: https://openagents.org
+  homepage: https://placement-ai.com
   social:
     - icon: fontawesome/solid/globe
-      link: https://openagents.org
-      name: OpenAgents Website
+      link: https://placement-ai.com
+      name: Placement AI Website
 
 # Navigation structure
 nav:

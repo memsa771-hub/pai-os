@@ -8,7 +8,7 @@
 
 ## 1. Goal
 
-Move the OpenAgents Workspace (frontend + backend) from the private `openagents-web` monorepo into the open-source `openagents` SDK repo. Simultaneously, redesign the backend to align with the OpenAgents Network Model (ONM) — replacing the CRUD REST API with an event-native architecture.
+Move the Placement AI Workspace (frontend + backend) from the private `openagents-web` monorepo into the open-source `openagents` SDK repo. Simultaneously, redesign the backend to align with the OpenAgents Network Model (ONM) — replacing the CRUD REST API with an event-native architecture.
 
 After migration:
 - `openagents` repo contains everything: SDK, workspace backend, workspace frontend
@@ -638,7 +638,7 @@ These call the pipeline internally — they're syntactic sugar, not a separate c
 | `backend/app/routers/agent_register.py` | Agent registration — shared |
 | `backend/app/routers/reputation.py` | Reputation — shared |
 | `backend/app/routers/workspace.py` | User dashboard (list workspaces) — could proxy to workspace backend |
-| `frontend/` | Main site (openagents.org) |
+| `frontend/` | Main site (placement-ai.com) |
 | `agentid_frontend/` | Agent ID management |
 | All other frontends/backends | Product-specific |
 

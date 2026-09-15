@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SqlaSession
 
@@ -183,12 +184,17 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
 
     Mirrors the agent-less path of POST /v1/workspaces: a slug + token + owner,
     no seeded channels or agents. Keeps a workspace token so agents and legacy
-    clients can still attach. Does NOT commit — the caller owns the transaction.
+    clients can still attach. Sets `owner_user_id` — the actual canonical-
+    workspace identity — in addition to the legacy `creator_email` +
+    `WorkspaceMembership(role="owner")` pair, which stay for backward
+    compatibility with the pre-v2.0 membership-based access path. Does NOT
+    commit — the caller owns the transaction.
     """
     ws = Workspace(
         slug=secrets.token_hex(4),
         name=name,
         creator_email=user.email,
+        owner_user_id=user.id,
         password_hash=secrets.token_urlsafe(32),
         # Identity-created workspace → enforced login by default (v1.0). The
         # kept token still lets agents/legacy clients attach.
@@ -214,16 +220,70 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
 
 
 # ---------------------------------------------------------------------------
+# Canonical personal workspace (Placement AI v2.0 — one student, one workspace)
+# ---------------------------------------------------------------------------
+
+def resolve_owned_workspace(db: Session, user: User) -> Optional[Workspace]:
+    """The student's one canonical personal workspace, or None if not yet
+    provisioned. This is the ONLY human-facing workspace lookup the product
+    should use going forward — see `get_or_create_owned_workspace`."""
+    return db.execute(
+        select(Workspace).where(
+            Workspace.owner_user_id == user.id,
+            Workspace.status == "active",
+        )
+    ).scalar_one_or_none()
+
+
+def get_or_create_owned_workspace(db: Session, user: User) -> Workspace:
+    """The student's one canonical personal workspace — provisioning it (with
+    PAI Counselor + welcome thread) on first call. Idempotent and
+    concurrency-safe: `uq_workspace_owner_active` (a partial unique index on
+    `workspaces.owner_user_id`) is the actual guarantee, enforced by the
+    database, so two concurrent first-logins (two browser tabs, web + desktop)
+    can never both insert an owned workspace for the same user. The loser of
+    that race simply re-reads the winner's row.
+
+    Does NOT commit — the caller owns the transaction. Safe to call inside an
+    existing transaction: the provisioning attempt runs in its own SAVEPOINT
+    so a conflict rolls back only the failed insert, not the whole request.
+    """
+    existing = resolve_owned_workspace(db, user)
+    if existing is not None:
+        return existing
+
+    try:
+        with db.begin_nested():
+            ws = provision_workspace(db, user)
+            db.flush()
+    except IntegrityError:
+        logger.info(
+            "get_or_create_owned_workspace: lost a concurrent-provisioning race "
+            "for user %s — re-reading the winner's workspace", user.id,
+        )
+        ws = resolve_owned_workspace(db, user)
+        if ws is None:
+            # Only possible if the conflict wasn't actually the ownership
+            # index (e.g. a transient DB error) — surface it rather than loop.
+            raise
+    return ws
+
+
+# ---------------------------------------------------------------------------
 # Access verification
 # ---------------------------------------------------------------------------
 
 def resolve_user_role(db: Session, workspace: Workspace, authorization: Optional[str]) -> Optional[str]:
     """Return the caller's role in this workspace from their identity bearer.
 
-    Prefers an explicit WorkspaceMembership row; falls back to legacy
-    email-based access (creator_email → owner, collaborator → member/viewer) so
-    access works before the user has logged in and been reconciled. Returns None
-    if the caller has no identity or no access.
+    Placement AI v2.0: the primary check is direct ownership
+    (`workspace.owner_user_id == user.id`) — no role hierarchy, since a
+    student's personal workspace has exactly one human. Falls back to the
+    legacy WorkspaceMembership row, then legacy email-based access
+    (creator_email → owner, collaborator → member/viewer), which still matter
+    for workspaces with no owner_user_id (machine-only, self-hosted, or a
+    user's non-canonical extra legacy workspace). Returns None if the caller
+    has no identity or no access.
     """
     bearer = extract_bearer(authorization)
     if not bearer:
@@ -237,6 +297,8 @@ def resolve_user_role(db: Session, workspace: Workspace, authorization: Optional
 
     user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
     if user is not None:
+        if workspace.owner_user_id is not None and str(workspace.owner_user_id) == str(user.id):
+            return "owner"
         membership = db.execute(
             select(WorkspaceMembership).where(
                 WorkspaceMembership.workspace_id == workspace.id,

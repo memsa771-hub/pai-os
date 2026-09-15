@@ -1,6 +1,6 @@
-# Contributing to OpenAgents
+# Contributing to Placement AI
 
-Thank you for your interest in contributing to OpenAgents! This document provides guidelines and instructions to help you contribute effectively.
+Thank you for your interest in contributing to Placement AI! This document provides guidelines and instructions to help you contribute effectively.
 
 ## Table of Contents
 - [Code of Conduct](#code-of-conduct)
@@ -104,4 +104,4 @@ pytest
 - Help answer questions from other contributors.
 - Be respectful and constructive in all interactions.
 
-Thank you for contributing to OpenAgents! 
+Thank you for contributing to Placement AI! 

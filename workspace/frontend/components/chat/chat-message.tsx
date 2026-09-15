@@ -176,10 +176,9 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [], isL
   }
 
   // ── Human message ──
-  // Everyone reads the same way: avatar + name + time on the left, like the
-  // agent turns below. A shared workspace has several people in it, so your own
-  // turns stay in the same column as theirs rather than becoming right-aligned
-  // bubbles — the thread reads as one transcript.
+  // The workspace has exactly one human (its owner), so this is always "your"
+  // turn — right-aligned bubble, like an ordinary chat app, with the agent's
+  // reply below it on the left.
   if (isHuman) {
     const isCurrentUser = !!message.senderId && message.senderId === currentUser.id;
     const seed = message.senderId || message.senderName || 'human';
@@ -189,24 +188,24 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [], isL
 
     return (
       <div className="py-2">
-        <div className="flex items-start gap-3">
+        <div className="flex items-start justify-end gap-3">
+          <div className="flex min-w-0 max-w-[75%] flex-col items-end">
+            <div className="flex items-baseline gap-2">
+              {timestamp && (
+                <span className="text-[11px] text-muted-foreground">{timestamp}</span>
+              )}
+              <span className="text-sm font-semibold text-foreground">{displayName}</span>
+            </div>
+            <div className="mt-0.5 rounded-2xl rounded-tr-sm bg-primary/10 px-3.5 py-2 text-left text-sm leading-relaxed">
+              <MarkdownContent content={message.content} agentNames={agentNames} agentLabels={agentLabels} />
+              <Attachments items={attachments} />
+            </div>
+          </div>
           <div
             className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full"
             style={{ backgroundColor: humanColor(seed) }}
           >
             <User className="size-3.5 text-zinc-700" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-baseline gap-2">
-              <span className="text-sm font-semibold text-foreground">{displayName}</span>
-              {timestamp && (
-                <span className="text-[11px] text-muted-foreground">{timestamp}</span>
-              )}
-            </div>
-            <div className="mt-0.5 text-sm leading-relaxed">
-              <MarkdownContent content={message.content} agentNames={agentNames} agentLabels={agentLabels} />
-              <Attachments items={attachments} />
-            </div>
           </div>
         </div>
       </div>
@@ -225,16 +224,6 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [], isL
             <span className="truncate text-sm font-semibold text-foreground">
               {agent ? agentLabel(agent) : message.senderName}
             </span>
-            {agent && (
-              <span className={cn(
-                'shrink-0 rounded px-1.5 py-0.5 text-[10px] font-semibold',
-                agent.role === 'master'
-                  ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                  : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400'
-              )}>
-                {agent.role}
-              </span>
-            )}
             {timestamp && (
               <span className="text-[11px] text-muted-foreground">{timestamp}</span>
             )}

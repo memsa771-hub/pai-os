@@ -57,11 +57,11 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
     if (idToken) {
       let cancelled = false;
       import('@/lib/account-api')
-        .then(({ listAccountWorkspaces }) => listAccountWorkspaces(idToken))
-        .then((wss) => {
+        .then(({ getAccountWorkspace }) => getAccountWorkspace(idToken))
+        .then((ws) => {
           if (cancelled) return;
-          const match = wss.find((w) => w.slug === workspaceId || w.workspaceId === workspaceId);
-          setToken(match?.token || '');
+          const match = ws.slug === workspaceId || ws.workspaceId === workspaceId;
+          setToken(match ? (ws.token || '') : '');
         })
         .catch(() => { if (!cancelled) setToken(''); });
       return () => { cancelled = true; };

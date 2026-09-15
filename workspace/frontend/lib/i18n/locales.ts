@@ -1,7 +1,7 @@
 /**
  * Locale definition.
  *
- * OpenAgents Workspace ships English only. This file exists so the rest of
+ * Placement AI Workspace ships English only. This file exists so the rest of
  * the i18n plumbing (translate/format/context) stays written in terms of a
  * `Locale` type rather than a hardcoded string — adding a second locale back
  * later means widening this union and nothing else.

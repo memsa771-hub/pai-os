@@ -1,4 +1,4 @@
-# OpenAgents Launcher — Bug Tracker
+# Placement AI Desktop — Bug Tracker
 
 Last updated: 2026-03-27
 

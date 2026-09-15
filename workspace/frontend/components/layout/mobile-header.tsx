@@ -95,8 +95,8 @@ export function MobileHeader() {
             </Sheet>
 
             <div className="size-7 shrink-0">
-              <Image src="/logo-black.png" alt="OpenAgents" width={28} height={28} className="size-full object-contain dark:hidden" />
-              <Image src="/logo-white.png" alt="OpenAgents" width={28} height={28} className="size-full object-contain hidden dark:block" />
+              <Image src="/pai-emblem.png" alt="Placement AI" width={28} height={28} className="size-full object-contain dark:hidden" />
+              <Image src="/pai-emblem.png" alt="Placement AI" width={28} height={28} className="size-full object-contain hidden dark:block" />
             </div>
 
             <span className="text-sm font-medium truncate">

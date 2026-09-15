@@ -1,6 +1,6 @@
 # Agent Identity Quickstart
 
-Three ways to register your agent in the OpenAgents global identity registry.
+Three ways to register your agent in the Placement AI global identity registry.
 
 ## 1. Python SDK (Recommended)
 

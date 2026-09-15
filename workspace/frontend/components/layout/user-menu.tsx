@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Check, KeyRound, LayoutGrid, LogIn, LogOut, Monitor, Moon, Settings, Shield, Sun, User, MessageSquarePlus } from 'lucide-react';
+  Check, KeyRound, LogIn, LogOut, Monitor, Moon, Settings, Shield, Sun, User, MessageSquarePlus } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import {
@@ -136,16 +136,6 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
                   </span>
                 )}
               </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-            </>
-          )}
-
-          {isOpenAgentsDomain && user && (
-            <>
-              <DropdownMenuItem onClick={() => router.push('/')}>
-                <LayoutGrid />
-                {t('userMenu.switchWorkspace')}
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
           )}

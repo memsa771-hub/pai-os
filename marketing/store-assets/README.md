@@ -1,6 +1,6 @@
 # App Store / Google Play assets
 
-Store-listing images for the OpenAgents mobile apps, plus the pipeline that
+Store-listing images for the Placement AI mobile apps, plus the pipeline that
 generates them from the real product. iPhone-only on iOS by decision
 (2026-08-24) — no iPad set is shipped; if that changes, re-add the
 `ios-ipad` target in `scripts/compose-store.js`.

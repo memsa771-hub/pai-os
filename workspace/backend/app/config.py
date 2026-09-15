@@ -35,10 +35,12 @@ class Config:
     # app.firebase_auth.verify_supabase_claims, which verifies tokens via
     # Supabase's own JWKS/introspection instead of a shared secret).
     #
-    # TODO(deploy): require these public values from environment configuration.
-    # They are intentionally defaults only for the current development phase.
-    SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "https://qhrzlmfzdeulhdzpadtn.supabase.co")
-    SUPABASE_ANON_KEY: str = os.environ.get("SUPABASE_ANON_KEY", "sb_publishable_W_ITKg52Rr3G0eeoi4wPLQ_AdSTiKPD")
+    # Required from the environment (see workspace/.env.example) — no default
+    # project baked into source, so a misconfigured deployment fails loudly
+    # (empty string) instead of silently talking to whichever project used to
+    # be hardcoded here.
+    SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
+    SUPABASE_ANON_KEY: str = os.environ.get("SUPABASE_ANON_KEY", "")
 
     # Blast-radius cap for POST /v1/auth/sign-in-username (per process, sliding
     # hour, keyed by client IP).

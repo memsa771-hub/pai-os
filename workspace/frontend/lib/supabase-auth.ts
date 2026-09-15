@@ -5,11 +5,13 @@
 // (same function names/shapes) so a future shared `packages/auth` extraction
 // is a cut-and-paste, not a rewrite — see the auth architecture plan.
 //
-// TODO(deploy): move these public values to environment-backed configuration.
-// They are intentionally hardcoded only for the current development phase.
-// values — never put a service-role key or JWT secret here.
-export const SUPABASE_URL = 'https://qhrzlmfzdeulhdzpadtn.supabase.co';
-export const SUPABASE_ANON_KEY = 'sb_publishable_W_ITKg52Rr3G0eeoi4wPLQ_AdSTiKPD';
+// Set in workspace/.env (see workspace/.env.example) and injected at build
+// time via the Dockerfile ARG/ENV pair and docker-compose's build.args — the
+// same values Supabase already treats as public (this is the publishable
+// anon key, not a secret), just no longer hardcoded here. Never put a
+// service-role key or JWT secret here.
+export const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || '';
+export const SUPABASE_ANON_KEY = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || '';
 
 export interface AuthSession {
   accessToken: string;

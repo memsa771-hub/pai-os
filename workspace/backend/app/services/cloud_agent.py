@@ -773,7 +773,6 @@ async def _post_response(
     # route's advance hook never sees them. advance_workflow is a no-op when the
     # channel has no active run; run it off the event loop so we don't block.
     try:
-        import asyncio
         from app.services.workflow import advance_workflow
         wf_event = {
             "target": event.target,
@@ -790,9 +789,8 @@ async def _post_response(
     # Cloud replies bypass POST /v1/events, so the route's Slack/Telegram
     # relay hook never sees them either — schedule it here the same way.
     try:
-        import asyncio as _asyncio
         from app.services.integrations import relay_for_event
-        _asyncio.get_running_loop().run_in_executor(
+        asyncio.get_running_loop().run_in_executor(
             None, relay_for_event, workspace_id, snapshot,
         )
     except Exception:

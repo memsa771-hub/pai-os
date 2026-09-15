@@ -1,6 +1,6 @@
 # Testing the Launcher Desktop App
 
-How to test the OpenAgents launcher efficiently — from unit tests on your
+How to test the Placement AI Desktop efficiently — from unit tests on your
 machine to driving a real instance on a remote, SSH-only box.
 
 ## The three layers

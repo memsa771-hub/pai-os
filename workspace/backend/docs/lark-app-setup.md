@@ -18,7 +18,7 @@ the backend detects the region automatically from the credentials.
      you subscribe to the event below)
    - optionally `contact:user.base:readonly` so bridged messages show real
      sender names instead of `user-xxxxxx`
-4. In OpenAgents: **Settings → Integrations → Connect Lark / Feishu**, paste
+4. In Placement AI: **Settings → Integrations → Connect Lark / Feishu**, paste
    the **App ID**, **App Secret**, and the **Verification Token** (from
    Event Subscriptions → Encryption Strategy). If you set an **Encrypt Key**
    there, paste it too — encrypted events are supported; otherwise leave the

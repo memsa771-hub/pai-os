@@ -76,7 +76,20 @@ class EventRecord(Base):
 # ---------------------------------------------------------------------------
 
 class Workspace(Base):
-    """A workspace = an ONM network."""
+    """A workspace = an ONM network.
+
+    Placement AI (v2.0, single-owner): a student's product-facing workspace is
+    identified by `owner_user_id`, not by membership rows. `uq_workspace_owner_active`
+    (a partial unique index on `owner_user_id` where `status = 'active'`) is what
+    actually guarantees "one user owns at most one active personal workspace" —
+    enforced in the database so concurrent first-logins can't create two. See
+    `app.access.get_or_create_owned_workspace`.
+
+    `owner_user_id` is nullable: legacy/anonymous/agent-created and machine-only
+    workspaces have no human owner, and a user's old extra workspaces (from
+    before this model existed) are intentionally left with no owner rather than
+    merged or deleted — see migration 053's backfill notes.
+    """
     __tablename__ = "workspaces"
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
@@ -84,6 +97,11 @@ class Workspace(Base):
     name = Column(Text, nullable=False)
     creator_email = Column(Text, nullable=True)
     password_hash = Column(Text, nullable=True)
+    # The student who owns this as their one personal workspace. NULL for
+    # machine-only/legacy workspaces and for a user's non-canonical extra
+    # legacy workspaces (kept for data safety, not reachable via the normal
+    # product — see migration 053).
+    owner_user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     # When True, human web/mobile access requires a logged-in identity that is
     # a WorkspaceMembership of this workspace (enforced-login, v1.0). When False
     # (the default, and every pre-v1.0 workspace), access falls back to the
@@ -100,6 +118,19 @@ class Workspace(Base):
     invitations = relationship("Invitation", back_populates="workspace", cascade="all, delete-orphan")
     collaborators = relationship("WorkspaceCollaborator", back_populates="workspace", cascade="all, delete-orphan", lazy="selectin")
     memberships = relationship("WorkspaceMembership", back_populates="workspace", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        # The actual "one active personal workspace per user" guarantee —
+        # database-enforced so two concurrent first-logins can't both win a
+        # race and create two owned workspaces. Partial: doesn't constrain
+        # machine-only workspaces (owner_user_id NULL) or archived/deleted ones.
+        Index(
+            "uq_workspace_owner_active", "owner_user_id", unique=True,
+            postgresql_where=text("owner_user_id IS NOT NULL AND status = 'active'"),
+            sqlite_where=text("owner_user_id IS NOT NULL AND status = 'active'"),
+        ),
+        Index("idx_workspace_owner", "owner_user_id"),
+    )
 
 
 class WorkspaceMember(Base):

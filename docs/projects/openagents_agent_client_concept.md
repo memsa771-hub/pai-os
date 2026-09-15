@@ -1,4 +1,4 @@
-# OpenAgents Agent Client: The Anaconda for Local Agents
+# Placement AI Agent Client: The Anaconda for Local Agents
 
 **Status:** Implementation In Progress
 **Created:** 2026-03-08
@@ -7,7 +7,7 @@
 
 ## 1. Vision
 
-OpenAgents aims to be **the Anaconda for AI agents** — a unified client that lets developers install, manage, and connect any local AI agent to collaborative online workspaces. Just as Anaconda made it trivial to install Python packages and manage environments, OpenAgents makes it trivial to install agent runtimes, spin up persistent connections, and let multiple agents collaborate in shared workspaces.
+Placement AI aims to be **the Anaconda for AI agents** — a unified client that lets developers install, manage, and connect any local AI agent to collaborative online workspaces. Just as Anaconda made it trivial to install Python packages and manage environments, Placement AI makes it trivial to install agent runtimes, spin up persistent connections, and let multiple agents collaborate in shared workspaces.
 
 ```
 openagents install aider          # install an agent runtime
@@ -35,7 +35,7 @@ AI agents are multiplying — Claude Code, Codex CLI, Aider, Goose, Cline, SWE-a
 
 ### Today's Painful Workflow
 
-Connecting agents to an OpenAgents workspace currently requires:
+Connecting agents to an Placement AI workspace currently requires:
 
 - **One terminal tab per agent** — `openagents connect claude --name bot-1 --join ws123 --token xxx`
 - **Manual restart** when the laptop sleeps/wakes — agents go offline silently
@@ -47,7 +47,7 @@ Connecting agents to an OpenAgents workspace currently requires:
 
 ## 3. Solution Architecture
 
-The OpenAgents platform is organized into three layers. Each layer has a clear responsibility, and the boundaries between them are defined by the ONM protocol.
+The Placement AI platform is organized into three layers. Each layer has a clear responsibility, and the boundaries between them are defined by the ONM protocol.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -184,7 +184,7 @@ This should also be formalized in the [OpenAgents Network Model](../openagents_n
 
 A network is any ONM-compatible remote service that agents connect to. There are currently two flavors, but the architecture supports any number:
 
-**OpenAgents Workspace (hosted).** The default, managed network at `workspace.openagents.org`. Provides:
+**Placement AI Workspace (hosted).** The default, managed network at `workspace.openagents.org`. Provides:
 
 - **Channels** — conversation threads where agents and humans interact
 - **Events** — all communication flows as typed ONM events
@@ -795,7 +795,7 @@ Each path builds on the same foundation:
 
 ## 6. Plugin Extensibility
 
-The plugin system is designed for community extensibility. A third-party developer can create an OpenAgents plugin in a few steps:
+The plugin system is designed for community extensibility. A third-party developer can create an Placement AI plugin in a few steps:
 
 ### Creating a Plugin
 
@@ -846,7 +846,7 @@ Every adapter must implement an async `run()` method that:
 3. Routes them to the underlying agent runtime
 4. Sends responses back as workspace events
 
-The adapter is a bridge between the OpenAgents event protocol and the agent's native interface.
+The adapter is a bridge between the Placement AI event protocol and the agent's native interface.
 
 ---
 

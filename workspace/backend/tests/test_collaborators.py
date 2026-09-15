@@ -1,32 +1,19 @@
 # -*- coding: utf-8 -*-
 """
-Tests for email-based workspace sharing (collaborators).
+Tests for the legacy email-based collaborator ACL.
 
-Covers:
-  - CRUD: add, list, remove collaborators
-  - Upsert: adding same email updates role
-  - Owner rejection: can't add workspace owner as collaborator
-  - Email normalization: emails are lowercased
-  - Invalid role rejection
-  - Auth required: endpoints reject unauthenticated requests
-  - Auth via collaborator email: bearer token with collaborator email grants access
+Placement AI v2.0 removed the product-facing "add/list/remove collaborators"
+endpoints (a student's workspace is private, with no invite path) — see
+app/routers/workspaces.py. What's left here:
+
+  - The `WorkspaceCollaborator` row and its bearer-based access fallback still
+    work (access.py's `resolve_user_role` legacy path), for self-hosted/
+    machine deployments that still rely on it.
+  - `POST /{workspace_id}/presence` — the still-active "register my own
+    presence" endpoint used by the mention picker / push targeting — kept.
 """
 
-import pytest
 from unittest.mock import patch
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _create_workspace(client, name="Test WS", agent_name="agent-alpha", creator_email=None):
-    body = {"name": name, "agent_name": agent_name}
-    if creator_email:
-        body["creator_email"] = creator_email
-    resp = client.post("/v1/workspaces", json=body)
-    assert resp.status_code == 200
-    return resp.json()["data"]
 
 
 def _mock_firebase(email):
@@ -39,198 +26,40 @@ def _mock_firebase(email):
     return patch("app.firebase_auth.verify_supabase_claims", return_value=claims)
 
 
-# ===========================================================================
-# Collaborator CRUD endpoints
-# ===========================================================================
+class TestCollaboratorLegacyAccess:
+    """The WorkspaceCollaborator row is no longer product-addable, but a row
+    that already exists (self-hosted/legacy data) must still grant access —
+    this is access.py's fallback path in `resolve_user_role`."""
 
-class TestCollaboratorEndpoints:
+    def test_collaborator_bearer_grants_access(self, client, db, workspace):
+        from app.models import WorkspaceCollaborator
+        db.add(WorkspaceCollaborator(workspace_id=workspace["id"], email="collab@example.com", role="editor"))
+        db.commit()
 
-    def test_add_and_list(self, client, workspace):
-        """Add a collaborator, then list — it should appear."""
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "alice@example.com", "role": "editor"},
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["email"] == "alice@example.com"
-        assert data["role"] == "editor"
-
-        # List
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["owner"] == "test@example.com"
-        assert len(data["collaborators"]) == 1
-        assert data["collaborators"][0]["email"] == "alice@example.com"
-
-    def test_add_multiple(self, client, workspace):
-        """Add multiple collaborators."""
-        for email in ["alice@example.com", "bob@example.com", "carol@example.com"]:
-            resp = client.post(
-                f"/v1/workspaces/{workspace['id']}/collaborators",
-                json={"email": email},
-                headers={"X-Workspace-Token": workspace["token"]},
-            )
-            assert resp.status_code == 200
-
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        emails = [c["email"] for c in resp.json()["data"]["collaborators"]]
-        assert set(emails) == {"alice@example.com", "bob@example.com", "carol@example.com"}
-
-    def test_upsert_updates_role(self, client, workspace):
-        """Adding same email again updates the role."""
-        headers = {"X-Workspace-Token": workspace["token"]}
-
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "alice@example.com", "role": "editor"},
-            headers=headers,
-        )
-
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "alice@example.com", "role": "viewer"},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["role"] == "viewer"
-
-        # List should have exactly 1 entry
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers=headers,
-        )
-        assert len(resp.json()["data"]["collaborators"]) == 1
-
-    def test_reject_owner_email(self, client, workspace):
-        """Can't add the workspace owner as a collaborator."""
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "test@example.com"},
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        assert resp.json()["code"] == 409  # CONFLICT
-
-    def test_email_normalized(self, client, workspace):
-        """Emails are normalized to lowercase."""
-        headers = {"X-Workspace-Token": workspace["token"]}
-
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "Alice@Example.COM"},
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["email"] == "alice@example.com"
-
-    def test_invalid_email(self, client, workspace):
-        """Reject emails without @."""
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "notanemail"},
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        assert resp.json()["code"] == 400  # BAD_REQUEST
-
-    def test_remove_collaborator(self, client, workspace):
-        """Remove a collaborator."""
-        headers = {"X-Workspace-Token": workspace["token"]}
-
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "alice@example.com"},
-            headers=headers,
-        )
-
-        resp = client.delete(
-            f"/v1/workspaces/{workspace['id']}/collaborators/alice@example.com",
-            headers=headers,
-        )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["removed"] is True
-
-        # Verify gone
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers=headers,
-        )
-        assert len(resp.json()["data"]["collaborators"]) == 0
-
-    def test_remove_nonexistent(self, client, workspace):
-        """Removing a non-existent collaborator returns 404."""
-        resp = client.delete(
-            f"/v1/workspaces/{workspace['id']}/collaborators/nobody@example.com",
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        assert resp.json()["code"] == 404
-
-    def test_auth_required(self, client, workspace):
-        """Endpoints reject unauthenticated requests."""
-        resp = client.get(f"/v1/workspaces/{workspace['id']}/collaborators")
-        assert resp.json()["code"] == 401
-
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "x@y.com"},
-        )
-        assert resp.json()["code"] == 401
-
-
-# ===========================================================================
-# Auth via collaborator email
-# ===========================================================================
-
-class TestCollaboratorAuth:
-
-    def test_collaborator_bearer_grants_access(self, client, workspace):
-        """A Firebase bearer token matching a collaborator email grants workspace access."""
-        headers = {"X-Workspace-Token": workspace["token"]}
-
-        # Add collaborator
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "collab@example.com"},
-            headers=headers,
-        )
-
-        # Collab accesses workspace via bearer
         with _mock_firebase("collab@example.com"):
             resp = client.get(
-                f"/v1/workspaces/{workspace['id']}/collaborators",
+                f"/v1/workspaces/{workspace['id']}",
                 headers={"Authorization": "Bearer fake-token"},
             )
             assert resp.status_code == 200
             assert resp.json()["code"] == 0
 
     def test_non_collaborator_bearer_rejected(self, client, workspace):
-        """A bearer token for an email not in collaborators is rejected."""
         with _mock_firebase("stranger@example.com"):
             resp = client.get(
-                f"/v1/workspaces/{workspace['id']}/collaborators",
+                f"/v1/workspaces/{workspace['id']}",
                 headers={"Authorization": "Bearer fake-token"},
             )
-            assert resp.json()["code"] == 401
+            # A valid-but-unrecognized identity is 403 (not a member); only a
+            # missing/invalid bearer is 401 — see _workspace_access_denied.
+            assert resp.json()["code"] == 403
 
-    def test_collaborator_can_send_event(self, client, workspace):
-        """A collaborator can send events (messages) via the event pipeline."""
-        headers = {"X-Workspace-Token": workspace["token"]}
+    def test_collaborator_can_send_event(self, client, db, workspace):
+        """A legacy collaborator can still send events via the pipeline."""
+        from app.models import WorkspaceCollaborator
+        db.add(WorkspaceCollaborator(workspace_id=workspace["id"], email="collab@example.com", role="editor"))
+        db.commit()
 
-        # Add collaborator
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "collab@example.com"},
-            headers=headers,
-        )
-
-        # Collab sends a message via bearer
         with _mock_firebase("collab@example.com"):
             resp = client.post(
                 "/v1/events",
@@ -247,13 +76,7 @@ class TestCollaboratorAuth:
             assert resp.json()["code"] == 0
 
 
-# ===========================================================================
-# Profile enrichment — the picture and name come from the account, not from
-# whatever the collaborator row was created with.
-# ===========================================================================
-
-class TestCollaboratorProfiles:
-
+class TestPresencePing:
     AVATAR = "data:image/png;base64,iVBORw0KGgo="
 
     def _account(self, db, email, display_name=None, avatar_url=None):
@@ -262,58 +85,6 @@ class TestCollaboratorProfiles:
         db.add(user)
         db.commit()
         return user
-
-    def test_list_carries_the_account_avatar(self, client, db, workspace):
-        self._account(db, "alice@example.com", "Alice Liddell", self.AVATAR)
-        headers = {"X-Workspace-Token": workspace["token"]}
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "alice@example.com"},
-            headers=headers,
-        )
-
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers=headers,
-        )
-        row = next(
-            c for c in resp.json()["data"]["collaborators"]
-            if c["email"] == "alice@example.com"
-        )
-        assert row["avatarUrl"] == self.AVATAR
-        # The account's own name wins over the collaborator row's snapshot.
-        assert row["displayName"] == "Alice Liddell"
-
-    def test_collaborator_without_an_account_still_lists(self, client, workspace):
-        """Invited but never signed in: a null picture, not a 500."""
-        headers = {"X-Workspace-Token": workspace["token"]}
-        client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "ghost@example.com"},
-            headers=headers,
-        )
-
-        resp = client.get(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            headers=headers,
-        )
-        row = next(
-            c for c in resp.json()["data"]["collaborators"]
-            if c["email"] == "ghost@example.com"
-        )
-        assert row["avatarUrl"] is None
-
-    def test_add_returns_the_same_enriched_shape(self, client, db, workspace):
-        """The POST response feeds the list straight away — it must match."""
-        self._account(db, "bob@example.com", "Bob", self.AVATAR)
-        resp = client.post(
-            f"/v1/workspaces/{workspace['id']}/collaborators",
-            json={"email": "bob@example.com"},
-            headers={"X-Workspace-Token": workspace["token"]},
-        )
-        data = resp.json()["data"]
-        assert data["avatarUrl"] == self.AVATAR
-        assert data["displayName"] == "Bob"
 
     def test_presence_ping_returns_the_avatar(self, client, db, workspace):
         """Self-registration on workspace open is where most rows come from."""
@@ -327,3 +98,19 @@ class TestCollaboratorProfiles:
         # Matched case-insensitively: the collaborator row is lowercased on
         # write, the account row is not guaranteed to be.
         assert data["avatarUrl"] == self.AVATAR
+
+    def test_presence_ping_ignores_a_spoofed_email_when_bearer_present(self, client, db, workspace):
+        """A verified bearer identity always wins over the request body — a
+        signed-in student can only ever register their OWN presence."""
+        self._account(db, "real@example.com", "Real Person")
+        with _mock_firebase("real@example.com"):
+            resp = client.post(
+                f"/v1/workspaces/{workspace['id']}/presence",
+                json={"senderEmail": "someone-else@example.com"},
+                headers={
+                    "X-Workspace-Token": workspace["token"],
+                    "Authorization": "Bearer fake-token",
+                },
+            )
+        assert resp.status_code == 200
+        assert resp.json()["data"]["email"] == "real@example.com"

@@ -194,7 +194,7 @@ class WorkspaceApi {
 
   async listIntegrations(): Promise<{
     integrations: IntegrationBinding[];
-    /** True when this deployment has the official OpenAgents Slack app,
+    /** True when this deployment has the official Placement AI Slack app,
      * enabling one-click "Add to Slack" instead of bring-your-own-app. */
     slackAppConfigured: boolean;
   }> {

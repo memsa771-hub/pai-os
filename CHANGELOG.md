@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the OpenAgents project will be documented in this file.
+All notable changes to the Placement AI project will be documented in this file.
 
 ## [Unreleased]
 

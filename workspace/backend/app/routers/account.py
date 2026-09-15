@@ -11,11 +11,11 @@ the app. Auth is the user's identity bearer token (Authorization: Bearer <id>)
 touched, so it can't be scoped to a single workspace's token.
 
 Scope of deletion: the user is identified only by email (the app has no
-app-managed credential; identity is delegated to Google / Apple). We purge every
-row keyed to that email — workspace collaborator memberships, channel human
-memberships, and registered device push tokens — across all workspaces. We do
-NOT delete whole workspaces the user created, since those may hold other
-collaborators' data; their `creator_email` is left intact.
+app-managed credential; identity is delegated to Google / Apple / Supabase).
+Placement AI v2.0: the user's own personal workspace (`owner_user_id`) is
+private to them, so it is soft-deleted along with every other email-keyed
+row — collaborator memberships, channel human memberships, and registered
+device push tokens — across any workspace they touched.
 """
 
 import logging
@@ -26,15 +26,15 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import provision_workspace, reconcile_memberships, resolve_current_user
+from app.access import get_or_create_owned_workspace, resolve_current_user
 from app.database import get_db
 from app.firebase_auth import verify_identity_token
 from app.models import (
     ChannelHumanMember,
     DeviceToken,
+    User,
     Workspace,
     WorkspaceCollaborator,
-    WorkspaceMembership,
 )
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _extract_bearer
@@ -54,22 +54,63 @@ def _authed_email(authorization: Optional[str]) -> Optional[str]:
     return email.strip().lower() if email else None
 
 
+def _canonical_workspace_row(ws: Workspace) -> dict:
+    return {
+        "workspaceId": str(ws.id),
+        "name": ws.name,
+        "slug": ws.slug,
+        # The workspace's machine/access token. Exposed here — but ONLY here,
+        # to the verified owner of this exact workspace — because the
+        # realtime event stream (EventSource can't send custom headers) still
+        # authenticates by this token in the URL; see app/routers/events.py.
+        # There is no invite/share/add-collaborator path in the Placement AI
+        # product, so this token can never reach anyone but its own owner.
+        "token": ws.password_hash,
+        "lastActivityAt": ws.last_activity_at.isoformat() if ws.last_activity_at else None,
+    }
+
+
+@router.get("/account/workspace")
+def get_account_workspace(
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+):
+    """The signed-in student's one canonical personal workspace.
+
+    Placement AI v2.0: a user account has exactly one active workspace,
+    identified by `workspaces.owner_user_id`. Creates it — with PAI Counselor
+    and the canonical welcome conversation — the first time this is called for
+    a given user; every call after that returns the same workspace.
+    Concurrency-safe (see `app.access.get_or_create_owned_workspace`): two
+    simultaneous first logins (two tabs, web + desktop) can never create two
+    workspaces for the same user.
+    """
+    user = resolve_current_user(db, authorization)
+    if not user:
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
+
+    if not user.username:
+        db.commit()
+        return json_response(ResponseCode.FORBIDDEN, "Username setup required")
+
+    workspace = get_or_create_owned_workspace(db, user)
+    db.commit()
+    db.refresh(workspace)
+
+    return success_response(_canonical_workspace_row(workspace))
+
+
 @router.get("/account/workspaces")
 def list_account_workspaces(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ):
-    """List the signed-in user's workspaces — the Membership Home (v1.0).
+    """DEPRECATED (v1.0 Membership Home) — use GET /v1/account/workspace.
 
-    Side effects (idempotent): resolves/creates the User row for the verified
-    identity, reconciles any pre-v1.0 email-keyed access (creator_email +
-    collaborator rows) into first-class WorkspaceMembership rows, and — for a
-    brand-new user with no memberships — auto-provisions an empty workspace they
-    own (Overleaf-style first run). This is why a GET writes.
-
-    Each entry includes the workspace's shared access token (`token`) so the
-    client can connect directly; the caller is a verified member, which is
-    exactly who is entitled to that token.
+    A Placement AI account now has exactly one workspace; this always returns
+    a single-element array wrapping it (see `get_account_workspace`), kept for
+    any client not yet updated to the singular endpoint. New code should not
+    call this.
     """
     user = resolve_current_user(db, authorization)
     if not user:
@@ -82,48 +123,11 @@ def list_account_workspaces(
         db.commit()
         return json_response(ResponseCode.FORBIDDEN, "Username setup required")
 
-    # Migration bridge: pull legacy email-keyed access into memberships.
-    reconcile_memberships(db, user)
-
-    # Brand-new user (no access anywhere) → give them an empty workspace to own.
-    has_membership = db.execute(
-        select(WorkspaceMembership.workspace_id)
-        .where(WorkspaceMembership.user_id == user.id)
-        .limit(1)
-    ).first()
-    if not has_membership:
-        provision_workspace(db, user)
-
+    workspace = get_or_create_owned_workspace(db, user)
     db.commit()
+    db.refresh(workspace)
 
-    rows = db.execute(
-        select(Workspace, WorkspaceMembership.role)
-        .join(WorkspaceMembership, WorkspaceMembership.workspace_id == Workspace.id)
-        .where(
-            WorkspaceMembership.user_id == user.id,
-            Workspace.status != "deleted",
-        )
-        .order_by(Workspace.last_activity_at.desc())
-    ).all()
-
-    results = [
-        {
-            "workspaceId": str(ws.id),
-            "name": ws.name,
-            "slug": ws.slug,
-            # Shared workspace access token (password_hash stores the raw token,
-            # compared by equality in app.access.verify_workspace_access). May be
-            # null for an open workspace with no token set. Withheld from viewers
-            # so they open the workspace bearer-only (read access) and can't use
-            # the token to bypass the read-only role.
-            "token": None if role == "viewer" else ws.password_hash,
-            "role": role,
-            "lastActivityAt": ws.last_activity_at.isoformat() if ws.last_activity_at else None,
-        }
-        for ws, role in rows
-    ]
-
-    return success_response(results)
+    return success_response([{**_canonical_workspace_row(workspace), "role": "owner"}])
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +218,16 @@ def delete_account(
 ):
     """Delete all data belonging to the calling user.
 
-    Identifies the user from the verified identity token's email, then removes
-    every email-keyed row across all workspaces. Idempotent: a second call (or a
-    user with no stored data) succeeds with zero deletions.
+    Identifies the user from the verified identity token's email. Placement AI
+    v2.0: the user's own personal workspace (`owner_user_id`) is private to
+    them — unlike the old multi-collaborator model, there is no one else who
+    could be relying on it — so it is soft-deleted (`status = "deleted"`) here
+    rather than left behind as orphaned, inaccessible-but-present data. Also
+    removes every email-keyed row from workspaces the user merely
+    collaborated in (legacy/self-hosted multi-user workspaces, not their own).
+    Idempotent: a second call (or a user with no stored data) succeeds with
+    zero deletions. Does not delete the Supabase auth record or the local
+    `users` row itself — only this app's data.
     """
     bearer = _extract_bearer(authorization)
     if not bearer:
@@ -227,6 +238,19 @@ def delete_account(
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
 
     email_lower = email.strip().lower()
+
+    owned_workspace_deleted = 0
+    user = db.execute(select(User).where(User.email == email_lower)).scalar_one_or_none()
+    if user is not None:
+        owned = db.execute(
+            select(Workspace).where(
+                Workspace.owner_user_id == user.id,
+                Workspace.status == "active",
+            )
+        ).scalars().all()
+        for ws in owned:
+            ws.status = "deleted"
+            owned_workspace_deleted += 1
 
     collaborators_deleted = db.query(WorkspaceCollaborator).filter(
         WorkspaceCollaborator.email == email_lower
@@ -243,13 +267,14 @@ def delete_account(
     db.commit()
 
     logger.info(
-        "account: deleted account for %s (collaborators=%s channel_members=%s devices=%s)",
-        email_lower, collaborators_deleted, channel_memberships_deleted, devices_deleted,
+        "account: deleted account for %s (owned_workspace=%s collaborators=%s channel_members=%s devices=%s)",
+        email_lower, owned_workspace_deleted, collaborators_deleted, channel_memberships_deleted, devices_deleted,
     )
 
     return success_response({
         "email": email_lower,
         "deleted": {
+            "ownedWorkspace": owned_workspace_deleted,
             "collaborators": collaborators_deleted,
             "channel_memberships": channel_memberships_deleted,
             "devices": devices_deleted,

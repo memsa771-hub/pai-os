@@ -15,6 +15,15 @@ export default defineConfig({
     environment: 'jsdom',
     globals: true,
     setupFiles: ['./src/renderer/test/setup.ts'],
-    include: ['src/**/*.{test,spec}.{ts,tsx}']
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    // src/main/auth/supabase.ts reads process.env.SUPABASE_URL/ANON_KEY directly
+    // (baked in at build time by electron.vite.config.ts's `define` in the real
+    // app). Vitest never runs that build step, so without these the module falls
+    // back to "" and every auth test breaks with "Invalid URL" — these are
+    // dummy, test-only values, unrelated to any real Supabase project.
+    env: {
+      SUPABASE_URL: 'https://test-project.supabase.co',
+      SUPABASE_ANON_KEY: 'test-anon-key'
+    }
   }
 })

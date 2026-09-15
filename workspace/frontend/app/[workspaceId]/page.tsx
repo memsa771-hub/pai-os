@@ -16,17 +16,17 @@ function WorkspaceLoadingSplash() {
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-5">
         <img
-          src="/logo-icon.png"
-          alt="OpenAgents"
+          src="/pai-emblem.png"
+          alt="Placement AI"
           className="size-16 animate-[pulse_2s_ease-in-out_infinite] dark:hidden"
         />
         <img
-          src="/logo-white.png"
-          alt="OpenAgents"
+          src="/pai-emblem.png"
+          alt="Placement AI"
           className="size-16 animate-[pulse_2s_ease-in-out_infinite] hidden dark:block"
         />
         <div className="text-center">
-          <h1 className="text-xl font-semibold tracking-tight">OpenAgents</h1>
+          <h1 className="text-xl font-semibold tracking-tight">Placement AI</h1>
           <p className="text-sm text-muted-foreground mt-0.5">{t('workspaceGate.workspace')}</p>
         </div>
       </div>
@@ -65,9 +65,12 @@ function IdentityGate({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * Open a workspace by id/slug with no token in the URL: look the workspace token
- * up from the signed-in user's account (Membership Home data) and use it, plus
- * the bearer. Falls back to bearer-only if the token can't be resolved.
+ * Open a workspace by id/slug with no token in the URL. Placement AI v2.0: a
+ * signed-in student has exactly one canonical workspace — resolve it (same
+ * `GET /v1/account/workspace` call that provisions it on first login) and
+ * use its token, plus the bearer. If the URL's id/slug doesn't match the
+ * caller's own canonical workspace, that's access denied: there is no
+ * picker and no way to reach another workspace by guessing its slug.
  */
 type BearerState =
   | { kind: 'loading' }
@@ -86,20 +89,20 @@ function BearerWorkspace({ workspaceId, idToken }: { workspaceId: string; idToke
     setState({ kind: 'loading' });
     (async () => {
       try {
-        const { listAccountWorkspaces } = await import('@/lib/account-api');
-        const wss = await listAccountWorkspaces(idToken);
+        const { getAccountWorkspace } = await import('@/lib/account-api');
+        const ws = await getAccountWorkspace(idToken);
         if (cancelled) return;
-        const match = wss.find((w) => w.slug === workspaceId || w.workspaceId === workspaceId);
-        if (match?.token) {
-          setWorkspaceCookie(match.slug || workspaceId, match.token);
-          setState({ kind: 'ok', token: match.token });
+        if ((ws.slug === workspaceId || ws.workspaceId === workspaceId) && ws.token) {
+          setWorkspaceCookie(ws.slug || workspaceId, ws.token);
+          setState({ kind: 'ok', token: ws.token });
           return;
         }
-        // Not one of the user's workspaces. Previously we rendered the full
-        // workspace shell with an empty token — every API call then failed
-        // silently and a nonexistent slug looked like a working (empty)
-        // workspace. Probe existence so a typo'd link and a membership gap
-        // get distinct, explicit error screens instead.
+        // The URL doesn't point at this student's own canonical workspace.
+        // Previously we rendered the full workspace shell with an empty
+        // token — every API call then failed silently and a nonexistent
+        // slug looked like a working (empty) workspace. Probe existence so
+        // a typo'd link and "this isn't your workspace" get distinct,
+        // explicit error screens instead.
         const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
         const res = await fetch(`${apiUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}`, { cache: 'no-store' });
         if (cancelled) return;

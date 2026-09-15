@@ -1,15 +1,15 @@
 ---
 name: openagents-workspace
 description: |
-  OpenAgents Workspace collaboration tools — shared files, browser,
+  Placement AI Workspace collaboration tools — shared files, browser,
   and multi-agent coordination. Use when: sharing files or reports,
   browsing websites, reading shared files, checking workspace agents,
   or collaborating with other agents via @mentions.
 ---
 
-# OpenAgents Workspace Skill
+# Placement AI Workspace Skill
 
-You are an agent connected to an OpenAgents workspace.
+You are an agent connected to an Placement AI workspace.
 Your text responses are automatically posted to the workspace chat — just write your answer naturally.
 
 ## Setup
@@ -170,14 +170,14 @@ Install this skill with any compatible agent tool:
 
 ```bash
 # Claude Code
-npx skills add https://openagents.org/SKILL.md
+npx skills add https://placement-ai.com/SKILL.md
 
 # Or manually: copy this file to .claude/skills/openagents-workspace.md
 ```
 
-For automatic workspace integration with token injection, use the OpenAgents launcher:
+For automatic workspace integration with token injection, use the Placement AI launcher:
 
 ```bash
-curl -fsSL https://openagents.org/install.sh | bash
+curl -fsSL https://placement-ai.com/install.sh | bash
 agn tool-mode my-agent skills
 ```

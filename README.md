@@ -1,18 +1,16 @@
 <div align="center">
 
-![OpenAgents Workspace — One workspace. All your agents work together.](docs/assets/images/workspace_cover.jpg)
+![Placement AI Workspace — One workspace. All your agents work together.](docs/assets/images/workspace_cover.jpg)
 
-**OpenAgents Workspace** — The Collaborative OS for Agents.
+**Placement AI Workspace** — The Collaborative OS for Agents.
 
 One workspace where all your AI agents collaborate. Open source. No account required.
 
 [![npm](https://img.shields.io/npm/v/@openagents-org/agent-launcher.svg)](https://www.npmjs.com/package/@openagents-org/agent-launcher)
 [![PyPI](https://img.shields.io/pypi/v/openagents.svg)](https://pypi.org/project/openagents/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865f2?logo=discord&logoColor=white)](https://discord.gg/openagents)
-[![Twitter](https://img.shields.io/badge/Twitter-Follow-1da1f2?logo=x&logoColor=white)](https://twitter.com/OpenAgentsAI)
 
-[⭐ **Open my workspace**](https://openagents.org/api/create-workspace) · [workspace landing page](https://openagents.org/workspace) · [Setup Tutorial](https://openagents.org/docs)
+[⭐ **Open my workspace**](https://placement-ai.com/api/create-workspace) · [workspace landing page](https://placement-ai.com/workspace) · [Setup Tutorial](https://placement-ai.com/docs)
 
 </div>
 
@@ -32,10 +30,10 @@ One workspace where all your AI agents collaborate. Open source. No account requ
 
 ```bash
 # macOS / Linux
-curl -fsSL https://openagents.org/install.sh | bash
+curl -fsSL https://placement-ai.com/install.sh | bash
 
 # Windows (PowerShell)
-irm https://openagents.org/install.ps1 | iex
+irm https://placement-ai.com/install.ps1 | iex
 ```
 
 Then run the launcher (`agn`) to open the interactive dashboard for managing AI coding agents. 
@@ -53,20 +51,20 @@ agn                                         # open the dashboard
 
 **Desktop App** — or download the launcher directly:
 
-[⬇ macOS](https://openagents.org/api/download/launcher/mac) · [⬇ Windows](https://openagents.org/api/download/launcher/windows) · [⬇ Linux](https://openagents.org/api/download/launcher/linux-appimage) · [All releases](https://github.com/openagents-org/openagents/releases)
+[⬇ macOS](https://placement-ai.com/api/download/launcher/mac) · [⬇ Windows](https://placement-ai.com/api/download/launcher/windows) · [⬇ Linux](https://placement-ai.com/api/download/launcher/linux-appimage) · [All releases](https://github.com/openagents-org/openagents/releases)
 
 ---
 
-## Introducing OpenAgents Workspace
-📖[Detailed guidance of connecting local and cloud agents into OpenAgents Workspace](https://github.com/openagents-org/openagents/discussions/519)
+## Introducing Placement AI Workspace
+📖[Detailed guidance of connecting local and cloud agents into Placement AI Workspace](https://github.com/openagents-org/openagents/discussions/519)
 
-[Detailed Demonstration of 7 Common Functions in OpenAgents Workspace](https://github.com/openagents-org/openagents/discussions/521)
+[Detailed Demonstration of 7 Common Functions in Placement AI Workspace](https://github.com/openagents-org/openagents/discussions/521)
 
 Your agents are everywhere. One maintains your database on a server. Another manages your marketing and replies to users on Discord. A few more are building different projects in separate terminals, on separate machines. You have no single place to see them all, and no way to make them work together.
 
 When a user reports a bug, you want your marketing-bot to gather details from that user, then bring your infra agent into the same conversation to debug the logs. Today, you'd have to copy-paste between terminals, SSH into different machines, and stitch context together manually.
 
-**OpenAgents Workspace** solves this with two ideas:
+**Placement AI Workspace** solves this with two ideas:
 
 1. **A unified workspace** for all your agents. One URL where every agent shows up, no matter where it runs. Manage them, talk to them, and see what they're doing from your browser or phone.
 2. **Easy collaboration** between agents. Pull any agent into a conversation thread. They share the same files, the same browser, and the same context. No glue code, no copy-pasting between terminals.
@@ -151,7 +149,7 @@ agn connect my-aider <workspace-token>              # connect Aider into a works
 > **Install detection.** The official installer (`aider.chat/install.{sh,ps1}`)
 > uses `uv tool install`, which places `aider` in `$XDG_BIN_HOME` →
 > `$XDG_DATA_HOME/../bin` → `~/.local/bin` (and always in the uv tools venv).
-> OpenAgents looks in all of these, so a fresh install is detected even when its
+> Placement AI looks in all of these, so a fresh install is detected even when its
 > directory isn't on this process's `PATH` yet. If install reports *"the Aider
 > CLI could not be located"*, the underlying `uv` step usually failed to fetch a
 > Python runtime (restricted network/proxy) — open a new terminal and check
@@ -217,7 +215,7 @@ Rules:
   agent does **not** validate the key; a wrong key (or undeterminable provider)
   surfaces as a clear error on the **first workspace message**.
 
-**File changes & Git — important.** Aider auto-commits by default; OpenAgents
+**File changes & Git — important.** Aider auto-commits by default; Placement AI
 does **not**. The adapter runs Aider with `--no-auto-commits --no-dirty-commits`
 so it edits your working-tree files but never creates commits and never commits
 your pre-existing changes. It also passes `--no-gitignore` (your tracked
@@ -252,7 +250,7 @@ schema, `--no-profile` semantics, and `--resume`/error behavior). Older CLIs are
 before a task runs with a clear upgrade prompt; the version is read once via
 `goose --version` (an undeterminable version is allowed, not blocked).
 
-**Install the CLI** (the OpenAgents installer does this for you, non-interactively):
+**Install the CLI** (the Placement AI installer does this for you, non-interactively):
 
 ```bash
 # macOS / Linux — CONFIGURE=false keeps it non-interactive (no `goose configure`)
@@ -278,13 +276,13 @@ Configure dialog, or `agn env goose --set …`). They map 1:1 to Goose's native 
 
 **Existing login is reused.** Leave the fields blank to fall back to your existing Goose
 config (`~/.config/goose/config.yaml`), keyring, OAuth provider, or local provider
-(e.g. Ollama). OpenAgents never edits your global `config.yaml`/`secrets.yaml`, never
+(e.g. Ollama). Placement AI never edits your global `config.yaml`/`secrets.yaml`, never
 writes plaintext secrets, and never runs `goose configure`. A missing/invalid provider
 or model surfaces as a clear error on the **first task** (install/create success does not
 imply a working provider).
 
 **Project directory** — each agent runs `goose run` with your configured project
-directory as its working directory; all file changes land there. Sessions and OpenAgents
+directory as its working directory; all file changes land there. Sessions and Placement AI
 state are stored under `~/.openagents`, never in your repo. Goose's built-in `developer`
 extension does not auto-commit, stash, or reset your Git changes.
 
@@ -317,7 +315,7 @@ override `GOOSE_MAX_TURNS`) and `--max-tool-repetitions` (default 12,
 **Troubleshooting**
 - *Authentication failed* — check `GOOSE_PROVIDER__API_KEY` / `GOOSE_PROVIDER__HOST`.
 - *No usable provider / model* — set `GOOSE_PROVIDER` + `GOOSE_MODEL`, or run
-  `goose configure` once outside OpenAgents.
+  `goose configure` once outside Placement AI.
 - *"Goose ran but produced no response"* — usually means no provider/model is configured.
 - *CLI not found after install* — ensure `~/.local/bin` is on PATH; the agent shows
   `cli-missing` when the binary isn't present.
@@ -351,9 +349,9 @@ when creating an agent and paste the key in the configuration step.
 
 ---
 
-## All OpenAgents Projects
+## All Placement AI Projects
 
-OpenAgents started as a Python SDK for multi-agent networking and has grown into a full platform: a **Workspace** for real-time human-agent collaboration, a **Launcher** for managing agents across platforms, and a **Network SDK** for developers building custom agent systems.
+Placement AI is built on the OpenAgents Network SDK and has grown into a full platform: a **Workspace** for real-time human-agent collaboration, a **Launcher** for managing agents across platforms, and a **Network SDK** for developers building custom agent systems.
 
 <table>
 <tr>
@@ -368,7 +366,7 @@ The browser-based collaboration layer. Humans and agents share threads, files, a
 - Invite teammates via link
 - No install needed to view
 
-**[Open a Workspace →](https://openagents.org/workspace)**
+**[Open a Workspace →](https://placement-ai.com/workspace)**
 
 </td>
 <td width="33%" valign="top">
@@ -382,7 +380,7 @@ The agent management layer. Install any coding agent, configure credentials, and
 - Cross-platform (macOS, Linux, Windows)
 - Desktop app or CLI
 
-**[Get the Launcher →](https://openagents.org/launcher)**
+**[Get the Launcher →](https://placement-ai.com/launcher)**
 
 </td>
 <td width="33%" valign="top">
@@ -396,7 +394,7 @@ The extensibility layer. Build agents that join the network, respond to events, 
 - MCP and A2A protocol support
 - Self-host your own networks
 
-**[Read the Docs →](https://openagents.org/docs/getting-started/overview)**
+**[Read the Docs →](https://placement-ai.com/docs/getting-started/overview)**
 
 </td>
 </tr>
@@ -406,7 +404,7 @@ The extensibility layer. Build agents that join the network, respond to events, 
 
 ## Community
 
-OpenAgents is built by a growing community of developers and researchers working on the future of agent collaboration.
+Placement AI is built on the OpenAgents Network SDK, whose community of developers and researchers continues to work on the future of agent collaboration.
 
 <div align="center">
 
@@ -442,7 +440,7 @@ OpenAgents is built by a growing community of developers and researchers working
 
 ### Contributing
 
-We welcome contributions! See [issues](https://github.com/openagents-org/openagents/issues/new/choose) for bug reports and feature requests. Join [Discord](https://discord.gg/openagents) to discuss ideas.
+Contributions to the underlying OpenAgents SDK are welcome upstream! See [issues](https://github.com/openagents-org/openagents/issues/new/choose) for bug reports and feature requests. Join [Discord](https://discord.gg/openagents) to discuss ideas.
 
 <div align="center">
 
@@ -456,7 +454,7 @@ We welcome contributions! See [issues](https://github.com/openagents-org/openage
 
 <div align="center">
 
-**[Get Started](#get-started)** · **[Docs](https://openagents.org/docs/getting-started/overview)** · **[Showcase](https://openagents.org/showcase)** · **[Discord](https://discord.gg/openagents)**
+**[Get Started](#get-started)** · **[Docs](https://placement-ai.com/docs/getting-started/overview)** · **[Showcase](https://placement-ai.com/showcase)** · **[Discord](https://discord.gg/openagents)**
 
 </div>
 

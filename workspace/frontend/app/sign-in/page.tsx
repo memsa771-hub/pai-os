@@ -56,7 +56,7 @@ export default function SignInPage() {
     <div className="flex min-h-screen items-center justify-center p-8">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <Image src="/logo-icon.png" alt="OpenAgents" width={40} height={40} />
+          <Image src="/pai-emblem.png" alt="Placement AI" width={40} height={40} />
           <h1 className="text-xl font-semibold tracking-tight">Sign in</h1>
         </div>
 

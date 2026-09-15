@@ -16,7 +16,9 @@ vi.mock("electron", () => ({ net: {} }))
  * included, with fetch standing in for the browser and for Supabase.
  */
 
-const SUPABASE_URL = "https://qhrzlmfzdeulhdzpadtn.supabase.co"
+// Must match vitest.config.ts's test.env.SUPABASE_URL — dummy, test-only,
+// not a real project.
+const SUPABASE_URL = "https://test-project.supabase.co"
 const API_BASE = "https://workspace-endpoint.openagents.org"
 
 let stored: AccountSession | null = null

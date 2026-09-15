@@ -120,7 +120,7 @@ export default function SignUpPage() {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
         <div className="w-full max-w-sm text-center">
-          <Image src="/logo-icon.png" alt="OpenAgents" width={40} height={40} className="mx-auto mb-4" />
+          <Image src="/pai-emblem.png" alt="Placement AI" width={40} height={40} className="mx-auto mb-4" />
           <h1 className="text-xl font-semibold tracking-tight">Check your email</h1>
           <p className="mt-2 text-sm text-muted-foreground">
             We sent a confirmation link to {email.trim()}. Click it to finish creating your account.
@@ -152,7 +152,7 @@ export default function SignUpPage() {
     <div className="flex min-h-screen items-center justify-center p-8">
       <div className="w-full max-w-sm">
         <div className="mb-6 flex flex-col items-center gap-3 text-center">
-          <Image src="/logo-icon.png" alt="OpenAgents" width={40} height={40} />
+          <Image src="/pai-emblem.png" alt="Placement AI" width={40} height={40} />
           <h1 className="text-xl font-semibold tracking-tight">Create account</h1>
         </div>
 

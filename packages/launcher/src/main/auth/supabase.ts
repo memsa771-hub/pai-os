@@ -12,12 +12,14 @@
 import crypto from "crypto"
 import { authFetch } from "./http"
 
-// TODO(deploy): move these public values to environment-backed configuration.
-// yet per the current plan). Both public/publishable — never a secret here.
-// Must match workspace/frontend/lib/supabase-auth.ts and workspace/backend's
-// SUPABASE_URL exactly (same project).
-const SUPABASE_URL = "https://qhrzlmfzdeulhdzpadtn.supabase.co"
-const SUPABASE_ANON_KEY = "sb_publishable_W_ITKg52Rr3G0eeoi4wPLQ_AdSTiKPD"
+// Baked in at build time from workspace/.env (see electron.vite.config.ts's
+// `define` block) — both public/publishable, never a secret here, but no
+// longer duplicated as a literal in source. Must match
+// workspace/frontend/lib/supabase-auth.ts and workspace/backend's
+// SUPABASE_URL exactly (same project) — all three now read the same
+// workspace/.env, so they can't drift.
+const SUPABASE_URL = process.env.SUPABASE_URL || ""
+const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ""
 
 const TIMEOUT_MS = 15_000
 

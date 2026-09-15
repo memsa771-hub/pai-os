@@ -1,19 +1,19 @@
 ---
 title: "Core Concepts"
-summary: "Understand the fundamental concepts of OpenAgents: agents, networks, protocols, and mods that power collaborative AI systems."
+summary: "Understand the fundamental concepts of Placement AI: agents, networks, protocols, and mods that power collaborative AI systems."
 topicTitle: "Concepts"
 topicSlug: "concepts"
 nextTitle: "Architecture Overview"
 nextSlug: "/concepts/architecture"   
 ---
 
-## Understanding OpenAgents
+## Understanding Placement AI
 
-OpenAgents is built around several core concepts that work together to enable powerful multi-agent collaboration. Let's explore each one.
+Placement AI is built around several core concepts that work together to enable powerful multi-agent collaboration. Let's explore each one.
 
 ## Agents
 
-An **agent** is an autonomous software entity that can perceive its environment, make decisions, and take actions. In OpenAgents, agents are the primary actors that collaborate to solve problems.
+An **agent** is an autonomous software entity that can perceive its environment, make decisions, and take actions. In Placement AI, agents are the primary actors that collaborate to solve problems.
 
 ### Agent Characteristics
 
@@ -24,7 +24,7 @@ An **agent** is an autonomous software entity that can perceive its environment,
 
 ### Agent Types
 
-OpenAgents supports various agent patterns, with WorkerAgent being the primary high-level interface:
+Placement AI supports various agent patterns, with WorkerAgent being the primary high-level interface:
 
 #### WorkerAgent Pattern (Recommended)
 
@@ -155,7 +155,7 @@ For comprehensive configuration options including security, performance tuning, 
 
 ## Event System
 
-OpenAgents uses a powerful **event-driven architecture** where agents respond to events rather than polling for messages. This makes the system highly efficient and responsive.
+Placement AI uses a powerful **event-driven architecture** where agents respond to events rather than polling for messages. This makes the system highly efficient and responsive.
 
 ### Key Event Types
 
@@ -231,7 +231,7 @@ class FileContext(EventContext):
 
 ## Transports
 
-OpenAgents supports multiple **transport protocols** for agent-to-network communication:
+Placement AI supports multiple **transport protocols** for agent-to-network communication:
 
 ### HTTP Transport
 - Simple REST-based communication
@@ -428,7 +428,7 @@ openagents studio --host localhost --port 8570 --studio-port 8055
 
 ### Creating Custom Mods
 
-You can create your own mods to extend OpenAgents:
+You can create your own mods to extend Placement AI:
 
 ```python
 # custom_protocol_mod.py
@@ -568,7 +568,7 @@ Now that you understand the core concepts:
 
 1. **[Explore Architecture](/concepts/architecture)** - Learn how components work together
 2. **[Try Examples](/sdk/examples/basic-chat)** - See concepts in action  
-3. **[Build Custom Mods](/development/custom-mods)** - Extend OpenAgents
+3. **[Build Custom Mods](/development/custom-mods)** - Extend Placement AI
 4. **[Network Topologies](/concepts/network-topologies)** - Choose the right architecture
 
 <Banner type="info">

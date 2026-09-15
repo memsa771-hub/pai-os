@@ -1,12 +1,12 @@
 import Avatar from 'boring-avatars';
 import { cn } from '@/lib/utils';
 
-const OA_PALETTE = ['#6366F1', '#8B5CF6', '#06B6D4', '#10B981', '#F59E0B'];
+const AGENT_PALETTE = ['#315CFD', '#6D7CFF', '#06B6D4', '#10B981', '#F59E0B'];
 
 // The built-in PAI Counselor assistant has a fixed brand avatar instead of a generated
 // one. Its internal agent name is reserved/unique, so matching
 // on the name is sufficient to identify it wherever an avatar is rendered.
-const PAI_AVATAR_SRC = '/pai-avatar.png';
+const PAI_AVATAR_SRC = '/pai-emblem.png';
 const isPai = (name: string) => (name || '').toLowerCase() === 'pai';
 
 interface AgentAvatarProps {
@@ -28,11 +28,11 @@ export function AgentAvatar({ name, size = 28, status, showStatus = false, class
             alt="PAI Counselor"
             width={size}
             height={size}
-            className="size-full object-cover"
+            className="size-full bg-white object-contain p-[2px]"
             draggable={false}
           />
         ) : (
-          <Avatar name={name} size={size} variant="beam" colors={OA_PALETTE} square={square} />
+          <Avatar name={name} size={size} variant="beam" colors={AGENT_PALETTE} square={square} />
         )}
       </div>
       {showStatus && (

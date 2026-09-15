@@ -50,13 +50,13 @@ function DesktopAuth() {
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background">
       <div className="flex flex-col items-center gap-5">
         <img
-          src="/logo-icon.png"
-          alt="OpenAgents"
+          src="/pai-emblem.png"
+          alt="Placement AI"
           className={`size-16 dark:hidden ${phase === 'working' ? 'animate-[pulse_2s_ease-in-out_infinite]' : ''}`}
         />
         <img
-          src="/logo-white.png"
-          alt="OpenAgents"
+          src="/pai-emblem.png"
+          alt="Placement AI"
           className={`size-16 hidden dark:block ${phase === 'working' ? 'animate-[pulse_2s_ease-in-out_infinite]' : ''}`}
         />
         <div className="text-center max-w-md px-8">
@@ -71,8 +71,8 @@ function DesktopAuth() {
           </h1>
           <p className="text-sm text-muted-foreground mt-0.5">
             {phase === 'done'
-              ? 'Return to OpenAgents Launcher to continue.'
-              : (error ?? 'OpenAgents Workspace')}
+              ? 'Return to Placement AI Launcher to continue.'
+              : (error ?? 'Placement AI Workspace')}
           </p>
         </div>
       </div>

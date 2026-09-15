@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-OpenAgents Workspace Backend — FastAPI entry point.
+Placement AI Workspace Backend — FastAPI entry point.
 
 A workspace is an ONM network with workspace-specific mods loaded.
 """
@@ -350,6 +350,16 @@ async def _timer_loop():
 async def lifespan(app: FastAPI):
     logger.info("LIFESPAN: starting")
 
+    # Human sign-in (Supabase) is core, not optional — warn loudly at boot
+    # rather than let every login attempt fail with an obscure connection
+    # error against an empty URL.
+    if not config.SUPABASE_URL or not config.SUPABASE_ANON_KEY:
+        logger.error(
+            "LIFESPAN: SUPABASE_URL/SUPABASE_ANON_KEY are not set — human "
+            "sign-in will not work. Set them in workspace/.env (see "
+            "workspace/.env.example)."
+        )
+
     from app.services.pai import validate_config as validate_pai_config
     validate_pai_config()
 
@@ -399,7 +409,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="OpenAgents Workspace",
+    title="Placement AI Workspace",
     description="Managed agent collaboration environment built on the OpenAgents Network Model",
     version="0.1.0",
     lifespan=lifespan,
@@ -538,7 +548,7 @@ async def network_manifest():
     )
     return {
         "onm_version": "1.0",
-        "name": "OpenAgents Workspace",
+        "name": "Placement AI Workspace",
         "transports": [
             {"type": "http", "url": f"{base_url}/v1"},
         ],

@@ -12,7 +12,7 @@
 
 export const messages = {
   metadata: {
-    title: 'OpenAgents Workspace',
+    title: 'Placement AI Workspace',
     description: 'Interact with your AI agents in real time',
   },
 
@@ -121,10 +121,10 @@ export const messages = {
     or: 'or',
     optionA: 'Option A',
     optionADesktop: '— Desktop App (recommended)',
-    optionADescription: 'Download the OpenAgents Launcher for a visual setup experience.',
+    optionADescription: 'Download the Placement AI Launcher for a visual setup experience.',
     optionB: 'Option B',
     optionBCli: '— Command Line',
-    stepInstallCli: 'Install the OpenAgents CLI — macOS / Linux',
+    stepInstallCli: 'Install the Placement AI CLI — macOS / Linux',
     stepInstallCliWindows: 'Windows (PowerShell)',
     stepInstallRuntime: 'Install the {agent} runtime',
     stepConnect: 'Connect to this workspace',
@@ -680,7 +680,6 @@ export const messages = {
     tokenCopiedToast: 'Management token copied',
     tokenMissing: 'No management token available',
     tokenCopyFailed: 'Failed to copy token',
-    switchWorkspace: 'Switch workspace',
     sendFeedback: 'Send feedback',
     workspaceSettings: 'Workspace settings',
     signIn: 'Sign in',
@@ -692,13 +691,12 @@ export const messages = {
   },
 
   qrcode: {
-    trigger: 'Click to view QR code',
-    dialogTitle: 'Workspace QR code',
-    dialogDescription: 'Scan to open this workspace on another device.',
+    trigger: 'Open on another device',
+    dialogTitle: 'Open on another device',
+    dialogDescription: 'Scan with your phone and sign in as you — it opens straight into your Placement AI workspace, not anyone else’s.',
     clickToCopy: 'Click the code to copy the link',
-    copied: 'Workspace link copied',
+    copied: 'Link copied',
     copyFailed: 'Failed to copy link',
-    unavailable: 'No shareable link is available for this workspace.',
   },
 
   settings: {
@@ -991,7 +989,7 @@ export const messages = {
 
     heroTitle: 'Your agents, working together',
     heroBody:
-      'OpenAgents is a shared workspace for your AI agents — chat, collaborate on tasks, share files and a browser, and get guidance from a built-in PAI Counselor, all in real time.',
+      'Placement AI is a shared workspace for your AI agents — chat, collaborate on tasks, share files and a browser, and get guidance from a built-in PAI Counselor, all in real time.',
     heroNote: 'Install in seconds. Works on macOS, Linux, and Windows.',
 
     stepsTitle: 'Get started in three steps',
@@ -1012,7 +1010,7 @@ export const messages = {
       'Install any of these agents with a single command, then connect them to your workspace. More agents are added regularly.',
     agentsSearchBefore: 'Search for more:',
 
-    featuresTitle: 'Why OpenAgents',
+    featuresTitle: 'Why Placement AI',
     featureNetworksTitle: 'Agent Networks',
     featureNetworksBody:
       'Agents discover, communicate, and collaborate in shared environments — hosted or self-hosted.',
@@ -1047,7 +1045,7 @@ export const messages = {
     cliDisconnect: 'Disconnect an agent from its workspace',
 
     ctaTitle: 'Ready to get started?',
-    ctaBody: 'Install OpenAgents and have your first agent running in under a minute.',
+    ctaBody: 'Install Placement AI and have your first agent running in under a minute.',
     ctaReadDocs: 'Read the Docs',
     ctaViewGitHub: 'View on GitHub',
     ctaJoinDiscord: 'Join Discord',
@@ -1084,11 +1082,11 @@ export const messages = {
     notFoundError: 'This shared conversation could not be found or has been removed.',
     notFoundLabel: 'Share not found',
     loadFailed: 'Failed to load shared conversation.',
-    goToOpenAgents: 'Go to OpenAgents',
+    goToOpenAgents: 'Go to Placement AI',
     messageCount: { one: '{count} message', other: '{count} messages' },
     sharedOn: ' · Shared {date}',
-    footerNote: 'This is a snapshot of a conversation on OpenAgents.',
-    tryOpenAgents: 'Try OpenAgents',
+    footerNote: 'This is a snapshot of a conversation on Placement AI.',
+    tryOpenAgents: 'Try Placement AI',
   },
 
   workspaceGate: {
@@ -1096,7 +1094,7 @@ export const messages = {
     guest: 'Guest',
     signInTitle: 'Sign in to access this workspace',
     signInBody:
-      'Log in with your OpenAgents account to access workspaces you own, or add a token to the URL.',
+      'Log in with your Placement AI account to access workspaces you own, or add a token to the URL.',
     signInWithGoogle: 'Sign in with Google',
     googleAuthFailed: 'Could not start Google sign-in — please try again',
     logIn: 'Log in',
@@ -1138,11 +1136,11 @@ export const messages = {
 
     optionA: 'Option A',
     optionADesktop: '— Desktop App (recommended)',
-    optionADescription: 'Download the OpenAgents launcher for a visual setup experience.',
+    optionADescription: 'Download the Placement AI launcher for a visual setup experience.',
     or: 'or',
     optionB: 'Option B',
     optionBCli: '— Command Line',
-    step1: '1. Install the OpenAgents CLI',
+    step1: '1. Install the Placement AI CLI',
     step2: '2. Install the {agent} runtime',
     step3: '3. Create an agent instance',
     step4: '4. Connect to this workspace',
@@ -1186,7 +1184,7 @@ export const messages = {
     cloudAgentRemoved: 'Removed "@{name}"',
     cloudAgentRemoveFailed: 'Failed to remove cloud agent',
 
-    paiTitle: 'PAI Counselor — OpenAgents Assistant',
+    paiTitle: 'PAI Counselor — Placement AI Assistant',
     paiSubtitle: 'Your built-in onboarding guide. Helps you set up threads and connect agents. No API key needed.',
     paiAdd: 'Re-add PAI Counselor',
     paiAdded: 'PAI Counselor added',
@@ -1578,7 +1576,7 @@ export const messages = {
     body: 'Found a bug or have an idea? It goes straight to the team.',
     kindFeature: 'Request a feature',
     kindBug: 'Report an issue',
-    placeholderFeature: 'What would make OpenAgents better for you?',
+    placeholderFeature: 'What would make Placement AI better for you?',
     placeholderBug: 'What went wrong? What did you expect to happen?',
     contextNote: 'Your page and workspace are attached automatically.',
     submit: 'Send',
