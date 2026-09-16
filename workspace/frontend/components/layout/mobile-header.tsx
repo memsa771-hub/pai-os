@@ -16,7 +16,7 @@ import { SidebarProvider } from '@/components/ui/sidebar';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Brand } from './brand';
 import { NavMain } from './nav-main';
-import { NavAgents } from './nav-agents';
+import { NavPresence } from './nav-presence';
 import { NotificationsMenu } from './notifications-menu';
 import { UserMenu } from './user-menu';
 import { useLayout, type ViewMode } from './layout-context';
@@ -84,7 +84,7 @@ export function MobileHeader() {
                       </div>
                       <ScrollArea className="min-h-0 flex-1">
                         <NavMain onNavigate={closeSheet} />
-                        <NavAgents onNavigate={closeSheet} />
+                        <NavPresence />
                       </ScrollArea>
                       <div className="shrink-0 border-t border-border px-1 pb-[env(safe-area-inset-bottom)]">
                       </div>

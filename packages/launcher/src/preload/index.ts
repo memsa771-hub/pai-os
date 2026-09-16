@@ -221,9 +221,6 @@ contextBridge.exposeInMainWorld('api', {
     ipcRenderer.invoke('account:sign-up-password', email, password, username),
   cancelSignIn: () => ipcRenderer.invoke('account:cancel-sign-in'),
   signOut: () => ipcRenderer.invoke('account:sign-out'),
-  listAccountWorkspaces: () => ipcRenderer.invoke('account:workspaces'),
-  authorizeDevice: (workspaceId: string) =>
-    ipcRenderer.invoke('account:authorize-device', workspaceId),
   onSignInExternal: (cb: () => void) => {
     const handler = (): void => cb()
     ipcRenderer.on('account:sign-in-external', handler)
@@ -266,15 +263,9 @@ contextBridge.exposeInMainWorld('api', {
     return () => ipcRenderer.removeListener('appearance:changed', handler)
   },
   reloadWorkspaceView: () => ipcRenderer.invoke('workspace-view:reload'),
-  openWorkspaceHome: () => ipcRenderer.invoke('workspace-view:home'),
-  onWorkspaceAction: (cb: (action: 'computer' | 'sign-in') => void) => {
-    const computer = (): void => cb('computer')
-    const signIn = (): void => cb('sign-in')
-    ipcRenderer.on('workspace:open-computer', computer)
-    ipcRenderer.on('workspace:sign-in', signIn)
-    return () => {
-      ipcRenderer.removeListener('workspace:open-computer', computer)
-      ipcRenderer.removeListener('workspace:sign-in', signIn)
-    }
+  onWorkspaceSignIn: (cb: () => void) => {
+    const handler = (): void => cb()
+    ipcRenderer.on('workspace:sign-in', handler)
+    return () => ipcRenderer.removeListener('workspace:sign-in', handler)
   },
 })

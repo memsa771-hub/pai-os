@@ -4,18 +4,7 @@ import { useTranslation } from "react-i18next"
 import { Button } from "@renderer/components/ui/button"
 import { Card } from "@renderer/components/ui/card"
 import { Switch } from "@renderer/components/ui/switch"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@renderer/components/ui/select"
 import { ConfirmDialog } from "@renderer/components/ui-kit"
-import {
-  STARTUP_PAGES,
-  STARTUP_PAGE_LAST,
-} from "@renderer/hooks/useStartupPage"
 import { SettingsCard, Row } from "../components/settings-card"
 import type { SettingsValues, Update } from "../use-settings-state"
 
@@ -39,30 +28,6 @@ export function GeneralSection({ values, update }: Props): React.JSX.Element {
             checked={values.startOnBoot}
             onCheckedChange={(v) => update("startOnBoot", v)}
           />
-        </Row>
-
-        <Row
-          label={t("settings.general.startupPage")}
-          desc={t("settings.general.startupPageDesc")}
-        >
-          <Select
-            value={values.startupPage}
-            onValueChange={(v) => update("startupPage", v)}
-          >
-            <SelectTrigger size="sm" className="w-44">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={STARTUP_PAGE_LAST}>
-                {t("settings.general.startupPageLast")}
-              </SelectItem>
-              {STARTUP_PAGES.map((page) => (
-                <SelectItem key={page} value={page}>
-                  {t(`nav.items.${page}.label`)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
         </Row>
 
         <Row

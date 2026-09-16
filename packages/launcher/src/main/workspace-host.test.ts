@@ -16,8 +16,8 @@ vi.mock('electron', () => ({
 }))
 vi.mock('./workspace-bundle', () => ({
   allowBundleApiAccess: vi.fn(), bundleExists: () => fakes.bundle,
-  workspaceBundleUrl: (route: string) => `openagents://workspace/index.html#${route}`,
-  WORKSPACE_SCHEME: 'openagents', WORKSPACE_HOST: 'workspace', WORKSPACE_PARTITION: 'persist:workspace',
+  workspaceBundleUrl: (route: string) => `pai://workspace/index.html#${route}`,
+  WORKSPACE_SCHEME: 'pai', WORKSPACE_HOST: 'workspace', WORKSPACE_PARTITION: 'persist:workspace',
 }))
 vi.mock('./web-security', () => ({ openExternalSafely: vi.fn() }))
 vi.mock('./bootstrap/startup-log', () => ({ slog: vi.fn() }))
@@ -43,18 +43,18 @@ describe('shared workspace host', () => {
   it('resumes on first load and preserves the live page when returning from local management', () => {
     const host = makeHost()
     host.show(null, bounds)
-    expect(fakes.contents.loadURL).toHaveBeenCalledWith('openagents://workspace/index.html#/?desktop_resume=1')
-    fakes.contents.url = 'openagents://workspace/index.html#/team/settings/devices'
+    expect(fakes.contents.loadURL).toHaveBeenCalledWith('pai://workspace/index.html#/?desktop_resume=1')
+    fakes.contents.url = 'pai://workspace/index.html#/team/settings/devices'
     host.hide(); host.show(null, bounds)
     expect(fakes.contents.loadURL).toHaveBeenCalledTimes(1)
   })
   it('explicit workspace home navigation never reopens the last workspace', () => {
     const host = makeHost()
     host.openHome(); host.show(null, bounds)
-    expect(fakes.contents.url).toBe('openagents://workspace/index.html#/')
-    fakes.contents.url = 'openagents://workspace/index.html#/team'
+    expect(fakes.contents.url).toBe('pai://workspace/index.html#/')
+    fakes.contents.url = 'pai://workspace/index.html#/team'
     host.openHome()
-    expect(fakes.contents.url).toBe('openagents://workspace/index.html#/')
+    expect(fakes.contents.url).toBe('pai://workspace/index.html#/')
   })
   it('only gives native capabilities to the owned local workspace contents', () => {
     const host = makeHost(); host.show(null, bounds)
@@ -116,6 +116,6 @@ describe('shared workspace host', () => {
     fakes.bundle = false
     const host = makeHost()
     host.show('team', bounds)
-    expect(fakes.contents.loadURL).toHaveBeenCalledWith('https://workspace.openagents.org/team')
+    expect(fakes.contents.loadURL).toHaveBeenCalledWith('https://placement-ai.com/team')
   })
 })

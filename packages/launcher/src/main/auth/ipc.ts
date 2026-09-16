@@ -88,8 +88,6 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
     account.signOut()
     await host.whenCleared()
   })
-  ipcMain.handle("account:workspaces", () => account.listWorkspaces())
-
   // ── The embedded workspace view ──────────────────────────────────────────
   // The renderer owns the layout and tells main which rectangle of it the
   // workspace fills; main owns the page. See workspace-host.ts.
@@ -140,9 +138,6 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
   })
   ipcMain.on("workspace-view:sign-out", (event) => {
     if (host.isWorkspaceSender(event.sender)) account.signOut()
-  })
-  ipcMain.on("workspace-view:open-computer", (event) => {
-    if (host.isWorkspaceSender(event.sender)) deps.getWindow()?.webContents.send("workspace:open-computer")
   })
   ipcMain.on("workspace-view:config", (event) => {
     const { theme, language } = deps.appearance()

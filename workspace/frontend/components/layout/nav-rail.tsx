@@ -1,11 +1,10 @@
 'use client';
 
 import * as React from 'react';
-import { desktopHost } from '@/lib/desktop-host';
 import Image from 'next/image';
 import {
-  BookOpen, CalendarClock, ChevronDown, ChevronLeft, ChevronRight, FileText, Globe,
-  Inbox, KanbanSquare, MessageSquare, Monitor, Sparkles, Users, Waypoints,
+  ChevronLeft, ChevronRight, FileText, Globe,
+  Inbox, KanbanSquare, MessageSquare, Users, Waypoints,
 } from 'lucide-react';
 import {
   Sidebar,
@@ -23,7 +22,6 @@ import { Separator } from '@/components/ui/separator';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { cn } from '@/lib/utils';
-import { agentLabel, isRecentAgent } from '@/lib/helpers';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
@@ -193,17 +191,10 @@ export function NavRail() {
     viewMode, openView, setSelectedAgentName, isRailExpanded, railDragWidth,
   } = useLayout();
   const {
-    workspace, agents, sessions, unreadSessionIds, unreadNotificationCount,
-    onlineUsers, currentUser, tasks, setCurrentSessionId,
+    workspace, sessions, unreadSessionIds, unreadNotificationCount,
+    currentSessionId, tasks, setCurrentSessionId, onlineUsers, currentUser,
   } = useWorkspace();
   const t = useT();
-  const [agentsOpen, setAgentsOpen] = React.useState(true);
-
-  const recentAgents = agents.filter(isRecentAgent);
-  // PAI Counselor (built-in) still appears in the roster, but does not satisfy the
-  // "connect your first agent" call to action.
-  const hasAgents = recentAgents.filter((a) => !a.builtin).length > 0;
-  const onlineAgentCount = recentAgents.filter((a) => a.status === 'online').length;
 
   // Only threads the list actually shows may light the rail. Counting archived
   // and routine sessions too — as `unreadSessionIds` does on its own — leaves
@@ -215,6 +206,14 @@ export function NavRail() {
       unreadSessionIds.has(s.sessionId),
   );
 
+  const isPaiCounselorActive = viewMode === 'threads' && currentSessionId === PAI_PRIMARY_CONVERSATION_ID;
+
+  const openPaiCounselor = (): void => {
+    setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
+    openView('threads');
+    setSelectedAgentName(null);
+  };
+
   const items: RailItem[] = [
     {
       mode: 'threads',
@@ -222,29 +221,22 @@ export function NavRail() {
       icon: <MessageSquare />,
       unread: hasUnreadThreads,
     },
-    ...(hasAgents
-      ? ([
-          { mode: 'files', label: t('views.files'), icon: <FileText /> },
-          { mode: 'browser', label: t('views.browser'), icon: <Globe /> },
-          { mode: 'routines', label: t('views.routines'), icon: <CalendarClock /> },
-          { mode: 'knowledge', label: t('views.knowledge'), icon: <BookOpen /> },
-          {
-            mode: 'tasks',
-            label: t('views.tasks'),
-            icon: <KanbanSquare />,
-            // Attention dot when a task is blocked waiting on human input.
-            unread: tasks.some((task) => task.status === 'need_input'),
-          },
-          { mode: 'workflows', label: t('views.workflows'), icon: <Waypoints /> },
-          {
-            mode: 'inbox',
-            label: t('views.inbox'),
-            icon: <Inbox />,
-            unread: unreadNotificationCount > 0,
-          },
-          { mode: 'skills', label: t('views.skills'), icon: <Sparkles /> },
-        ] as RailItem[])
-      : []),
+    { mode: 'files', label: t('views.files'), icon: <FileText /> },
+    { mode: 'browser', label: t('views.browser'), icon: <Globe /> },
+    {
+      mode: 'tasks',
+      label: t('views.tasks'),
+      icon: <KanbanSquare />,
+      // Attention dot when a task is blocked waiting on human input.
+      unread: tasks.some((task) => task.status === 'need_input'),
+    },
+    { mode: 'workflows', label: t('views.workflows'), icon: <Waypoints /> },
+    {
+      mode: 'inbox',
+      label: t('views.inbox'),
+      icon: <Inbox />,
+      unread: unreadNotificationCount > 0,
+    },
   ];
 
   const workspaceLabel = workspace?.name || t('nav.workspaceFallback');
@@ -303,15 +295,25 @@ export function NavRail() {
         </div>
       </SidebarHeader>
 
-      {/* View nav + agents */}
+      {/* View nav */}
       <SidebarContent>
         <SidebarGroup className="px-1.5">
-          {/* Group labels only make sense once there is room for them — the
-              collapsed rail is icon-only, and a 52px column has nowhere to put
-              a caption. */}
-          {showLabels && <SidebarGroupLabel className="px-2">{t('nav.collaboration')}</SidebarGroupLabel>}
           <SidebarGroupContent>
             <SidebarMenu className="gap-0.5">
+              {/* PAI Counselor: always the fastest way back to the one canonical
+                  conversation, distinct from Threads (which browses all of them). */}
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className={cn(!showLabels && 'justify-center!')}
+                  aria-label={t('views.paiCounselor')}
+                  tooltip={{ children: t('views.paiCounselor'), hidden: showLabels }}
+                  isActive={isPaiCounselorActive}
+                  onClick={openPaiCounselor}
+                >
+                  <AgentAvatar name="pai" size={20} className="[&_svg]:size-full!" />
+                  {showLabels && <span className="truncate">{t('views.paiCounselor')}</span>}
+                </SidebarMenuButton>
+              </SidebarMenuItem>
               {items.map((item) => (
                 <SidebarMenuItem key={item.mode}>
                   <SidebarMenuButton
@@ -340,85 +342,10 @@ export function NavRail() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* Agents — avatars stay on the rail so presence is always visible */}
-        {recentAgents.length > 0 && (
-          <>
-            <div className="px-3">
-              <Separator />
-            </div>
-            <SidebarGroup className="px-1.5">
-              {showLabels && (
-                <SidebarGroupLabel
-                  asChild
-                  className="cursor-pointer px-2 focus-visible:ring-2 focus-visible:ring-sidebar-ring focus-visible:outline-none"
-                >
-                  <button
-                    type="button"
-                    onClick={() => setAgentsOpen((prev) => !prev)}
-                    aria-expanded={agentsOpen}
-                    aria-controls="rail-agent-list"
-                  >
-                    {t('nav.agentsWithCount', { online: onlineAgentCount, total: recentAgents.length })}
-                    <ChevronDown
-                      className={cn(
-                        'ml-auto size-4 shrink-0 opacity-60 transition-transform duration-200',
-                        !agentsOpen && '-rotate-90',
-                      )}
-                    />
-                  </button>
-                </SidebarGroupLabel>
-              )}
-              {/* Collapsing the group only applies to the expanded rail —
-                  icon-only, keeping presence visible is the rail's whole job,
-                  so the avatars stay. */}
-              <SidebarGroupContent
-                id="rail-agent-list"
-                className={cn(showLabels && !agentsOpen && 'hidden')}
-              >
-                <SidebarMenu className="gap-0.5">
-                  {recentAgents.map((agent) => (
-                    <SidebarMenuItem key={agent.agentName}>
-                      <SidebarMenuButton
-                        className={cn(!showLabels && 'justify-center!')}
-                        aria-label={agentLabel(agent)}
-                        tooltip={{ children: agentLabel(agent), hidden: showLabels }}
-                        onClick={() => {
-                          if (agent.builtin) {
-                            setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
-                            openView('threads');
-                            setSelectedAgentName(null);
-                            return;
-                          }
-                          // Clicking a person anticipates a conversation: open
-                          // the DM with them in the middle and dock their
-                          // profile beside it. Same canonical sorted-pair id
-                          // as thread-list's startDM.
-                          const pair = ['human:user', `openagents:${agent.agentName}`].sort();
-                          setCurrentSessionId(`dm:${pair[0]},${pair[1]}`);
-                          openView('threads');
-                          setSelectedAgentName(agent.agentName);
-                        }}
-                      >
-                        <AgentAvatar
-                          name={agent.agentName}
-                          size={20}
-                          status={agent.status}
-                          showStatus
-                          className="[&_svg]:size-full!"
-                        />
-                        {showLabels && <span className="truncate">{agentLabel(agent)}</span>}
-                      </SidebarMenuButton>
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </>
-        )}
-
-        {/* Humans currently in the workspace. Collapsed there is no room for a
-            name, so each becomes an initial chip carrying the name in its
-            tooltip — the same trade the agent avatars make. */}
+        {/* Presence — real SSE-tracked connections to this workspace, deduped per
+            person. Today that's just you across your own devices/tabs; the same
+            list will show real other people the moment this workspace ever has
+            any. Never fabricated data. */}
         {onlineUsers.length > 0 && (
           <>
             <div className="px-3">
@@ -476,23 +403,8 @@ export function NavRail() {
         )}
       </SidebarContent>
 
-      {/* Connect agent + global tools */}
+      {/* Global tools */}
       <SidebarFooter className="gap-1 px-1.5 pb-3">
-        {desktopHost() && (
-          <SidebarMenu>
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                className={cn(!showLabels && 'justify-center!')}
-                aria-label={t('nav.thisComputer')}
-                tooltip={{ children: t('nav.thisComputer'), hidden: showLabels }}
-                onClick={() => desktopHost()?.openComputer()}
-              >
-                <Monitor />
-                {showLabels && <span>{t('nav.thisComputer')}</span>}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          </SidebarMenu>
-        )}
         <div className="px-1.5">
           <Separator />
         </div>

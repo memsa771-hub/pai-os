@@ -116,7 +116,7 @@ describe("AccountManager.signIn", () => {
     expect(opened.searchParams.get("provider")).toBe("google")
     expect(opened.searchParams.get("code_challenge_method")).toBe("s256")
     const redirectTo = new URL(opened.searchParams.get("redirect_to")!)
-    expect(redirectTo.origin).toBe("https://workspace.openagents.org")
+    expect(redirectTo.origin).toBe("https://placement-ai.com")
     expect(redirectTo.pathname).toBe("/auth/desktop")
   })
 

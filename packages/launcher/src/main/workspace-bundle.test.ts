@@ -40,10 +40,10 @@ beforeEach(() => allowBundleApiAccess(API, WEB))
 
 describe('bundle API bridge', () => {
   it('presents the web origin for the bundle and names the bundle in the reply', () => {
-    expect(send(1, { Origin: 'openagents://workspace' })).toEqual({ requestHeaders: { Origin: WEB } })
+    expect(send(1, { Origin: 'pai://workspace' })).toEqual({ requestHeaders: { Origin: WEB } })
     expect(receive(1, { 'Access-Control-Allow-Origin': [WEB] })).toEqual({
       responseHeaders: {
-        'access-control-allow-origin': ['openagents://workspace'],
+        'access-control-allow-origin': ['pai://workspace'],
         'access-control-allow-credentials': ['true'],
       },
     })
@@ -60,7 +60,7 @@ describe('bundle API bridge', () => {
   })
 
   it('forgets a bridged request that failed before a reply', () => {
-    send(4, { origin: 'openagents://workspace' })
+    send(4, { origin: 'pai://workspace' })
     listeners.error({ id: 4 }, () => {})
     expect(receive(4, {})).toEqual({})
   })

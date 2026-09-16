@@ -11,7 +11,7 @@ const SUCCESS_ACCOUNT = { email: "person@example.test", displayName: "person", e
 beforeEach(async () => {
   await i18n.changeLanguage("en")
   useAccountStore.setState({
-    account: null, mode: "workspace", authMode: "sign-in", error: null,
+    account: null, authMode: "sign-in", error: null,
     signingIn: false, pendingEmail: null,
   })
   window.api = {
@@ -35,12 +35,12 @@ it("offers registration beside sign-in and preserves the identifier when switchi
   fill("sign-in-identifier", "person@example.test")
   fill("sign-in-password", "ExistingPassword1!")
   fireEvent.click(screen.getByRole("button", { name: "Create an account" }))
-  expect(screen.getByRole("heading", { name: "Create your OpenAgents account" })).toBeVisible()
+  expect(screen.getByRole("heading", { name: "Create your Placement AI account" })).toBeVisible()
   expect(document.getElementById("sign-in-identifier")).toHaveValue("person@example.test")
   expect(document.getElementById("sign-in-password")).toHaveValue("")
   expect(document.getElementById("sign-in-password")).toHaveAttribute("autocomplete", "new-password")
   fireEvent.click(screen.getByRole("button", { name: "Sign in" }))
-  expect(screen.getByRole("heading", { name: "Sign in to OpenAgents" })).toBeVisible()
+  expect(screen.getByRole("heading", { name: "Sign in to Placement AI" })).toBeVisible()
   expect(document.getElementById("sign-in-identifier")).toHaveValue("person@example.test")
 })
 

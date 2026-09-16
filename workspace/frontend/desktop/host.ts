@@ -48,7 +48,7 @@ export function useHostNotices(): void {
 
 function bridge(): HostBridge | null {
   if (typeof window === 'undefined') return null;
-  return (window as unknown as { __oaHost__?: HostBridge }).__oaHost__ ?? null;
+  return (window as unknown as { __paiHost__?: HostBridge }).__paiHost__ ?? null;
 }
 
 /** Whether this app is running inside the desktop launcher. */

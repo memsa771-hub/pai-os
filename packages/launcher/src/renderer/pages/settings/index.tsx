@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from "react"
 import { useShallow } from "zustand/react/shallow"
 import { useTranslation } from "react-i18next"
+import { X } from "lucide-react"
 
 import { ConfirmDialog } from "@renderer/components/ui-kit"
-import { useAgentsStore } from "@renderer/store/agents"
 import { useUiStore } from "@renderer/store/ui"
 import type { ToastType } from "@renderer/hooks/useToast"
 
@@ -19,21 +19,19 @@ import { useSettingsState } from "./use-settings-state"
 import { useSystemInfo } from "./use-system-info"
 import { GeneralSection } from "./sections/general-section"
 import { AppearanceSection } from "./sections/appearance-section"
-import { AgentsSection } from "./sections/agents-section"
 import { NotificationsSection } from "./sections/notifications-section"
 import { NetworkSection } from "./sections/network-section"
 import { DataSection } from "./sections/data-section"
 import { LanguageSection } from "./sections/language-section"
 import { UpdatesSection } from "./sections/updates-section"
-import { RuntimeSection } from "./sections/runtime-section"
 import { AboutSection } from "./sections/about-section"
 
 // Which lines each confirmation spells out; the copy lives under the matching
 // `settings.*Dialog.affected/kept` i18n prefix.
-const SETTINGS_RESET_AFFECTED = ["startup", "agents", "network", "updates"]
-const SETTINGS_RESET_KEPT = ["agents", "workspaces", "prefs"]
-const LOCAL_RESET_AFFECTED = ["appearance", "layout", "history", "marketplace"]
-const LOCAL_RESET_KEPT = ["settings", "language", "workspaces"]
+const SETTINGS_RESET_AFFECTED = ["startup", "network", "updates"]
+const SETTINGS_RESET_KEPT = ["prefs"]
+const LOCAL_RESET_AFFECTED = ["appearance", "layout", "history"]
+const LOCAL_RESET_KEPT = ["settings", "language"]
 
 interface SettingsProps {
   showToast: (msg: string, type?: ToastType) => void
@@ -55,7 +53,7 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
   const [section, setSection] = useState<SectionId | null>(null)
   const [search, setSearch] = useState("")
 
-  const agents = useAgentsStore((s) => s.agents)
+  const closeSettings = useUiStore((s) => s.closeSettings)
 
   // Deep-link from elsewhere in the app (currently the update banner's "view
   // progress" / "update now"), which needs to open a specific module rather
@@ -105,19 +103,29 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
     performLocalReset,
   } = useSettingsIO(loadSettings, showToast)
 
-  // Runtime and About both read the host snapshot; polling stays scoped to them.
-  const systemInfo = useSystemInfo(section === "runtime" || section === "about")
+  // About reads the host snapshot; polling stays scoped to it.
+  const systemInfo = useSystemInfo(section === "about")
 
   const summaries = useSectionSummaries({
     values,
     paths,
     runtimeInfo,
     launcherVersion,
-    agentCount: agents.length,
   })
 
   return (
     <section className="flex h-full flex-col">
+      <div className="flex items-center justify-between border-b px-4 py-2">
+        <span className="text-sm font-semibold">{t("nav.settings")}</span>
+        <button
+          type="button"
+          aria-label={t("common.close")}
+          onClick={() => (section === null ? closeSettings() : setSection(null))}
+          className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
+          <X className="size-4" />
+        </button>
+      </div>
       {section === null ? (
         <SettingsOverview
           summaries={summaries}
@@ -137,9 +145,6 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
               <GeneralSection values={values} update={update} />
             )}
             {section === "appearance" && <AppearanceSection />}
-            {section === "agents" && (
-              <AgentsSection values={values} update={update} agents={agents} />
-            )}
             {section === "notifications" && <NotificationsSection />}
             {section === "network" && (
               <NetworkSection
@@ -170,15 +175,6 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
                 checkUpdate={checkUpdate}
                 downloadUpdate={downloadUpdate}
                 installUpdate={installUpdate}
-              />
-            )}
-            {section === "runtime" && (
-              <RuntimeSection
-                runtimeInfo={runtimeInfo}
-                systemInfo={systemInfo}
-                paths={paths}
-                launcherVersion={launcherVersion}
-                showToast={showToast}
               />
             )}
             {section === "about" && (

@@ -3,7 +3,6 @@ import { useShallow } from "zustand/react/shallow"
 
 import { DEFAULT_SKIN, getSkin } from "../../../shared/skins"
 import { SUPPORTED_LANGUAGES, type LanguageCode } from "@renderer/i18n"
-import { STARTUP_PAGES, STARTUP_PAGE_LAST } from "@renderer/hooks/useStartupPage"
 import { useAppearanceStore } from "@renderer/store/appearance"
 import { useNotificationsStore } from "@renderer/store/notifications"
 import { useThemeStore } from "@renderer/store/theme"
@@ -17,7 +16,6 @@ interface Input {
   paths: SettingsPaths
   runtimeInfo: RuntimeInfo | null
   launcherVersion: string
-  agentCount: number
 }
 
 /** Summary lines read as one sentence made of facts; empty facts drop out. */
@@ -37,7 +35,6 @@ export function useSectionSummaries({
   paths,
   runtimeInfo,
   launcherVersion,
-  agentCount,
 }: Input): Record<SectionId, string> {
   const { t, i18n } = useTranslation()
   const mode = useThemeStore((s) => s.mode)
@@ -52,23 +49,14 @@ export function useSectionSummaries({
   const languageLabel =
     SUPPORTED_LANGUAGES.find((l) => l.value === language)?.label ?? language
 
-  const startupPage = STARTUP_PAGES.includes(
-    values.startupPage as (typeof STARTUP_PAGES)[number],
-  )
-    ? t(`nav.items.${values.startupPage}.label`)
-    : t("settings.general.startupPageLast")
-
   const proxied = !!(values.httpProxy || values.httpsProxy)
 
   const skinLocksAccent = getSkin(skin).lockedAccent !== null
 
   return {
-    general: join(
-      t("settings.summary.startupPage", { page: startupPage }),
-      values.minimizeToTray
-        ? t("settings.summary.trayOn")
-        : t("settings.summary.trayOff"),
-    ),
+    general: values.minimizeToTray
+      ? t("settings.summary.trayOn")
+      : t("settings.summary.trayOff"),
     appearance: join(
       t(`settings.appearance.modes.${mode}`),
       // The skin is named only when it is not the default — "Default · Violet"
@@ -94,12 +82,6 @@ export function useSectionSummaries({
       languageLabel,
       Intl.DateTimeFormat().resolvedOptions().timeZone,
     ),
-    agents: join(
-      t("settings.summary.agentsConfigured", { count: agentCount }),
-      values.agentAutoStart
-        ? t("settings.summary.autoStartOn")
-        : t("settings.summary.autoStartOff"),
-    ),
     notifications: !prefs
       ? loading
       : join(
@@ -114,13 +96,6 @@ export function useSectionSummaries({
             : t("settings.summary.quietHoursOff"),
         ),
     network: join(
-      t(
-        values.downloadRegion === "cn"
-          ? "settings.network.regionCn"
-          : values.downloadRegion === "global"
-            ? "settings.network.regionGlobal"
-            : "settings.network.regionAuto",
-      ),
       values.workspaceEndpoint
         ? t("settings.summary.workspaceCustom")
         : t("settings.summary.workspaceHosted"),
@@ -133,13 +108,6 @@ export function useSectionSummaries({
         ? t("settings.summary.autoUpdateOn")
         : t("settings.summary.autoUpdateOff"),
     ),
-    runtime: runtimeInfo?.nodeVersion
-      ? join(
-          `Node.js ${runtimeInfo.nodeVersion}`,
-          runtimeInfo.coreVersion &&
-            t("settings.summary.core", { version: runtimeInfo.coreVersion }),
-        )
-      : loading,
     about: join(t("settings.about.productName"), launcherVersion),
   }
 }

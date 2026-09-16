@@ -10,7 +10,6 @@ export interface HostSession {
 
 /** Optional desktop capabilities. The web application has no host bridge. */
 export interface DesktopHost {
-  openComputer(): void;
   signIn(): void;
   signOut(): void;
   /**
@@ -22,5 +21,5 @@ export interface DesktopHost {
 
 export function desktopHost(): DesktopHost | null {
   if (typeof window === 'undefined') return null;
-  return (window as unknown as { __oaHost__?: DesktopHost }).__oaHost__ ?? null;
+  return (window as unknown as { __paiHost__?: DesktopHost }).__paiHost__ ?? null;
 }

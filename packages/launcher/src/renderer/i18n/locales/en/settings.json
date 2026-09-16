@@ -273,7 +273,7 @@
   "data": {
     "locationsGroup": "Storage locations",
     "userData": "App data",
-    "openagentsHome": "OpenAgents home",
+    "openagentsHome": "Placement AI home",
     "logs": "Logs",
     "downloads": "Downloads",
     "cache": "Cache",
@@ -339,7 +339,7 @@
     "versionsGroup": "Versions",
     "nodejs": "Node.js",
     "npm": "npm",
-    "coreLibrary": "OpenAgents Core",
+    "coreLibrary": "Placement AI Core",
     "latestAvailable": "Latest available",
     "unableToCheck": "Unable to check",
     "ok": "OK",
@@ -371,7 +371,7 @@
   },
   "about": {
     "productName": "$t(common.appName)",
-    "tagline": "The $t(common.brandName) desktop client · install, configure and run agents locally",
+    "tagline": "$t(common.brandName) Desktop · your workspace and PAI Counselor, in a native window",
     "copyright": "© {{year}} $t(common.brandName)",
     "versionGroup": "Version & build",
     "buildType": "Build",

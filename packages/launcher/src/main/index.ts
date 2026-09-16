@@ -1,7 +1,4 @@
-// FIRST import, on purpose: it defaults `windowsHide` for this process before
-// anything (notably the in-process agent-launcher core) captures a
-// child_process reference. Without it Windows pops a blank console window for
-// every piped child. See win-console.ts.
+// FIRST import, on purpose — see win-console.ts.
 import "./win-console"
 import {
   app,
@@ -18,26 +15,7 @@ import {
 import path from "path"
 import fs from "fs"
 import os from "os"
-import { execFile, execFileSync } from "child_process"
 import { Store, settingsFilePath } from "./store"
-import { isUpgradeAvailable } from "../shared/version-compare"
-import { readPathEnv, writePathEnv, withPathEnv } from "./env"
-import {
-  AgentManager,
-  type ChatStreamEvent,
-} from "./agent-manager"
-import {
-  ConnectionsStore,
-  CredentialsStore,
-  type ConnectionRecord,
-} from "./connections-store"
-import { probe as probeConnection } from "./connection-tester"
-import {
-  listMcpTargets,
-  applyMcpServer,
-  removeMcpServer,
-  MCP_CATALOG,
-} from "./mcp-config"
 import {
   setupAutoUpdater,
   checkForUpdatesOnStartup,
@@ -45,18 +23,8 @@ import {
   installDownloadedUpdate,
   applyUpdateFeedUrl,
 } from "./updater"
-import { getGitHubClient, parseGitHubRepo } from "./github-bridge"
-import { GitHubBindingsStore } from "./github-bindings-store"
-import {
-  npmUrls,
-  npmRegistryBase,
-} from "./mirror"
-import {
-  downloadToFile,
-  fetchJsonRacing,
-} from "./download"
 import { t, getMainLanguage, setMainLanguage } from "./i18n"
-import { asPath, asName, asShellCommand, asString } from "./ipc-input"
+import { asPath } from "./ipc-input"
 import {
   setNotificationsWindow,
   pushNotification,
@@ -71,33 +39,21 @@ import {
   setPrefsStorage as setNotifPrefsStorage,
   type NotificationPrefs,
 } from "./notifications"
-import { PORTABLE_NODE_DIR } from "./agents/paths"
-import { bundledCoreDir, readCoreVersion } from "./agents/runtime"
 import {
   markUiReached,
   reportStartupError,
   slog,
   STARTUP_LOG,
 } from "./bootstrap/startup-log"
-import {
-  configuredControlPort,
-  startControlServer,
-} from "./control-server"
 import { registerAccountIpc } from "./auth/ipc"
 import type { ThemeMode } from "../shared/appearance-bridge"
 import {
   registerWorkspaceScheme,
   serveWorkspaceBundle,
 } from "./workspace-bundle"
-import { normalizeWorkspaceEndpoint } from "./agents/env-normalize"
+import { normalizeWorkspaceEndpoint } from "./workspace-endpoint"
 import { attachRendererLogging, rendererLogPath } from "./renderer-log"
-import {
-  applyDownloadRegion,
-  applyProxyFromSettings,
-  adoptSystemProxyForChildren,
-  proxyEnvForChildren,
-  tuneNpmRegistry,
-} from "./net-config"
+import { applyProxyFromSettings } from "./net-config"
 import { hardenWebContents, openExternalSafely } from "./web-security"
 import { installApplicationMenu, isReloadShortcut } from "./app-menu"
 import {
@@ -109,50 +65,8 @@ import {
   splashPalette,
   titleBarOverlayColors,
 } from "./window-chrome"
-import {
-  addToPrefixPackageJson,
-  canExecuteNodeBinary,
-  downloadNodejs,
-  ensureBundledRuntimeFirstOnPath,
-  ensureUserBinDirsOnPath,
-  extractTarball,
-  findNpmCommand,
-} from "./bootstrap/node-runtime"
 
-function execFileAsync(
-  file: string,
-  args: string[],
-  opts: { timeout?: number; env?: NodeJS.ProcessEnv; maxBuffer?: number } = {},
-): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      file,
-      args,
-      {
-        timeout: opts.timeout || 10000,
-        env: opts.env,
-        encoding: "utf-8",
-        maxBuffer: opts.maxBuffer,
-        // Runs `node --version` / `npm view …` on a 10-minute refresh; without
-        // this each one flashes a console window on Windows.
-        windowsHide: true,
-      },
-      (err, stdout) => {
-        if (err) reject(err)
-        else resolve((stdout || "").toString().trim())
-      },
-    )
-  })
-}
-
-
-app.setName("OpenAgents Launcher")
-
-// Before anything can spawn: a GUI process inherits a shell-less PATH, and the
-// core's installer builds its child env from ours. Without this, an agent whose
-// install command is a user-installed tool (OpenWorker's `uv tool install …`)
-// fails with "command not found" on a machine that has the tool.
-ensureUserBinDirsOnPath()
+app.setName("Placement AI")
 
 // Stop macOS from popping the "<App> wants to use the keychain Safe Storage"
 // password prompt. That entry is Chromium's OSCrypt key (shared with Electron's
@@ -160,16 +74,15 @@ ensureUserBinDirsOnPath()
 // to the app's code signature, so every unsigned dev run / Electron upgrade
 // re-triggers the prompt. We don't keep anything security-critical in Chromium
 // storage, so route OSCrypt to an in-memory mock keychain — no prompt, no real
-// keychain access. (Our own credential secrets are encrypted separately; see
-// CredentialsStore.)
+// keychain access. (Our own credential secrets are encrypted separately.)
 app.commandLine.appendSwitch("use-mock-keychain")
 
-// Remote-driving hook for tests: OPENAGENTS_DEVTOOLS_PORT=9222 exposes the
-// Chrome DevTools Protocol so Playwright's connectOverCDP (through an SSH
-// tunnel, for a remote machine) can attach to the RUNNING app — real clicks,
-// renderer console, screenshots. Gated on the env var and pinned to loopback:
-// never on by default, never reachable from another host.
-const devtoolsPort = process.env.OPENAGENTS_DEVTOOLS_PORT
+// Remote-driving hook for tests: PAI_DEVTOOLS_PORT=9222 exposes the Chrome
+// DevTools Protocol so Playwright's connectOverCDP (through an SSH tunnel, for
+// a remote machine) can attach to the RUNNING app — real clicks, renderer
+// console, screenshots. Gated on the env var and pinned to loopback: never on
+// by default, never reachable from another host.
+const devtoolsPort = process.env.PAI_DEVTOOLS_PORT
 if (devtoolsPort && /^\d+$/.test(devtoolsPort)) {
   app.commandLine.appendSwitch("remote-debugging-port", devtoolsPort)
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1")
@@ -180,18 +93,8 @@ if (process.argv.includes("--disable-gpu") || isHeadless) {
   app.disableHardwareAcceleration()
 }
 
-const GLOBAL_MODULES = path.join(PORTABLE_NODE_DIR, "node_modules")
-const CORE_PKG = "@openagents-org/agent-launcher"
-
-if (
-  fs.existsSync(GLOBAL_MODULES) &&
-  !require("module").globalPaths.includes(GLOBAL_MODULES)
-) {
-  require("module").globalPaths.push(GLOBAL_MODULES)
-}
-
 /**
- * Whether this profile ran the launcher before this process started.
+ * Whether this profile ran the app before this process started.
  *
  * Read here, ahead of `new Store()` and therefore ahead of every write in the
  * run — anything that asks later is told "yes" by a profile created seconds
@@ -199,26 +102,16 @@ if (
  *
  * Two traces, because neither is enough alone:
  *
- *   settings.json  — written the first time any preference changes. NOT
- *                    guaranteed on a first run: the npm-registry probe that
- *                    usually creates it bails out early on a machine with its
- *                    own ~/.npmrc, and then nothing has written it at all.
+ *   settings.json  — written the first time any preference changes.
  *   Local Storage  — Chromium creates it the first time a page stores
  *                    anything, which the theme store does on the first frame.
- *                    So it is absent for exactly one launch, and present from
- *                    the second onwards.
  *
- * The release-notes dialog is what needs this. Builds before 0.9.10 left no
- * record of the version they ran, so someone arriving from one has nothing to
- * compare against — indistinguishable from a new user, and silently treated as
- * one, which is why the 0.9.9 notes never appeared for anybody. Getting this
- * answer wrong costs a user their release notes permanently, so it is logged:
- * `startup.log` is the only way to tell afterwards which way it went.
+ * The release-notes dialog is what needs this: getting this answer wrong
+ * costs a user their release notes permanently, so it is logged to
+ * startup.log, the only way to tell afterwards which way it went.
  */
 const HAS_RUN_BEFORE = ((): boolean => {
   const dir = app.getPath("userData")
-  // Named by hand rather than by basename: `settingsFilePath()` is the store's
-  // own answer, so the two can never drift apart if the file is ever renamed.
   const traces: Array<[string, string]> = [
     ["settings.json", settingsFilePath()],
     ["Local Storage", path.join(dir, "Local Storage")],
@@ -248,292 +141,28 @@ if (store.get("gpuAcceleration") === false) {
   app.disableHardwareAcceleration()
 }
 
-const connectionsStore = new ConnectionsStore()
-const credentialsStore = new CredentialsStore()
-const githubBindingsStore = new GitHubBindingsStore()
 let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
-let agentManager: AgentManager | null = null
-let coreVersion: string | null = null
-// Last launcher-update version we notified about, so re-emitted
-// update-downloaded events (electron-updater fires it from cache on every
-// subsequent check) don't spam the same "update ready" toast.
+// Last app-update version we notified about, so re-emitted update-downloaded
+// events (electron-updater fires it from cache on every subsequent check)
+// don't spam the same "update ready" toast.
 let _lastUpdateNotifiedVersion: string | null = null
 
-let _launcherVersionCache: string | null = null
-function getLauncherVersion(): string {
-  if (_launcherVersionCache) return _launcherVersionCache
+let _appVersionCache: string | null = null
+function getAppVersion(): string {
+  if (_appVersionCache) return _appVersionCache
   try {
-    _launcherVersionCache = require("../../package.json").version as string
+    _appVersionCache = require("../../package.json").version as string
   } catch {
-    _launcherVersionCache = "0.0.0"
+    _appVersionCache = "0.0.0"
   }
-  return _launcherVersionCache!
+  return _appVersionCache!
 }
-
-interface RuntimeInfo {
-  nodeVersion: string | null
-  npmVersion: string | null
-  coreVersion: string | null
-  latestVersion: string | null
-}
-const _runtimeCache: {
-  value: RuntimeInfo
-  stableAt: number
-  latestAt: number
-  refreshing: boolean
-} = {
-  value: {
-    nodeVersion: null,
-    npmVersion: null,
-    coreVersion: null,
-    latestVersion: null,
-  },
-  stableAt: 0,
-  latestAt: 0,
-  refreshing: false,
-}
-const RUNTIME_STABLE_TTL = 60_000 * 30
-const RUNTIME_LATEST_TTL = 60_000 * 10
-
 
 // Nothing in main is allowed to take the process down quietly. Registered at
 // module scope so it covers the window between `require` and `whenReady` too.
 process.on("uncaughtException", reportStartupError)
 process.on("unhandledRejection", reportStartupError)
-
-
-let _updateSplash:
-  | ((msg: string, pct: number, detail?: string) => void)
-  | null = null
-
-/** Version of the core packaged inside the app, or null if unreadable. */
-function bundledCoreVersion(): string | null {
-  const dir = bundledCoreDir()
-  if (!dir) return null
-  try {
-    const v = JSON.parse(
-      fs.readFileSync(path.join(dir, "package.json"), "utf-8"),
-    ).version
-    return typeof v === "string" && v ? v : null
-  } catch {
-    return null
-  }
-}
-
-async function ensureCoreLibrary(): Promise<void> {
-  const corePkgPath = path.join(GLOBAL_MODULES, CORE_PKG, "package.json")
-  let installedVersion: string | null = null
-
-  if (fs.existsSync(corePkgPath)) {
-    try {
-      installedVersion = JSON.parse(
-        fs.readFileSync(corePkgPath, "utf-8"),
-      ).version
-    } catch {}
-  }
-
-  try {
-    // Raced across registries with a hard timeout. The previous lookup used a
-    // bare https.get with NO timeout, so a registry that accepted the socket
-    // and then went silent parked the splash on "Checking for updates…" with
-    // nothing to time it out — indistinguishable from a hang.
-    const meta = await fetchJsonRacing<{
-      version?: string
-      dist?: { integrity?: string }
-    }>(npmUrls(`${CORE_PKG}/latest`), { log: slog })
-    const latestVersion = meta?.version
-    if (!latestVersion) throw new Error("core latest lookup failed")
-
-    // Never spend a download on a core we would then ignore. The app ships its
-    // own copy and runs whichever is newer (see coreTiers), so an npm `latest`
-    // that trails the packaged core is not an update — it is a downgrade the
-    // loader would discard anyway. This is the registry's normal state in the
-    // window between a core landing in the app and its publish going out.
-    const bundledVersion = bundledCoreVersion()
-    const npmIsUpgrade =
-      !bundledVersion || isUpgradeAvailable(bundledVersion, latestVersion)
-
-    if (!npmIsUpgrade) {
-      slog(
-        `Core library: keeping the v${bundledVersion} bundled with the app (npm latest is v${latestVersion})`,
-      )
-      if (_updateSplash)
-        _updateSplash("Core library ready", 80, "v" + bundledVersion)
-    } else if (!installedVersion) {
-      slog("Core library not found — installing v" + latestVersion + "...")
-      if (_updateSplash)
-        _updateSplash("Installing core library...", 65, "v" + latestVersion)
-    } else if (latestVersion !== installedVersion) {
-      slog("Core library update: v" + installedVersion + " → v" + latestVersion)
-      if (_updateSplash)
-        _updateSplash(
-          "Updating core library...",
-          65,
-          "v" + installedVersion + " → v" + latestVersion,
-        )
-    } else {
-      slog("Core library v" + installedVersion + " (already latest)")
-      if (_updateSplash)
-        _updateSplash("Core library up to date", 80, "v" + installedVersion)
-    }
-
-    if (
-      npmIsUpgrade &&
-      (!installedVersion || latestVersion !== installedVersion)
-    ) {
-      const tgzPath = path.join(
-        os.tmpdir(),
-        `agent-launcher-${latestVersion}.tgz`,
-      )
-      const destDir = path.join(GLOBAL_MODULES, CORE_PKG)
-
-      // The registry publishes the tarball's integrity hash; enforcing it means
-      // a mirror can serve the bytes faster but cannot serve different bytes.
-      await downloadToFile(
-        npmUrls(`${CORE_PKG}/-/agent-launcher-${latestVersion}.tgz`),
-        tgzPath,
-        {
-          expectedIntegrity: meta?.dist?.integrity || null,
-          onProgress: _updateSplash
-            ? (pct, detail) =>
-                _updateSplash?.(
-                  "Downloading core library...",
-                  65 + pct * 0.1,
-                  detail,
-                )
-            : null,
-          log: slog,
-        },
-      )
-      try {
-        fs.rmSync(destDir, { recursive: true, force: true })
-      } catch {}
-      fs.mkdirSync(destDir, { recursive: true })
-      extractTarball(tgzPath, destDir)
-      try {
-        fs.unlinkSync(tgzPath)
-      } catch {}
-
-      const newVersion = (() => {
-        try {
-          return JSON.parse(fs.readFileSync(corePkgPath, "utf-8")).version
-        } catch {
-          return null
-        }
-      })()
-      if (newVersion) {
-        slog("Core library installed: v" + newVersion)
-        if (_updateSplash)
-          _updateSplash("Core library ready", 80, "v" + newVersion)
-        installedVersion = newVersion
-        addToPrefixPackageJson(CORE_PKG, newVersion)
-      }
-    }
-  } catch (e: unknown) {
-    slog("Core update failed: " + (e as Error).message)
-    if (!installedVersion && !bundledCoreVersion()) {
-      slog("Falling back to npm...")
-      const npmCmd = findNpmCommand()
-      if (npmCmd) {
-        try {
-          execFileSync(
-            npmCmd.bin,
-            [
-              ...npmCmd.preArgs,
-              "install",
-              "--prefix",
-              PORTABLE_NODE_DIR,
-              `${CORE_PKG}@latest`,
-              "--ignore-scripts",
-              "--registry",
-              npmRegistryBase(),
-            ],
-            {
-              stdio: "pipe",
-              timeout: 120000,
-              windowsHide: true,
-              env: withPathEnv(
-                PORTABLE_NODE_DIR +
-                  (process.platform === "win32" ? ";" : ":") +
-                  readPathEnv(),
-              ),
-            },
-          )
-          try {
-            installedVersion = JSON.parse(
-              fs.readFileSync(corePkgPath, "utf-8"),
-            ).version
-          } catch {}
-        } catch {}
-      }
-    }
-  }
-
-  // What the app will actually load, which is not necessarily what sits in the
-  // portable prefix — see coreTiers.
-  coreVersion = readCoreVersion() || installedVersion
-
-  const npmCheck = path.join(
-    PORTABLE_NODE_DIR,
-    "node_modules",
-    "npm",
-    "bin",
-    "npm-cli.js",
-  )
-  if (!fs.existsSync(npmCheck)) {
-    slog("npm was removed by --prefix install — reinstalling...")
-    try {
-      const npmTgz = path.join(os.tmpdir(), "npm-reinstall.tgz")
-      const npmDir = path.join(PORTABLE_NODE_DIR, "node_modules", "npm")
-      await downloadToFile(npmUrls("npm/-/npm-10.9.8.tgz"), npmTgz, {
-        log: slog,
-      })
-      fs.mkdirSync(npmDir, { recursive: true })
-      extractTarball(npmTgz, npmDir)
-      try {
-        fs.unlinkSync(npmTgz)
-      } catch {}
-      slog("npm reinstalled")
-    } catch (e: unknown) {
-      slog("npm reinstall failed: " + (e as Error).message)
-    }
-  }
-
-  if (installedVersion && agentManager) {
-    agentManager.reloadCore()
-  }
-}
-
-async function checkCoreUpdate(): Promise<void> {
-  const npmCmd = findNpmCommand()
-  if (!npmCmd) return
-  try {
-    const latest = execFileSync(
-      npmCmd.bin,
-      [...npmCmd.preArgs, "view", CORE_PKG, "version"],
-      {
-        encoding: "utf-8",
-        timeout: 15000,
-        windowsHide: true,
-        env: withPathEnv(
-          PORTABLE_NODE_DIR +
-            (process.platform === "win32" ? ";" : ":") +
-            readPathEnv(),
-        ),
-      },
-    ).trim()
-
-    if (coreVersion && latest && latest !== coreVersion) {
-      if (mainWindow) {
-        mainWindow.webContents.send("core-update-available", {
-          current: coreVersion,
-          latest,
-        })
-      }
-    }
-  } catch {}
-}
 
 function createWindow(): void {
   if (mainWindow) {
@@ -548,7 +177,7 @@ function createWindow(): void {
     minHeight: 800,
     width: 1200,
     height: 800,
-    title: "OpenAgents",
+    title: "Placement AI",
     autoHideMenuBar: true,
     // The app draws its own top edge. The system title bar was a grey plate
     // above a themed app, repeating a name and icon the rail already shows —
@@ -583,7 +212,7 @@ function createWindow(): void {
 
   setNotificationsWindow(mainWindow)
   hardenWebContents(mainWindow.webContents)
-  // Mirror the renderer console to ~/.openagents/renderer.log — the only
+  // Mirror the renderer console to ~/.pai-desktop/renderer.log — the only
   // trace of renderer errors on machines reached over SSH.
   attachRendererLogging(mainWindow.webContents)
 
@@ -612,26 +241,13 @@ function createWindow(): void {
   mainWindow.on("enter-full-screen", () => sendFullScreen(true))
   mainWindow.on("leave-full-screen", () => sendFullScreen(false))
 
-  // Chat polling follows the window: full speed while someone is looking at it,
-  // idle cadence once it is hidden or in the background. Minimising to the tray
-  // is the launcher's normal resting state, not an edge case.
-  const setChatForeground = (v: boolean): void =>
-    agentManager?.setChatForeground(v)
-  mainWindow.on("focus", () => setChatForeground(true))
-  mainWindow.on("show", () => setChatForeground(true))
-  mainWindow.on("restore", () => setChatForeground(true))
-  mainWindow.on("blur", () => setChatForeground(false))
-  mainWindow.on("hide", () => setChatForeground(false))
-  mainWindow.on("minimize", () => setChatForeground(false))
-
   mainWindow.once("ready-to-show", () => {
     if (process.platform === "darwin" && app.dock) app.dock.show()
     mainWindow!.show()
     // On Windows, splash window (`alwaysOnTop: true`) sometimes leaves
     // focus on the desktop after it closes, so the main window appears but
     // doesn't receive clicks until the user clicks the title bar. Force the
-    // focus to land on the launcher so onboarding is immediately
-    // interactive.
+    // focus to land on the app so sign-in is immediately interactive.
     if (process.platform === "win32") {
       mainWindow!.focus()
       mainWindow!.moveTop()
@@ -646,9 +262,9 @@ function createWindow(): void {
   mainWindow.webContents.on("before-input-event", (event, input) => {
     if (input.type !== "keyDown") return
 
-    // Reload throws away everything the renderer is holding — install progress,
-    // a half-finished agent login, an unsent message — and nothing in the app
-    // asks for it. Dev builds keep it; shipped builds do not.
+    // Reload throws away everything the renderer is holding — a half-finished
+    // sign-in, an unsent message — and nothing in the app asks for it. Dev
+    // builds keep it; shipped builds do not.
     if (app.isPackaged && isReloadShortcut(input)) {
       event.preventDefault()
       return
@@ -697,12 +313,6 @@ function applyStartOnBoot(): void {
   } catch {}
 }
 
-// electron-updater does NOT use the default session: ElectronHttpExecutor
-// downloads through `session.fromPartition("electron-updater", {cache: false})`
-// (see its electronHttpExecutor.ts, NET_SESSION_NAME). fromPartition is
-// idempotent per name, so asking for the same partition here hands us the very
-// session the updater will use — setting the proxy on it is the only way the
-// in-app proxy reaches update downloads.
 function createTray(): void {
   // macOS: a white glyph, inset to 18pt. The menu-bar canvas is 22pt and AppKit
   // draws the image at that size, while other menu-bar extras keep their glyph
@@ -711,12 +321,7 @@ function createTray(): void {
   //
   // Windows: the app icon, not a glyph. The notification area follows the
   // "Windows mode" setting independently of the app's own theme, so it can be
-  // light or dark and a monochrome glyph is invisible against one of them —
-  // a white glyph on a light taskbar was the bug. The 1.0 mark cannot solve it
-  // in colour either: its top-right arc and bottom-right dot are black and
-  // vanish on a dark taskbar. The opaque tile carries its own background and
-  // so reads on both, and matches what Windows already shows for this app on
-  // the taskbar and in the Start menu.
+  // light or dark and a monochrome glyph is invisible against one of them.
   //
   // Linux: panels are conventionally dark, so the white glyph stands.
   //
@@ -747,28 +352,20 @@ function createTray(): void {
 function updateTrayMenu(): void {
   if (!tray) return
 
-  const agents = agentManager
-    ? (agentManager.getAgents() as Array<{ name: string; state: string }>)
-    : []
-  const agentItems =
-    agents.length > 0
-      ? agents.map((a) => ({ label: `${a.name} (${a.state})`, enabled: false }))
-      : [{ label: t("trayNoAgents"), enabled: false }]
-
-  // Launcher self-update: once a background download has landed, offer an
+  // App self-update: once a background download has landed, offer an
   // immediate "restart to update" instead of waiting for the next quit.
-  const launcherUpdate = getUpdaterState()
+  const appUpdate = getUpdaterState()
   // Hidden once the handoff for this version is known to fail: the tray item
   // would offer a restart that has already proven to install nothing, and
   // unlike the banner the tray has nowhere to explain that.
-  const launcherUpdateItems: Electron.MenuItemConstructorOptions[] =
-    launcherUpdate.status === "downloaded" &&
-    launcherUpdate.installFailedVersion !== launcherUpdate.latestVersion
+  const appUpdateItems: Electron.MenuItemConstructorOptions[] =
+    appUpdate.status === "downloaded" &&
+    appUpdate.installFailedVersion !== appUpdate.latestVersion
       ? [
           { type: "separator" },
           {
             label: t("trayRestartToUpdate", {
-              version: launcherUpdate.latestVersion ?? "?",
+              version: appUpdate.latestVersion ?? "?",
             }),
             click: () => {
               installDownloadedUpdate()
@@ -779,9 +376,7 @@ function updateTrayMenu(): void {
 
   const menu = Menu.buildFromTemplate([
     { label: t("trayOpenDashboard"), click: () => createWindow() },
-    { type: "separator" },
-    ...agentItems,
-    ...launcherUpdateItems,
+    ...appUpdateItems,
     { type: "separator" },
     {
       label: t("trayQuit"),
@@ -796,9 +391,6 @@ function updateTrayMenu(): void {
         })
         if (result.response === 0) {
           ;(app as typeof app & { isQuitting: boolean }).isQuitting = true
-          try {
-            if (agentManager) await agentManager.stopAll()
-          } catch {}
           app.quit()
         }
       },
@@ -809,389 +401,16 @@ function updateTrayMenu(): void {
   tray.setToolTip(t("trayTooltip"))
 }
 
-// Bundled-only resolver — matches legacy. Settings/runtime info should
-// reflect the launcher's own runtime, not whatever happens to be on PATH.
-function resolveBundledNode(): string | null {
-  const candidates = [
-    path.join(
-      PORTABLE_NODE_DIR,
-      process.platform === "win32" ? "node.exe" : "node",
-    ),
-    path.join(PORTABLE_NODE_DIR, "bin", "node"),
-  ]
-  for (const c of candidates) {
-    if (fs.existsSync(c)) return c
-  }
-  return null
-}
-
-function resolveNpmInvocation(): { node: string; args: string[] } | null {
-  const nodeBin = resolveBundledNode()
-  if (!nodeBin) return null
-  const candidates = [
-    path.join(PORTABLE_NODE_DIR, "node_modules", "npm", "bin", "npm-cli.js"),
-    path.join(
-      PORTABLE_NODE_DIR,
-      "lib",
-      "node_modules",
-      "npm",
-      "bin",
-      "npm-cli.js",
-    ),
-  ]
-  const npmCli = candidates.find((p) => fs.existsSync(p))
-  if (npmCli) return { node: nodeBin, args: [npmCli] }
-  if (process.platform !== "win32") {
-    const npmBin = path.join(PORTABLE_NODE_DIR, "bin", "npm")
-    if (fs.existsSync(npmBin)) return { node: npmBin, args: [] }
-  }
-  return null
-}
-
-async function refreshRuntimeInfo(force = false): Promise<RuntimeInfo> {
-  const now = Date.now()
-  const info = _runtimeCache.value
-  info.coreVersion = coreVersion || info.coreVersion || null
-
-  if (_runtimeCache.refreshing) return info
-  const needStable =
-    force ||
-    !info.nodeVersion ||
-    !info.npmVersion ||
-    now - _runtimeCache.stableAt > RUNTIME_STABLE_TTL
-  const needLatest =
-    force ||
-    !info.latestVersion ||
-    now - _runtimeCache.latestAt > RUNTIME_LATEST_TTL
-  if (!needStable && !needLatest) return info
-
-  _runtimeCache.refreshing = true
-  try {
-    const env = withPathEnv(
-      PORTABLE_NODE_DIR +
-        (process.platform === "win32" ? ";" : ":") +
-        readPathEnv(),
-    )
-    const npm = resolveNpmInvocation()
-
-    if (needStable) {
-      const nodeBin = resolveBundledNode()
-      if (nodeBin) {
-        try {
-          info.nodeVersion = await execFileAsync(nodeBin, ["--version"], {
-            timeout: 5000,
-          })
-        } catch {}
-      } else {
-        info.nodeVersion = null
-      }
-      if (npm) {
-        try {
-          info.npmVersion = await execFileAsync(
-            npm.node,
-            [...npm.args, "--version"],
-            { timeout: 5000, env },
-          )
-        } catch {}
-      } else {
-        info.npmVersion = null
-      }
-      _runtimeCache.stableAt = now
-    }
-
-    if (needLatest) {
-      if (npm) {
-        try {
-          info.latestVersion = await execFileAsync(
-            npm.node,
-            [...npm.args, "view", CORE_PKG, "version"],
-            { timeout: 10_000, env },
-          )
-        } catch {}
-      }
-      _runtimeCache.latestAt = now
-    }
-  } finally {
-    _runtimeCache.refreshing = false
-  }
-  return info
-}
-
 function setupIPC(): void {
-  ipcMain.handle("python:status", () => ({
-    pythonPath: null,
-    pythonFound: true,
-    sdkInstalled: true,
-    sdkVersion: coreVersion || "not installed",
-    launcherVersion: getLauncherVersion(),
-    runtime: "node",
-  }))
-  ipcMain.handle("python:install", () => ({
-    success: true,
-    message: "No installation needed — using Node.js agent-connector",
-  }))
-
-  ipcMain.handle("runtime:info", async (_e, opts?: { force?: boolean }) => {
-    const force = !!(opts && opts.force)
-    const info = _runtimeCache.value
-    const needStable = force || !info.nodeVersion || !info.npmVersion
-    if (needStable && !_runtimeCache.refreshing) {
-      _runtimeCache.refreshing = true
-      try {
-        const env = withPathEnv(
-          PORTABLE_NODE_DIR +
-            (process.platform === "win32" ? ";" : ":") +
-            readPathEnv(),
-        )
-        const npm = resolveNpmInvocation()
-        const nodeBin = resolveBundledNode()
-        if (nodeBin) {
-          try {
-            info.nodeVersion = await execFileAsync(nodeBin, ["--version"], {
-              timeout: 5000,
-            })
-          } catch {}
-        } else {
-          info.nodeVersion = null
-        }
-        if (npm) {
-          try {
-            info.npmVersion = await execFileAsync(
-              npm.node,
-              [...npm.args, "--version"],
-              { timeout: 5000, env },
-            )
-          } catch {}
-        } else {
-          info.npmVersion = null
-        }
-        _runtimeCache.stableAt = Date.now()
-      } finally {
-        _runtimeCache.refreshing = false
-      }
-    }
-    info.coreVersion = coreVersion || info.coreVersion || null
-    const needLatest =
-      force ||
-      !info.latestVersion ||
-      Date.now() - _runtimeCache.latestAt > RUNTIME_LATEST_TTL
-    if (needLatest) {
-      // Don't block IPC on the network call. Refresh in background.
-      void refreshRuntimeInfo(force).catch(() => {})
-    }
-    return { ...info }
-  })
-
-  const requireManager = (): AgentManager => {
-    if (!agentManager)
-      throw new Error("Launcher is still initializing, please wait a moment")
-    return agentManager
-  }
-
-  ipcMain.handle("agents:list", () =>
-    agentManager ? agentManager.getAgents() : [],
-  )
-  ipcMain.handle("agents:core-info", () =>
-    agentManager
-      ? agentManager.getCoreInfo()
-      : { version: null, globalCorePresent: false },
-  )
-  ipcMain.handle("agents:add", (_e, config) =>
-    requireManager().addAgent(config),
-  )
-  ipcMain.handle("agents:remove", (_e, name, opts) =>
-    requireManager().removeAgent(name, {
-      fromWorkspace: !!(opts as { fromWorkspace?: boolean } | undefined)
-        ?.fromWorkspace,
-    }),
-  )
-  ipcMain.handle("agents:rename", (_e, name: string, displayName: string) =>
-    requireManager().renameAgent(
-      asName(name, "agent name"),
-      String(displayName ?? ""),
-    ),
-  )
-  ipcMain.handle("agents:update", (_e, name, config) =>
-    requireManager().updateAgent(name, config),
-  )
-  ipcMain.handle("agents:set-workdir", (_e, name: string, dir: string) =>
-    requireManager().setAgentWorkingDir(
-      asName(name, "agent name"),
-      asPath(dir, "working directory"),
-    ),
-  )
-
-  ipcMain.handle("agents:start", (_e, name) =>
-    requireManager().startAgent(name),
-  )
-  ipcMain.handle("agents:stop", (_e, name) => requireManager().stopAgent(name))
-  ipcMain.handle("agents:start-all", () => requireManager().startAll())
-  ipcMain.handle("agents:stop-all", () => requireManager().stopAll())
-  ipcMain.handle("agents:status", () =>
-    agentManager ? agentManager.getAllStatus() : {},
-  )
-  ipcMain.handle("agents:daemon-status", () => {
-    if (!agentManager) return { state: "starting", pid: null }
-    try {
-      return agentManager.getDaemonState()
-    } catch {
-      return { state: "offline", pid: null }
-    }
-  })
-  ipcMain.handle("agents:logs", (_e, name, lines) =>
-    requireManager().getLogs(name, lines),
-  )
-  ipcMain.handle("agents:tail-logs", (_e, name, lines, offset) => {
-    if (!agentManager) return { lines: [], size: 0 }
-    try {
-      return agentManager.tailLogs(name, lines, offset)
-    } catch {
-      return { lines: [], size: 0 }
-    }
-  })
-  ipcMain.handle("agents:clear-logs-range", (_e, start, end) =>
-    requireManager().clearLogsInRange(start, end),
-  )
-
-  ipcMain.handle("agents:get-env", (_e, agentType) =>
-    requireManager().getAgentEnv(agentType),
-  )
-  ipcMain.handle("agents:save-env", (_e, agentType, env) =>
-    requireManager().saveAgentEnv(agentType, env),
-  )
-  ipcMain.handle("agents:delete-env", (_e, agentType) =>
-    requireManager().deleteAgentEnv(agentType),
-  )
-  ipcMain.handle("agents:get-instance-env", (_e, agentName) =>
-    requireManager().getAgentInstanceEnv(agentName),
-  )
-  ipcMain.handle("agents:save-instance-env", (_e, agentName, env) =>
-    requireManager().saveAgentInstanceEnv(agentName, env),
-  )
-  ipcMain.handle("agents:signal-reload", () => requireManager().signalReload())
-
-  // ── Chat IPC (Stage 3.1) ──
-  ipcMain.handle("workspace:send-message", (_e, input) =>
-    requireManager().sendChatMessage(input),
-  )
-  ipcMain.handle(
-    "workspace:get-messages",
-    (_e, workspaceId, channelName, limit) =>
-      requireManager().getChatMessages(workspaceId, channelName, limit),
-  )
-  ipcMain.handle("workspace:get-all-messages", (_e, workspaceId, limit) =>
-    requireManager().getWorkspaceMessages(workspaceId, limit),
-  )
-  ipcMain.handle("workspace:start-polling", (_e, workspaceId, channelName) => {
-    const res = requireManager().startChatPolling(workspaceId, channelName)
-    return res ? { success: true, key: res.key } : { success: false }
-  })
-  ipcMain.handle("workspace:stop-polling", (_e, workspaceId, channelName) => {
-    agentManager?.stopChatPolling(workspaceId, channelName)
-    return { success: true }
-  })
-  ipcMain.handle("workspace:list-participants", (_e, workspaceId) =>
-    requireManager().listChatParticipants(workspaceId),
-  )
-
-  ipcMain.handle(
-    "workspace:upload-file",
-    (_e, workspaceId, filename, contentBase64, opts) =>
-      requireManager().uploadChatFile(
-        workspaceId,
-        filename,
-        contentBase64,
-        opts || {},
-      ),
-  )
-  ipcMain.handle("workspace:list-files", (_e, workspaceId, opts) =>
-    requireManager().listChatFiles(workspaceId, opts || {}),
-  )
-  ipcMain.handle("workspace:read-file", (_e, workspaceId, fileId) =>
-    requireManager().readChatFile(workspaceId, fileId),
-  )
-  ipcMain.handle("workspace:delete-file", (_e, workspaceId, fileId) =>
-    requireManager().deleteChatFile(workspaceId, fileId),
-  )
-
-  ipcMain.handle("session:list", (_e, workspaceId) =>
-    requireManager().listChatSessions(workspaceId),
-  )
-  ipcMain.handle("session:create", (_e, workspaceId) =>
-    requireManager().createChatSession(workspaceId),
-  )
-  ipcMain.handle("session:load", (_e, workspaceId, channelName) =>
-    requireManager().loadChatSession(workspaceId, channelName),
-  )
-  ipcMain.handle("session:delete", (_e, workspaceId, channelName) =>
-    requireManager().deleteChatSession(workspaceId, channelName),
-  )
-  ipcMain.handle("session:clear", (_e, workspaceId) =>
-    requireManager().clearChatSessions(workspaceId),
-  )
-
-  ipcMain.handle("workspace:connect", (_e, agentName, slug) =>
-    requireManager().connectWorkspace(agentName, slug),
-  )
-  ipcMain.handle("workspace:disconnect", (_e, agentName) =>
-    requireManager().disconnectWorkspace(agentName),
-  )
-  ipcMain.handle("workspace:remove", (_e, slug, opts) =>
-    requireManager().removeWorkspace(slug, opts || {}),
-  )
-  ipcMain.handle("workspace:list", () =>
-    agentManager ? agentManager.getNetworks() : [],
-  )
-  // Server-side rename — everyone in the workspace sees it. The dialog's
-  // default path (local alias) never reaches the main process at all.
-  ipcMain.handle("workspace:rename", (_e, workspaceId, name) =>
-    requireManager().renameWorkspace(workspaceId, name),
-  )
-
-  // Native folder picker for onboarding's "Create your first agent" step. The
-  // chosen directory becomes the agent's working directory. Returns null when
-  // the user cancels.
-  ipcMain.handle(
-    "dialog:select-directory",
-    async (_e, defaultPath?: string) => {
-      const win = BrowserWindow.getFocusedWindow() || mainWindow
-      const opts = {
-        properties: ["openDirectory", "createDirectory"] as Array<
-          "openDirectory" | "createDirectory"
-        >,
-        ...(defaultPath ? { defaultPath } : {}),
-      }
-      const result = win
-        ? await dialog.showOpenDialog(win, opts)
-        : await dialog.showOpenDialog(opts)
-      if (result.canceled || !result.filePaths?.length) return null
-      return result.filePaths[0]
-    },
-  )
-
-  // Renderer consumes the post-upgrade reset flag (set by the startup
-  // migration) to clear its onboarding localStorage and re-open the flow.
-  // Read-and-clear so it only fires once.
-  ipcMain.handle("onboarding:consume-reset", () => {
-    const pending = !!store.get("pendingOnboardingReset")
-    if (pending) store.delete("pendingOnboardingReset")
-    return pending
-  })
-  // The renderer owns the theme; this is how the OS-drawn window frame hears
-  // about it. Persisted so the next launch can set it before the first window
-  // opens (see the whenReady call).
-  // Answered on subscribe, so the renderer starts from the truth rather than
-  // from a default it has to correct a frame later.
+  // ── Window / theme chrome ──
   ipcMain.handle(
     "window:is-full-screen",
     () => mainWindow?.isFullScreen() ?? false,
   )
-
   ipcMain.handle("theme:set-source", (_e, mode: unknown) => {
     applyThemeSource(mode)
     store.set("themeMode", nativeTheme.themeSource)
   })
-
   // Dialogs scrim the page, but the window buttons are drawn by the OS on top
   // of it — the renderer says when one is open so the overlay can be repainted
   // to match. See setChromeDimmed.
@@ -1199,12 +418,10 @@ function setupIPC(): void {
     setChromeDimmed(mainWindow, dim === true)
   })
 
+  // ── Settings ──
   ipcMain.handle("settings:get", (_e, key) => store.get(key))
   ipcMain.handle("settings:set", (_e, key, value) => {
     store.set(key, value)
-    if (key === "workspaceEndpoint" && agentManager) {
-      agentManager.reloadCore()
-    }
     if (key === "startOnBoot") applyStartOnBoot()
     if (key === "skin") setChromeSkin(mainWindow, value)
     // Keep main's notification/tray strings on the language the user picked in
@@ -1215,461 +432,18 @@ function setupIPC(): void {
     }
     if (key === "httpProxy" || key === "httpsProxy" || key === "noProxy") {
       applyProxyFromSettings(store)
-      // Clearing the Settings proxy deletes the env vars; re-adopt so children
-      // fall back to the OS proxy rather than to nothing.
-      void adoptSystemProxyForChildren(store)
     }
-    // Download acceleration: re-point npm (and therefore core/agent installs)
-    // at the mirror without needing a restart. Node dist URLs are resolved per
-    // download, so they pick the new region up on their own.
-    if (key === "downloadRegion") applyDownloadRegion(value)
     if (key === "updateFeedUrl") applyUpdateFeedUrl(value)
   })
-
-  // ── Connections ──
-  ipcMain.handle("connections:list", () => connectionsStore.list())
-  ipcMain.handle("connections:upsert", (_e, record) =>
-    connectionsStore.upsert(record),
-  )
-  ipcMain.handle("connections:remove", (_e, id) => connectionsStore.remove(id))
-  ipcMain.handle("connections:set-status", (_e, id, status, lastError) =>
-    connectionsStore.setStatus(id, status, lastError),
-  )
-  ipcMain.handle("connections:test", async (_e, id) => {
-    const conn = connectionsStore.get(id)
-    if (!conn)
-      return { ok: false, status: "error", detail: "Connection not found" }
-    if (!conn.credentialId) {
-      connectionsStore.setStatus(id, "unauthorized", "No credential linked")
-      return {
-        ok: false,
-        status: "unauthorized",
-        detail: "No credential linked",
-      }
-    }
-    const secret = credentialsStore.getSecret(conn.credentialId)
-    if (!secret) {
-      connectionsStore.setStatus(id, "unauthorized", "Credential missing")
-      return { ok: false, status: "unauthorized", detail: "Credential missing" }
-    }
-    const result = await probeConnection(conn.platform, secret)
-    connectionsStore.setStatus(
-      id,
-      result.status as ConnectionRecord["status"],
-      result.detail,
-    )
-    if (result.account) {
-      connectionsStore.upsert({
-        id,
-        platform: conn.platform,
-        account: result.account,
-      })
-    }
-    credentialsStore.recordTest(conn.credentialId, result.ok, result.detail)
-    return result
-  })
-
-  // ── MCP registration ──
-  //
-  // An .env key is enough for agents that read it natively (gemini), but for
-  // claude/cursor the usable form of a connection is an MCP server. These
-  // handlers register the platform's hosted endpoint in each agent's own
-  // config, authenticated with the stored credential.
-
-  /** Platform ids that have a hosted MCP endpoint we know how to register. */
-  ipcMain.handle("mcp:platforms", () => Object.keys(MCP_CATALOG))
-
-  ipcMain.handle("mcp:list-targets", (_e, platform: string) =>
-    listMcpTargets(platform),
-  )
-
-  ipcMain.handle(
-    "mcp:apply",
-    (_e, payload: { connectionId: string; targetIds: string[] }) => {
-      const { connectionId, targetIds } = payload || {}
-      if (!connectionId || !Array.isArray(targetIds) || targetIds.length === 0) {
-        return { ok: false, written: [], errors: ["Missing connectionId / targetIds"] }
-      }
-      const conn = connectionsStore.get(connectionId)
-      if (!conn)
-        return { ok: false, written: [], errors: ["Connection not found"] }
-      if (!conn.credentialId)
-        return { ok: false, written: [], errors: ["No credential linked"] }
-      const secret = credentialsStore.getSecret(conn.credentialId)
-      if (!secret)
-        return { ok: false, written: [], errors: ["Credential missing"] }
-      return applyMcpServer(conn.platform, secret, targetIds)
-    },
-  )
-
-  ipcMain.handle(
-    "mcp:remove",
-    (_e, payload: { platform: string; targetIds: string[] }) => {
-      const { platform, targetIds } = payload || {}
-      if (!platform || !Array.isArray(targetIds) || targetIds.length === 0) {
-        return { ok: false, written: [], errors: ["Missing platform / targetIds"] }
-      }
-      return removeMcpServer(platform, targetIds)
-    },
-  )
-
-  // ── Credentials ──
-  ipcMain.handle("credentials:list", () => credentialsStore.list())
-  ipcMain.handle("credentials:upsert", (_e, input) =>
-    credentialsStore.upsert(input),
-  )
-  ipcMain.handle("credentials:remove", (_e, id) => {
-    const removed = credentialsStore.remove(id)
-    if (removed) {
-      connectionsStore.unlinkCredential(id)
-      githubBindingsStore.unlinkCredential(id)
-    }
-    return removed
-  })
-  ipcMain.handle("credentials:reveal", (_e, id) => credentialsStore.reveal(id))
-  ipcMain.handle(
-    "credentials:test",
-    async (
-      _e,
-      payload: {
-        id?: string
-        provider: string
-        secret?: string
-      },
-    ) => {
-      let secret = payload.secret
-      if (!secret && payload.id)
-        secret = credentialsStore.getSecret(payload.id) || undefined
-      if (!secret)
-        return { ok: false, status: "error", detail: "No secret provided" }
-      const result = await probeConnection(payload.provider, secret)
-      if (payload.id)
-        credentialsStore.recordTest(payload.id, result.ok, result.detail)
-      return result
-    },
-  )
-
-  /**
-   * Apply a credential to one or more agent types' .env files. Bridges the new
-   * encrypted Credentials store to the legacy ~/.openagents/env/<type>.env
-   * system that resolve_env already understands (stage.md §4.4 — image:
-   * "src/env.js 增强"). Existing keys in the file are preserved; only the
-   * requested envKey is overwritten.
-   */
-  ipcMain.handle(
-    "credentials:apply-to-agents",
-    async (
-      _e,
-      payload: { credentialId: string; envKey: string; agentTypes: string[] },
-    ) => {
-      const { credentialId, envKey, agentTypes } = payload
-      if (
-        !credentialId ||
-        !envKey ||
-        !Array.isArray(agentTypes) ||
-        agentTypes.length === 0
-      ) {
-        return {
-          ok: false,
-          error: "Missing credentialId / envKey / agentTypes",
-        }
-      }
-      const secret = credentialsStore.getSecret(credentialId)
-      if (!secret) return { ok: false, error: "Credential not found" }
-      if (!agentManager) return { ok: false, error: "Agent manager not ready" }
-      const written: string[] = []
-      const errors: string[] = []
-      for (const type of agentTypes) {
-        try {
-          const existing =
-            (agentManager.getAgentEnv(type) as Record<string, string>) || {}
-          const next = { ...existing, [envKey]: secret }
-          agentManager.saveAgentEnv(type, next)
-          written.push(type)
-        } catch (e) {
-          errors.push(`${type}: ${(e as Error).message}`)
-        }
-      }
-      // Track the linkage in the credential's usedByAgents.
-      try {
-        const all = credentialsStore.list().find((c) => c.id === credentialId)
-        const next = new Set([...(all?.usedByAgents || []), ...written])
-        credentialsStore.upsert({
-          id: credentialId,
-          provider: all!.provider,
-          kind: all!.kind,
-          label: all!.label,
-          shared: all!.shared,
-          scopes: all!.scopes,
-          usedByAgents: Array.from(next),
-        })
-      } catch {}
-      return { ok: errors.length === 0, written, errors }
-    },
-  )
-
-  // ── GitHub Integration (4.3) ──
-  //
-  // Per-agent repo bindings stored in <userData>/github-bindings.json.
-  // Tokens are never stored here — they're resolved at request time from the
-  // encrypted Credentials store using the binding's credentialId.
-
-  const resolveGitHubToken = (credentialId: string): string | null =>
-    credentialsStore.getSecret(credentialId)
-
-  ipcMain.handle(
-    "github:probe",
-    async (_e, payload: { credentialId?: string; secret?: string }) => {
-      const token =
-        payload.secret ||
-        (payload.credentialId ? resolveGitHubToken(payload.credentialId) : null)
-      if (!token) return { ok: false, error: "Missing GitHub token" }
-      try {
-        const r = await getGitHubClient().probe(token)
-        return { ...r, ok: true }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message }
-      }
-    },
-  )
-
-  ipcMain.handle("github:parse-repo", (_e, input: string) =>
-    parseGitHubRepo(input),
-  )
-
-  ipcMain.handle("github:list-bindings", () => githubBindingsStore.list())
-
-  ipcMain.handle(
-    "github:bind-repo",
-    async (
-      _e,
-      payload: { agentName: string; repo: string; credentialId: string },
-    ) => {
-      const parsed = parseGitHubRepo(payload.repo)
-      if (!parsed)
-        return {
-          ok: false,
-          error: "Could not parse repo (use owner/name or URL)",
-        }
-      const token = resolveGitHubToken(payload.credentialId)
-      if (!token) return { ok: false, error: "Credential not found" }
-      try {
-        await getGitHubClient().getRepo(parsed.owner, parsed.name, token)
-      } catch (e) {
-        return {
-          ok: false,
-          error: `Cannot access ${parsed.owner}/${parsed.name}: ${(e as Error).message}`,
-        }
-      }
-      const binding = githubBindingsStore.upsert({
-        agentName: payload.agentName,
-        owner: parsed.owner,
-        repo: parsed.name,
-        credentialId: payload.credentialId,
-      })
-      return { ok: true, binding }
-    },
-  )
-
-  ipcMain.handle("github:unbind-repo", (_e, agentName: string) =>
-    githubBindingsStore.remove(agentName),
-  )
-
-  ipcMain.handle(
-    "github:list-issues",
-    async (
-      _e,
-      payload: {
-        agentName: string
-        state?: "open" | "closed" | "all"
-        perPage?: number
-        page?: number
-      },
-    ) => {
-      const binding = githubBindingsStore.get(payload.agentName)
-      if (!binding) return { ok: false, error: "Agent is not bound to a repo" }
-      const token = resolveGitHubToken(binding.credentialId)
-      if (!token)
-        return { ok: false, error: "Credential missing for this binding" }
-      try {
-        const items = await getGitHubClient().listIssues(
-          binding.owner,
-          binding.repo,
-          {
-            state: payload.state,
-            perPage: payload.perPage,
-            page: payload.page,
-          },
-          token,
-        )
-        return { ok: true, items }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message }
-      }
-    },
-  )
-
-  ipcMain.handle(
-    "github:list-pull-requests",
-    async (
-      _e,
-      payload: {
-        agentName: string
-        state?: "open" | "closed" | "all"
-        perPage?: number
-        page?: number
-      },
-    ) => {
-      const binding = githubBindingsStore.get(payload.agentName)
-      if (!binding) return { ok: false, error: "Agent is not bound to a repo" }
-      const token = resolveGitHubToken(binding.credentialId)
-      if (!token)
-        return { ok: false, error: "Credential missing for this binding" }
-      try {
-        const items = await getGitHubClient().listPullRequests(
-          binding.owner,
-          binding.repo,
-          {
-            state: payload.state,
-            perPage: payload.perPage,
-            page: payload.page,
-          },
-          token,
-        )
-        return { ok: true, items }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message }
-      }
-    },
-  )
-
-  ipcMain.handle(
-    "github:comment",
-    async (
-      _e,
-      payload: { agentName: string; issueNumber: number; body: string },
-    ) => {
-      const binding = githubBindingsStore.get(payload.agentName)
-      if (!binding) return { ok: false, error: "Agent is not bound to a repo" }
-      const token = resolveGitHubToken(binding.credentialId)
-      if (!token)
-        return { ok: false, error: "Credential missing for this binding" }
-      if (!payload.body || !payload.body.trim()) {
-        return { ok: false, error: "Comment body is empty" }
-      }
-      try {
-        const result = await getGitHubClient().createIssueComment(
-          binding.owner,
-          binding.repo,
-          payload.issueNumber,
-          payload.body,
-          token,
-        )
-        return { ok: true, result }
-      } catch (e) {
-        return { ok: false, error: (e as Error).message }
-      }
-    },
-  )
-
-  // ── Notifications (5.4) ──
-  ipcMain.handle("notifications:list", () => listNotifications())
-  ipcMain.handle("notifications:push", (_e, input) => pushNotification(input))
-  ipcMain.handle("notifications:mark-read", (_e, id: string) => {
-    markRead(id)
-    return true
-  })
-  ipcMain.handle("notifications:mark-all-read", () => {
-    markAllRead()
-    return true
-  })
-  ipcMain.handle("notifications:clear", (_e, id?: string) => {
-    if (id) clearOneNotification(id)
-    else clearAllNotifications()
-    return true
-  })
-  ipcMain.handle("notifications:get-prefs", () => getNotifPrefs())
-  ipcMain.handle("notifications:set-prefs", (_e, prefs) => setNotifPrefs(prefs))
-
-  // ── Settings paths (5.7) ──
-  ipcMain.handle("paths:list", () => ({
-    userData: app.getPath("userData"),
-    logs: app.getPath("logs"),
-    downloads: app.getPath("downloads"),
-    home: app.getPath("home"),
-    cache: app.getPath("sessionData"),
-    portableNode: PORTABLE_NODE_DIR,
-    openagentsHome: path.join(os.homedir(), ".openagents"),
-  }))
-  ipcMain.handle("paths:show", (_e, p: string) => {
-    try {
-      shell.showItemInFolder(asPath(p, "path"))
-      return true
-    } catch {
-      return false
-    }
-  })
-
-  // Powers Settings → Runtime. Everything here is read straight from the OS on
-  // demand — cheap enough to poll while that section is open, and deliberately
-  // not cached so "free memory" and CPU actually move.
-  ipcMain.handle("system:info", () => {
-    let diskFree: number | null = null
-    let diskTotal: number | null = null
-    try {
-      // statfs landed in Node 18.15; guard so an older runtime just omits disk.
-      const statfs = (fs as unknown as { statfsSync?: (p: string) => { bsize: number; blocks: number; bavail: number } }).statfsSync
-      if (statfs) {
-        const st = statfs(app.getPath("userData"))
-        diskFree = st.bsize * st.bavail
-        diskTotal = st.bsize * st.blocks
-      }
-    } catch {}
-
-    // getAppMetrics covers every helper process (renderer, GPU, utility), so
-    // this is the launcher's real footprint rather than main's alone.
-    let appMemory = 0
-    let appCpu = 0
-    try {
-      for (const m of app.getAppMetrics()) {
-        appMemory += (m.memory?.workingSetSize || 0) * 1024
-        appCpu += m.cpu?.percentCPUUsage || 0
-      }
-    } catch {}
-
-    return {
-      platform: process.platform,
-      osRelease: os.release(),
-      arch: process.arch,
-      cpuModel: os.cpus()[0]?.model || null,
-      cpuCount: os.cpus().length,
-      totalMemory: os.totalmem(),
-      freeMemory: os.freemem(),
-      diskFree,
-      diskTotal,
-      appMemory,
-      appCpu,
-      uptime: process.uptime(),
-      electronVersion: process.versions.electron,
-      chromeVersion: process.versions.chrome,
-      appVersion: getLauncherVersion(),
-      locale: app.getLocale(),
-      packaged: app.isPackaged,
-    }
-  })
-
   ipcMain.handle("settings:get-all", () => store.get())
-  ipcMain.handle("settings:export", () => {
-    return JSON.stringify(store.get(), null, 2)
-  })
+  ipcMain.handle("settings:export", () => JSON.stringify(store.get(), null, 2))
   // Writes through a native Save dialog so the user picks the destination and
-  // a cancel is reported as such — the renderer used to trigger an <a download>
-  // and claim success before any location had been chosen.
+  // a cancel is reported as such.
   ipcMain.handle("settings:export-to-file", async () => {
     const win = BrowserWindow.getFocusedWindow() || mainWindow
     const stamp = new Date().toISOString().slice(0, 10)
     const opts = {
-      defaultPath: `openagents-settings-${stamp}.json`,
+      defaultPath: `pai-desktop-settings-${stamp}.json`,
       filters: [{ name: "JSON", extensions: ["json"] }],
     }
     const result = win
@@ -1707,52 +481,72 @@ function setupIPC(): void {
     return true
   })
 
-  // Hand the user Apple's own Command Line Tools installer.
-  //
-  // Some agents install through a `curl … | bash` script that needs git, which
-  // a mac without developer tools does not have. The install preflight now
-  // refuses to start those scripts, and this is what the resulting UI offers
-  // instead — the same dialog the script would have triggered, except the user
-  // asked for it and knows what it is. Apple gates the tools behind this
-  // dialog; there is no headless path without MDM.
-  ipcMain.handle("system:install-xcode-clt", () => {
-    if (process.platform !== "darwin") {
-      return { ok: false, error: "Only available on macOS" }
-    }
+  // ── Paths / system info (About, Data) ──
+  ipcMain.handle("paths:list", () => ({
+    userData: app.getPath("userData"),
+    logs: app.getPath("logs"),
+    downloads: app.getPath("downloads"),
+    home: app.getPath("home"),
+    cache: app.getPath("sessionData"),
+  }))
+  ipcMain.handle("paths:show", (_e, p: string) => {
     try {
-      const { spawn } = require("child_process") as typeof import("child_process")
-      // Detached + unref: the dialog and the download outlive this call, which
-      // returns as soon as the request is made. Progress lives in Apple's UI.
-      const proc = spawn("xcode-select", ["--install"], {
-        detached: true,
-        stdio: "ignore",
-      })
-      proc.unref()
-      return { ok: true }
-    } catch (e: unknown) {
-      return { ok: false, error: (e as Error).message }
+      shell.showItemInFolder(asPath(p, "path"))
+      return true
+    } catch {
+      return false
+    }
+  })
+  ipcMain.handle("system:info", () => {
+    let diskFree: number | null = null
+    let diskTotal: number | null = null
+    try {
+      const statfs = (fs as unknown as { statfsSync?: (p: string) => { bsize: number; blocks: number; bavail: number } }).statfsSync
+      if (statfs) {
+        const st = statfs(app.getPath("userData"))
+        diskFree = st.bsize * st.bavail
+        diskTotal = st.bsize * st.blocks
+      }
+    } catch {}
+
+    let appMemory = 0
+    let appCpu = 0
+    try {
+      for (const m of app.getAppMetrics()) {
+        appMemory += (m.memory?.workingSetSize || 0) * 1024
+        appCpu += m.cpu?.percentCPUUsage || 0
+      }
+    } catch {}
+
+    return {
+      platform: process.platform,
+      osRelease: os.release(),
+      arch: process.arch,
+      cpuModel: os.cpus()[0]?.model || null,
+      cpuCount: os.cpus().length,
+      totalMemory: os.totalmem(),
+      freeMemory: os.freemem(),
+      diskFree,
+      diskTotal,
+      appMemory,
+      appCpu,
+      uptime: process.uptime(),
+      electronVersion: process.versions.electron,
+      chromeVersion: process.versions.chrome,
+      appVersion: getAppVersion(),
+      locale: app.getLocale(),
+      packaged: app.isPackaged,
     }
   })
 
-  // The running app's own version. `system:info` also carries it, but that call
-  // walks the process tree and stats the disk — far too much for the release
-  // notes check that runs on every startup.
-  ipcMain.handle("app:version", () => getLauncherVersion())
-
-  // See HAS_RUN_BEFORE: the release notes ask this to tell an upgrade from a
-  // pre-0.9.10 build (announce what it missed) from a fresh install (announce
-  // nothing).
+  // The running app's own version.
+  ipcMain.handle("app:version", () => getAppVersion())
   ipcMain.handle("app:has-run-before", () => HAS_RUN_BEFORE)
 
-  // Settings → Data → "Clear cache". Chromium's HTTP/image cache only: it is
-  // rebuildable by definition, so nothing here needs a confirmation. Storage
-  // (localStorage) is deliberately NOT touched — that is the renderer's own
-  // state and it has its own control next to this one.
+  // Settings → Data → "Clear cache". Chromium's HTTP/image cache only.
   ipcMain.handle("app:clear-cache", async () => {
     try {
       const s = session.defaultSession
-      // Measured first so the toast can say how much came back; a cache that
-      // refuses to report its size still clears.
       const freed = await s.getCacheSize().catch(() => 0)
       await s.clearCache()
       return { ok: true, freed }
@@ -1762,8 +556,7 @@ function setupIPC(): void {
   })
 
   // GPU acceleration is a launch-time Chromium switch, so the toggle in
-  // Settings → General only takes effect on a fresh process. `quit` (not
-  // `exit`) so `before-quit` still stops the agents and the daemon.
+  // Settings → General only takes effect on a fresh process.
   ipcMain.handle("app:relaunch", () => {
     app.relaunch()
     app.quit()
@@ -1771,8 +564,7 @@ function setupIPC(): void {
   })
 
   // "Test connection" behind Settings → Network. Any HTTP answer proves the
-  // address resolves and something is listening — a 404 from a workspace
-  // server still means the URL is right — so only transport failures fail.
+  // address resolves and something is listening.
   ipcMain.handle("workspace:test-endpoint", async (_e, url: string) => {
     let origin: string
     try {
@@ -1798,59 +590,27 @@ function setupIPC(): void {
     }
   })
 
-  ipcMain.handle("core:update", async () => {
-    // Run bundled `node npm-cli.js` directly (no shell, argv array) so a
-    // non-ASCII home path survives on Windows — the `.cmd` shim does not.
-    const npm = resolveNpmInvocation()
-    if (!npm) return { success: false, error: "npm runtime not found" }
-    try {
-      await execFileAsync(
-        npm.node,
-        [
-          ...npm.args,
-          "install",
-          "--prefix",
-          PORTABLE_NODE_DIR,
-          `${CORE_PKG}@latest`,
-          "--ignore-scripts",
-        ],
-        {
-          timeout: 120000,
-          maxBuffer: 64 * 1024 * 1024,
-          env: withPathEnv(
-            PORTABLE_NODE_DIR +
-              (process.platform === "win32" ? ";" : ":") +
-              readPathEnv(),
-          ),
-        },
-      )
-      // Report what will actually load, not merely what npm just wrote: when
-      // the published core trails the one packaged with the app, the app's copy
-      // is still the one that runs. See coreTiers.
-      coreVersion = readCoreVersion()
-      if (agentManager) {
-        try {
-          await agentManager.stopAll()
-        } catch {}
-        agentManager._ensureDaemon().catch(() => {})
-      }
-      return { success: true, version: coreVersion }
-    } catch (e: unknown) {
-      return { success: false, error: (e as Error).message }
-    }
-  })
-
-  // Only ever hand web URLs to the OS. Without this guard the renderer could
-  // pass `file:///…` to open arbitrary local paths, or a registered custom
-  // scheme to launch another installed app — neither is something any caller
-  // here needs (every call site passes an https docs/repo/release link).
+  // Only ever hand web URLs to the OS.
   ipcMain.handle("shell:open-external", (_e, url) => openExternalSafely(url))
-  ipcMain.handle("debug:env", () => ({
-    ComSpec: process.env.ComSpec,
-    SystemRoot: process.env.SystemRoot,
-    PATH: (process.env.PATH || "").slice(0, 500),
-    platform: process.platform,
-  }))
+
+  // ── Notifications ──
+  ipcMain.handle("notifications:list", () => listNotifications())
+  ipcMain.handle("notifications:push", (_e, input) => pushNotification(input))
+  ipcMain.handle("notifications:mark-read", (_e, id: string) => {
+    markRead(id)
+    return true
+  })
+  ipcMain.handle("notifications:mark-all-read", () => {
+    markAllRead()
+    return true
+  })
+  ipcMain.handle("notifications:clear", (_e, id?: string) => {
+    if (id) clearOneNotification(id)
+    else clearAllNotifications()
+    return true
+  })
+  ipcMain.handle("notifications:get-prefs", () => getNotifPrefs())
+  ipcMain.handle("notifications:set-prefs", (_e, prefs) => setNotifPrefs(prefs))
 
   // Account + the embedded workspace view. Registered last and kept in its own
   // module: signing in gates the workspace half of the app and nothing else,
@@ -1858,9 +618,7 @@ function setupIPC(): void {
   registerAccountIpc({
     endpoint: () => normalizeWorkspaceEndpoint(store.get("workspaceEndpoint")),
     getWindow: () => mainWindow,
-    // The launcher's own look and feel, which the hosted workspace shares.
-    // `nativeTheme.themeSource` is already the mode the renderer put there
-    // (see theme:set-source), so main does not keep a second copy of it.
+    // The app's own look and feel, which the hosted workspace shares.
     appearance: () => ({
       theme: nativeTheme.themeSource as ThemeMode,
       language: getMainLanguage(),
@@ -1891,10 +649,6 @@ if (!gotLock) {
       mainWindow.focus()
       return
     }
-    // No window to raise — a headless first instance, or one whose window was
-    // destroyed. The second instance has already given up its lock and is
-    // about to exit, so doing nothing here means clicking the icon produces
-    // absolutely no response: the app is running and looks unopenable.
     createWindow()
   })
 }
@@ -1902,172 +656,35 @@ if (!gotLock) {
 app.whenReady().then(async () => {
   // The bundled workspace app, served off disk over that scheme.
   serveWorkspaceBundle()
-  // Local control server (--control-port=N / OPENAGENTS_CONTROL_PORT): a
-  // curl-able status/driving surface for remote tests and diagnostics. Started
-  // FIRST, before the first-run bootstrap (portable Node download can take
-  // minutes) — every dep below reads the CURRENT module state, so /status
-  // answers immediately (coreReady:false, windowOpen:false) and fills in as
-  // the app boots. See control-server.ts for auth and endpoint details.
-  const controlPort = configuredControlPort()
-  if (controlPort !== null) {
-    const appStartedAt = Date.now()
-    // Every driving endpoint needs the core, which finishes loading minutes
-    // after start on a cold boot. One shared guard whose message the control
-    // server turns into a 503 ("retry shortly") rather than a 500.
-    const withCore = (): AgentManager => {
-      if (!agentManager) throw new Error("core not loaded yet — retry shortly")
-      return agentManager
-    }
-    startControlServer(controlPort, {
-      getStatus: () => ({
-        // Not app.getVersion(): running the unpackaged build (which is what a
-        // pre-release end-to-end run does) makes Electron report ITS version,
-        // so the test's report would file the results under "42.3.3".
-        version: getLauncherVersion(),
-        platform: process.platform,
-        arch: process.arch,
-        headless: isHeadless,
-        uptimeSeconds: Math.round((Date.now() - appStartedAt) / 1000),
-        windowOpen: !!mainWindow && !mainWindow.isDestroyed(),
-        coreReady: !!agentManager,
-        daemonPid: agentManager?.getDaemonPid() ?? null,
-      }),
-      getAgents: () => (agentManager ? agentManager.getAgents() : []),
-      core: async () => withCore().getCoreInfo(),
-      createAgent: (opts) =>
-        withCore().addAgent({
-          name: opts.name,
-          type: opts.type,
-          path: opts.path,
-        }),
-      saveEnv: async (opts) =>
-        opts.name
-          ? withCore().saveAgentInstanceEnv(opts.name, opts.env)
-          : withCore().saveAgentEnv(opts.type as string, opts.env),
-      connectWorkspace: (name, workspace) =>
-        withCore().connectWorkspace(name, workspace),
-      startAgent: (name) => withCore().startAgent(name),
-      stopAgent: (name) => withCore().stopAgent(name),
-      removeAgent: (name) => withCore().removeAgent(name),
-      workspaces: () => withCore().getNetworks(),
-      sendChat: (input) => withCore().sendChatMessage(input),
-      chatMessages: (workspaceId, channelName, limit) =>
-        withCore().getChatMessages(workspaceId, channelName, limit),
-      quit: () => app.quit(),
-      screenshot: async () => {
-        if (!mainWindow || mainWindow.isDestroyed()) return null
-        const image = await mainWindow.webContents.capturePage()
-        return image.toPNG()
-      },
-      window: (action) => {
-        if (action === "create" || action === "show") createWindow()
-        else if (mainWindow && !mainWindow.isDestroyed()) mainWindow.hide()
-        return !!mainWindow && !mainWindow.isDestroyed()
-      },
-      logFiles: () => ({
-        startup: STARTUP_LOG,
-        daemon: path.join(os.homedir(), ".openagents", "daemon.log"),
-        renderer: rendererLogPath(),
-      }),
-    })
-      .then((srv) =>
-        slog(`Control server on 127.0.0.1:${srv.port} (token: ${srv.tokenFile})`),
-      )
-      .catch((err) =>
-        slog(`Control server FAILED to start: ${(err as Error).message}`),
-      )
-  }
 
   installApplicationMenu()
 
   // The window frame is drawn by the OS, so the OS has to be told which way the
-  // app is themed — otherwise a dark app keeps a light Windows title bar, which
-  // is what it looked like. Electron turns this into DWMWA_USE_IMMERSIVE_DARK_MODE
-  // on Windows and the equivalent appearance on macOS.
-  //
-  // Applied here, before the first window exists, and mirrored into settings.json
-  // by the `theme:set-source` handler below: the renderer keeps its own copy in
-  // localStorage (read synchronously, so the page never flashes the wrong theme),
-  // but that is unreachable from the main process at startup. Without a
-  // main-side copy the frame would open in the system theme and only correct
-  // itself once the renderer booted and called in — a visible flicker on every
-  // launch for anyone not on the system default.
+  // app is themed — otherwise a dark app keeps a light Windows title bar.
   applyThemeSource(store.get("themeMode"))
-  // The window buttons wear the stored skin's rail colour; see setChromeSkin.
   setChromeSkin(null, store.get("skin"))
 
-  // Fires both when the renderer changes the mode and when the OS flips while
-  // the app is on `system`. The window-controls overlay is a plate the app
-  // colours itself, so unlike the old frame it does not repaint on its own.
   nativeTheme.on("updated", () => refreshTitleBarOverlay(mainWindow))
 
-  // Apply user settings that must reach the OS / network layer on every launch
-  // (the renderer only writes them to the store; the main process is what makes
-  // them take effect).
   applyStartOnBoot()
   applyProxyFromSettings(store)
-  // Resolving the OS proxy needs a session, so it cannot be synchronous. It
-  // settles in milliseconds, well before the first agent CLI is spawned.
-  void adoptSystemProxyForChildren(store)
 
   // Restore the UI language before the tray is built or any startup
   // notification fires, so main's strings match the renderer from the first
   // frame instead of falling back to the OS locale until the renderer syncs.
   setMainLanguage(store.get("language"))
 
-  // Resolve the download region BEFORE any runtime download runs. `downloadRegion`
-  // ('auto' | 'global' | 'cn') lets the user (Settings → Network) or support/QA
-  // pin the origin; default 'auto' detects mainland China by timezone/locale and
-  // routes Node/npm/core through the npmmirror mirror (with the official origin
-  // as fallback). Also point npm's own registry at the mirror so agent installs
-  // the core/daemon spawn go fast too.
-  applyDownloadRegion(store.get("downloadRegion"))
-  // Measure which npm registry actually answers, in the background: it only
-  // has to be settled before the first agent install, which is minutes away
-  // behind onboarding, and awaiting it here would delay the splash for nothing.
-  const registryTuning = tuneNpmRegistry(store, CORE_PKG).catch((e: unknown) => {
-    slog(`npm registry probe failed: ${(e as Error).message}`)
-  })
-
   setupIPC()
   setupAutoUpdater({
     getWindow: () => mainWindow,
     log: slog,
-    // "Automatic updates" ON (default) = background checks auto-download, and
-    // electron-updater installs on the next quit. OFF = still check and still
-    // notify, but wait for the user to press Download.
     isAutoUpdateEnabled: () => store.get("autoUpdate") !== false,
-    // Optional mirror of the release feed, for networks where the default
-    // origin is slow (mainland China without a proxy). Blank = packaged origin.
     feedUrlOverride: store.get("updateFeedUrl"),
-    // Stop chat polling + the daemon/agent subprocesses before the installer
-    // runs. On Windows a live daemon holds locks under the install dir, so the
-    // NSIS overwrite silently fails and the relaunch comes back on the old
-    // version. before-quit also calls stopAll, but that fires without being
-    // awaited during quit — here we await it so teardown completes first.
-    beforeInstall: async () => {
-      try {
-        if (agentManager) agentManager.stopAllChatPolling()
-      } catch {}
-      try {
-        if (agentManager) await agentManager.stopAll()
-      } catch {}
-    },
-    // beforeInstall already stopped the daemon by the time a handoff can fail.
-    // Without this the user is left in a running app with every agent offline
-    // and no way back short of a manual restart.
-    resumeAfterFailedInstall: async () => {
-      try {
-        if (agentManager) await agentManager._ensureDaemon()
-      } catch {}
-    },
+    beforeInstall: async () => {},
     onDownloaded: (version) => {
       // A background auto-download finished. Make it discoverable: notify the
       // user and refresh the tray so "Restart to update" appears. The install
       // itself happens on the next quit, or immediately if the user restarts.
-      // Guard against duplicate notifications: electron-updater re-emits
-      // update-downloaded from cache on every subsequent check once a package
-      // is staged, so only notify once per version.
       updateTrayMenu()
       if (_lastUpdateNotifiedVersion === version) return
       _lastUpdateNotifiedVersion = version
@@ -2080,9 +697,6 @@ app.whenReady().then(async () => {
         pushNotification({
           kind: "update_available",
           title: t("updateReadyTitle"),
-          // "when you restart" was misleading for a tray-resident app: closing
-          // the window only hides it, so the install never ran and the prompts
-          // piled up. Point at the button that actually performs the install.
           body: t("updateReadyBody", { version }),
           source: "launcher-update",
           // Clicking the toast (or the entry in the notification centre) has to
@@ -2095,309 +709,33 @@ app.whenReady().then(async () => {
   })
   createTray()
 
-  // NOTE: We deliberately do NOT wipe derived caches (agent catalog + the
-  // downloaded core library) on an app upgrade. Clearing the core forced
-  // ensureCoreLibrary() to re-download it on the next launch, and whenever
-  // that download failed (offline, proxy/VPN, AV-blocked) the in-process
-  // connector stayed null — so onboarding's first install died at the
-  // "preparing the installer" step with no obvious cause. ensureCoreLibrary()
-  // already self-heals a stale core (it compares the installed version against
-  // npm `latest` and reinstalls when they differ), so the pre-emptive wipe was
-  // pure downside. The previously-installed core keeps working across upgrades.
-
-  // Detect a working bundled node, not just file presence. A previous
-  // download interrupted by ECONNRESET leaves a corrupt node.exe at the
-  // expected size — file exists, but Windows refuses to spawn it
-  // ("此应用无法在你的电脑上运行"), which historically left every install,
-  // update and daemon spawn broken forever. Smoke-test up front and wipe
-  // anything that fails so the install path re-runs.
-  const bundledNodePath =
-    process.platform === "win32"
-      ? path.join(PORTABLE_NODE_DIR, "node.exe")
-      : path.join(PORTABLE_NODE_DIR, "node")
-  const altUnixNode = path.join(PORTABLE_NODE_DIR, "bin", "node")
-  let nodeExists = false
-  if (fs.existsSync(bundledNodePath)) {
-    if (canExecuteNodeBinary(bundledNodePath)) {
-      nodeExists = true
-    } else {
-      slog(
-        `bundled node at ${bundledNodePath} failed smoke test — wiping for re-download`,
-      )
-      try {
-        fs.rmSync(PORTABLE_NODE_DIR, { recursive: true, force: true })
-      } catch {}
-    }
-  } else if (process.platform !== "win32" && fs.existsSync(altUnixNode)) {
-    nodeExists = canExecuteNodeBinary(altUnixNode)
-    if (!nodeExists) {
-      slog(
-        `bundled node at ${altUnixNode} failed smoke test — wiping for re-download`,
-      )
-      try {
-        fs.rmSync(PORTABLE_NODE_DIR, { recursive: true, force: true })
-      } catch {}
-    }
-  }
-
-  let splash: BrowserWindow | null = null
-
-  if (isHeadless && process.platform === "darwin" && app.dock) app.dock.hide()
-
-  if (!isHeadless) {
-    const c = splashPalette({
-      accent: store.get("accent"),
-      skin: store.get("skin"),
-    })
-    splash = new BrowserWindow({
-      width: 420,
-      height: 260,
-      frame: false,
-      resizable: false,
-      center: true,
-      alwaysOnTop: true,
-      transparent: false,
-      skipTaskbar: true,
-      // Painted before the document loads. Without it a dark-themed app opens
-      // on a white rectangle for a frame or two, which is the flash the window
-      // background exists to prevent.
-      backgroundColor: c.bg,
-      webPreferences: { nodeIntegration: false, contextIsolation: true },
-    })
-    // Written as plain HTML and encoded on the way out. Hand-escaping `#` as
-    // `%23` and `%` as `%25` inside a `data:` literal is how the bar ended up
-    // stuck on a colour nothing else in the app uses.
-    const splashHtml = `
-      <html><body style="margin:0;font-family:system-ui;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:${c.bg};color:${c.title};">
-        <div style="font-size:28px;font-weight:700;margin-bottom:8px;">OpenAgents</div>
-        <div id="msg" style="font-size:14px;color:${c.msg};margin-bottom:20px;">${!nodeExists ? "Preparing first launch..." : "Starting..."}</div>
-        <div style="width:240px;height:6px;background:${c.track};border-radius:3px;overflow:hidden;">
-          <div id="bar" style="width:10%;height:100%;background:${c.accent};border-radius:3px;transition:width 0.5s;"></div>
-        </div>
-        <div id="detail" style="font-size:11px;color:${c.detail};margin-top:8px;"></div>
-      </body></html>`
-    splash.loadURL(
-      "data:text/html;charset=utf-8," + encodeURIComponent(splashHtml),
-    )
-    splash.show()
-  }
-
-  const updateSplash = (msg: string, pct: number, detail?: string): void => {
-    if (splash && !splash.isDestroyed()) {
-      splash.webContents
-        .executeJavaScript(
-          `
-        document.getElementById('msg').textContent='${msg.replace(/'/g, "\\'")}';
-        document.getElementById('bar').style.width='${pct}%';
-        document.getElementById('detail').textContent='${(detail || "").replace(/'/g, "\\'")}';
-      `,
-        )
-        .catch(() => {})
-    }
-  }
-
-  if (!nodeExists) {
-    slog("Node.js not found — starting download")
-    updateSplash("Downloading Node.js runtime...", 20, "This only happens once")
-    try {
-      await downloadNodejs(PORTABLE_NODE_DIR, (pct, detail) => {
-        updateSplash("Downloading Node.js...", 20 + pct * 0.5, detail)
-      })
-      updateSplash("Node.js installed", 70)
-    } catch (e: unknown) {
-      slog(`Node.js install FAILED: ${(e as Error).message}`)
-      updateSplash(
-        "Setup failed: " + (e as Error).message,
-        50,
-        "Check ~/.openagents/startup.log",
-      )
-      await new Promise((r) => setTimeout(r, 5000))
-    }
-  } else {
-    updateSplash("Starting...", 50)
-  }
-
-  const npmCliPath = path.join(
-    PORTABLE_NODE_DIR,
-    "node_modules",
-    "npm",
-    "bin",
-    "npm-cli.js",
-  )
-  if (!fs.existsSync(npmCliPath)) {
-    slog("npm not found — installing...")
-    updateSplash("Installing npm...", 55)
-    try {
-      const npmVersion = "10.9.8"
-      const npmTgz = path.join(os.tmpdir(), `npm-${npmVersion}.tgz`)
-      const npmModDir = path.join(PORTABLE_NODE_DIR, "node_modules", "npm")
-      await downloadToFile(npmUrls(`npm/-/npm-${npmVersion}.tgz`), npmTgz, {
-        onProgress: (pct, detail) =>
-          updateSplash("Installing npm...", 55 + pct * 0.05, detail),
-        log: slog,
-      })
-      fs.mkdirSync(npmModDir, { recursive: true })
-      extractTarball(npmTgz, npmModDir)
-      try {
-        fs.unlinkSync(npmTgz)
-      } catch {}
-      if (process.platform === "win32") {
-        // %~dp0-relative so cmd.exe (which reads this .cmd file with the OEM
-        // code page) never sees an embedded non-ASCII path. See the matching
-        // shim in downloadNodejs().
-        fs.writeFileSync(
-          path.join(PORTABLE_NODE_DIR, "npm.cmd"),
-          `@echo off\r\n"%~dp0node.exe" "%~dp0node_modules\\npm\\bin\\npm-cli.js" %*\r\n`,
-        )
-      }
-      slog("npm installed")
-    } catch (e: unknown) {
-      slog("npm install failed: " + (e as Error).message)
-    }
-  }
-
-  updateSplash("Checking for updates...", 60)
-  _updateSplash = updateSplash
-
-  // Prepend the bundled portable runtime to PATH so child processes
-  // (npm install, daemon spawn, etc) resolve `node` / `npm` to OUR copies,
-  // not to whatever the user happens to have first on PATH.
-  //
-  // Critical on Windows: nvm-for-windows ships a bare Unix shebang script
-  // named `npm` (no extension) alongside `npm.cmd`. If `where npm` returns
-  // the Unix script first, cmd.exe refuses to run it ("is not recognized
-  // as an internal or external command") — breaks every install. The
-  // bundled prefix only contains `npm.cmd`, so forcing PORTABLE_NODE_DIR
-  // to the front gets us a runnable shim.
-  //
-  // Use read/writePathEnv so we update Windows' canonical `Path` key in
-  // place rather than creating a parallel `PATH` key that the spawn env
-  // spread can leak to children inconsistently.
-  if (process.platform === "win32") {
-    const currentPath = readPathEnv()
-    const pathDirs = currentPath.toLowerCase().split(";")
-    const candidates = [
-      PORTABLE_NODE_DIR,
-      path.join(process.env.APPDATA || "", "npm"),
-      path.join(process.env.ProgramFiles || "C:\\Program Files", "nodejs"),
-      path.join(process.env.LOCALAPPDATA || "", "Programs", "nodejs"),
-    ].filter((d) => {
-      try {
-        return d && fs.existsSync(d) && !pathDirs.includes(d.toLowerCase())
-      } catch {
-        return false
-      }
-    })
-    if (candidates.length) {
-      writePathEnv(candidates.join(";") + ";" + currentPath)
-    }
-  } else {
-    const binDir = path.join(PORTABLE_NODE_DIR, "bin")
-    const currentPath = readPathEnv()
-    if (fs.existsSync(binDir) && !currentPath.includes(binDir)) {
-      writePathEnv(binDir + ":" + currentPath)
-    }
-  }
-
-  // The core install's npm fallback path shells out to npm, so let the probe
-  // land first — by now it has almost certainly already finished.
-  await registryTuning
-  await ensureCoreLibrary()
-
-  if (
-    fs.existsSync(GLOBAL_MODULES) &&
-    !require("module").globalPaths.includes(GLOBAL_MODULES)
-  ) {
-    require("module").globalPaths.push(GLOBAL_MODULES)
-  }
-
-  if (splash && !splash.isDestroyed()) {
-    splash.webContents
-      .executeJavaScript(
-        `
-      document.getElementById('msg').textContent='Ready!';
-      document.getElementById('bar').style.width='100%';
-    `,
-      )
-      .catch(() => {})
-    await new Promise((r) => setTimeout(r, 500))
-    splash.close()
-    splash = null
-  }
-
-  // Create the main window BEFORE loading the connector. AgentManager's
-  // constructor performs a synchronous `require()` of the agent-launcher
-  // core, which on Windows can take 1-2s while Defender scans the freshly
-  // extracted files. Doing it after the BrowserWindow exists lets the
-  // renderer load in parallel — the user sees the UI instead of a frozen
-  // post-splash desktop. IPC handlers safely return defaults while
-  // agentManager is still undefined; the onboarding catalog poll retries
-  // until it lands.
   if (!isHeadless) createWindow()
-  // Past this line the user has something to look at, so later failures are
-  // logged rather than fatal. Headless runs count too: they are supposed to
-  // have no window.
   markUiReached()
-
-  agentManager = new AgentManager(store)
-  agentManager!
-    ._ensureDaemon()
-    // Settings → Agents "start agents on launch". Chained onto the daemon so
-    // the core is actually loaded before we ask it to start anything; a failure
-    // here is non-fatal, the user can still start each agent by hand.
-    .then(() => {
-      if (store.get("agentAutoStart") !== true) return
-      slog("agentAutoStart is on — starting all configured agents")
-      return agentManager?.startAll()
-    })
-    .catch(() => {})
-
-  agentManager.on("chat-event", (ev: ChatStreamEvent) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send("chat:event", ev)
-    }
-  })
 
   setInterval(() => updateTrayMenu(), 5000)
 
-  const FOUR_HOURS = 4 * 60 * 60 * 1000
-  setInterval(() => checkCoreUpdate().catch(() => {}), FOUR_HOURS)
-  setTimeout(() => checkCoreUpdate().catch(() => {}), 30000)
-
-  // Launcher self-update: check shortly after launch and every half hour
+  // App self-update: check shortly after launch and every half hour
   // thereafter. Surfaces a banner in the renderer; whether the download starts
-  // by itself depends on the "Automatic updates" setting, which
-  // checkForUpdatesOnStartup reads to set autoDownload.
-  //
-  // Note we no longer skip the *check* when that setting is off. It used to
-  // return early, which meant turning off automatic updates also turned off
-  // ever being told a new version exists — the user just silently stayed on an
-  // old build. Off now means "don't download it for me", not "don't tell me".
+  // by itself depends on the "Automatic updates" setting.
   const THIRTY_MIN = 30 * 60 * 1000
-  let _lastLauncherUpdateCheck = 0
-  const launcherUpdateCheck = (minGapMs = 0): void => {
+  let _lastUpdateCheck = 0
+  const updateCheck = (minGapMs = 0): void => {
     const now = Date.now()
-    if (minGapMs > 0 && now - _lastLauncherUpdateCheck < minGapMs) return
-    _lastLauncherUpdateCheck = now
+    if (minGapMs > 0 && now - _lastUpdateCheck < minGapMs) return
+    _lastUpdateCheck = now
     void checkForUpdatesOnStartup().then((ok) => {
-      // A check that never completed shouldn't hold the throttle window: the
-      // next foreground event should be free to retry immediately rather than
-      // waiting the gap out on the strength of a failure.
-      if (!ok) _lastLauncherUpdateCheck = 0
+      if (!ok) _lastUpdateCheck = 0
     })
   }
 
   // The first check retries with a backoff instead of firing once and giving
-  // up. On a fresh install the 20s mark lands in the middle of the first-run
-  // Node/core downloads and — for users who bring up a VPN right after
-  // installing — often before the tunnel is. One silent failure there used to
-  // mean no update prompt at all for the next half hour, which reads as "the
-  // launcher never noticed the new version".
+  // up — a VPN brought up right after install shouldn't cost the next half
+  // hour's worth of checks.
   const STARTUP_CHECK_DELAYS = [20_000, 60_000, 180_000, 600_000]
   const runStartupCheck = async (attempt = 0): Promise<void> => {
     const ok = await checkForUpdatesOnStartup().catch(() => false)
     if (ok) {
-      _lastLauncherUpdateCheck = Date.now()
+      _lastUpdateCheck = Date.now()
       return
     }
     const next = attempt + 1
@@ -2406,14 +744,11 @@ app.whenReady().then(async () => {
     }
   }
   setTimeout(() => void runStartupCheck(), STARTUP_CHECK_DELAYS[0])
-  // Every 30 min (was every 4h — too long for a tray-resident app to ever
-  // surface a fresh release while it stays open).
-  setInterval(() => launcherUpdateCheck(), THIRTY_MIN)
+  setInterval(() => updateCheck(), THIRTY_MIN)
   // Also check whenever the user brings the window back to the foreground, so a
   // release published while they had it in the tray is discovered the moment
-  // they look, not up to half an hour later. Throttled to at most once per 10 min.
-  const onWindowForeground = (): void => launcherUpdateCheck(10 * 60 * 1000)
-  app.on("browser-window-focus", onWindowForeground)
+  // they look. Throttled to at most once per 10 min.
+  app.on("browser-window-focus", () => updateCheck(10 * 60 * 1000))
 }).catch(reportStartupError)
 
 app.on("window-all-closed", () => {
@@ -2426,10 +761,4 @@ app.on("activate", () => {
 
 app.on("before-quit", () => {
   ;(app as typeof app & { isQuitting: boolean }).isQuitting = true
-  try {
-    if (agentManager) agentManager.stopAllChatPolling()
-  } catch {}
-  try {
-    if (agentManager) agentManager.stopAll()
-  } catch {}
 })

@@ -12,10 +12,9 @@ import { SettingsCard,
 } from "../components/settings-card"
 import type { RuntimeInfo, SystemInfo } from "@renderer/types"
 
-const REPO = "https://github.com/openagents-org/openagents"
+const REPO = "https://github.com/memsa771-hub/pai-os"
 
 const LINKS = [
-  { id: "docs", url: "https://openagents.org/docs" },
   { id: "repo", url: REPO },
   { id: "issues", url: `${REPO}/issues` },
   { id: "releases", url: `${REPO}/releases` },
@@ -36,10 +35,6 @@ export function AboutSection({
 
   return (
     <>
-      {/* This page is about the app you are running — the launcher — not the
-          OpenAgents platform as a whole. The version badge belongs to it, so
-          the name has to say "launcher" too, and the platform gets one line of
-          context underneath rather than top billing. */}
       <Card className="mb-5 flex-row items-center gap-5 px-6 py-6">
         <BrandMark className="size-14" />
         <div className="min-w-0">

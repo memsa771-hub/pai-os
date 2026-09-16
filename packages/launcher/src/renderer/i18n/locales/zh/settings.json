@@ -273,7 +273,7 @@
   "data": {
     "locationsGroup": "存储位置",
     "userData": "应用数据",
-    "openagentsHome": "OpenAgents 主目录",
+    "openagentsHome": "Placement AI 主目录",
     "logs": "日志",
     "downloads": "下载",
     "cache": "缓存",
@@ -339,7 +339,7 @@
     "versionsGroup": "版本信息",
     "nodejs": "Node.js",
     "npm": "npm",
-    "coreLibrary": "OpenAgents Core",
+    "coreLibrary": "Placement AI Core",
     "latestAvailable": "最新可用版本",
     "unableToCheck": "无法检查",
     "ok": "正常",
@@ -371,7 +371,7 @@
   },
   "about": {
     "productName": "$t(common.appName)",
-    "tagline": "$t(common.brandName) 桌面客户端 · 安装、配置并运行本机智能体",
+    "tagline": "$t(common.brandName) 桌面版 · 同一个工作区与 PAI 顾问，原生窗口呈现",
     "copyright": "© {{year}} $t(common.brandName)",
     "versionGroup": "版本与构建",
     "buildType": "构建类型",

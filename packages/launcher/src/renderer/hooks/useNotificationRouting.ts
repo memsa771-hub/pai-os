@@ -1,5 +1,4 @@
 import { useEffect } from "react"
-import { useAccountStore } from "@renderer/store/account"
 
 import { useNotificationsStore } from "@renderer/store/notifications"
 import { useUiStore } from "@renderer/store/ui"
@@ -9,13 +8,11 @@ import type { NotifRecord } from "@renderer/types"
  * Where a notification leads, as the main process describes it when pushing.
  *
  *   settingsSection  a Settings sub-page
- *   tab              a plain page
  *
  * `unknown` rather than `string`: this arrives over IPC from a store on disk,
  * so every field is checked before it is used.
  */
 interface NotificationRoute {
-  tab?: unknown
   settingsSection?: unknown
 }
 
@@ -29,8 +26,7 @@ export function canRouteNotification(record: NotifRecord): boolean {
   const payload = (record.payload ?? {}) as NotificationRoute
   return (
     record.source === "launcher-update" ||
-    typeof payload.settingsSection === "string" ||
-    typeof payload.tab === "string"
+    typeof payload.settingsSection === "string"
   )
 }
 
@@ -44,7 +40,6 @@ export function canRouteNotification(record: NotifRecord): boolean {
  */
 export function routeNotification(record: NotifRecord): boolean {
   const payload = (record.payload ?? {}) as NotificationRoute
-  if (canRouteNotification(record)) useAccountStore.getState().exitWorkspace()
   const ui = useUiStore.getState()
   let acted = false
 
@@ -58,11 +53,6 @@ export function routeNotification(record: NotifRecord): boolean {
 
   if (typeof payload.settingsSection === "string") {
     ui.openSettingsSection(payload.settingsSection)
-    return true
-  }
-
-  if (typeof payload.tab === "string") {
-    ui.setCurrentTab(payload.tab)
     return true
   }
   return acted

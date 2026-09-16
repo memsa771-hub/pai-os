@@ -12,19 +12,28 @@ const workspaceEnv = loadEnv('', resolve(__dirname, '../../workspace'), '')
 const SUPABASE_URL = workspaceEnv.SUPABASE_URL || process.env.SUPABASE_URL || ''
 const SUPABASE_ANON_KEY = workspaceEnv.SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || ''
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-  // A silently empty value here means the launcher's native sign-in fails
-  // with no clue why — fail loud at build time instead.
+  // A silently empty value here means sign-in fails with no clue why — fail
+  // loud at build time instead.
   console.warn(
     '[electron.vite.config] SUPABASE_URL/SUPABASE_ANON_KEY are not set (checked workspace/.env) — ' +
-    'the launcher will ship with no Supabase config and native sign-in will not work.'
+    'PAI Desktop will ship with no Supabase config and native sign-in will not work.'
   )
 }
+
+// The same backend/web origins Web itself uses (src/main/auth/endpoints.ts's
+// defaults), so a change to workspace/.env moves both without a source edit.
+// Left unset here, endpoints.ts's own hardcoded defaults apply — never
+// invented in this file.
+const PAI_API_BASE = workspaceEnv.NEXT_PUBLIC_API_URL || process.env.PAI_API_BASE || ''
+const PAI_WEB_BASE = workspaceEnv.NEXT_PUBLIC_APP_URL || process.env.PAI_WEB_BASE || ''
 
 export default defineConfig({
   main: {
     define: {
       'process.env.SUPABASE_URL': JSON.stringify(SUPABASE_URL),
-      'process.env.SUPABASE_ANON_KEY': JSON.stringify(SUPABASE_ANON_KEY)
+      'process.env.SUPABASE_ANON_KEY': JSON.stringify(SUPABASE_ANON_KEY),
+      'process.env.PAI_API_BASE': JSON.stringify(PAI_API_BASE),
+      'process.env.PAI_WEB_BASE': JSON.stringify(PAI_WEB_BASE)
     },
     plugins: [externalizeDepsPlugin()]
   },

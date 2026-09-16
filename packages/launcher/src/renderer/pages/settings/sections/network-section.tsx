@@ -5,13 +5,6 @@ import { PlugZap } from "lucide-react"
 import { Button } from "@renderer/components/ui/button"
 import { Input } from "@renderer/components/ui/input"
 import { Spinner } from "@renderer/components/ui/spinner"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@renderer/components/ui/select"
 import { cn } from "@renderer/lib/utils"
 import { SettingsCard, Row } from "../components/settings-card"
 import type { SettingsValues, Update } from "../use-settings-state"
@@ -49,37 +42,6 @@ export function NetworkSection({
 
   return (
     <>
-      {/* Routes the Node runtime, npm and the agent core through npmmirror. It
-          was previously auto-detected from timezone/locale with no way to
-          correct a wrong guess — which left users on a slow origin with no
-          recourse but a system-wide proxy. */}
-      <SettingsCard title={t("settings.network.mirrorGroup")}>
-        <Row
-          label={t("settings.network.downloadRegion")}
-          desc={t("settings.network.downloadRegionDesc")}
-        >
-          <Select
-            value={values.downloadRegion}
-            onValueChange={(v) => update("downloadRegion", v)}
-          >
-            <SelectTrigger size="sm" className="w-52">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="auto">
-                {t("settings.network.regionAuto")}
-              </SelectItem>
-              <SelectItem value="cn">
-                {t("settings.network.regionCn")}
-              </SelectItem>
-              <SelectItem value="global">
-                {t("settings.network.regionGlobal")}
-              </SelectItem>
-            </SelectContent>
-          </Select>
-        </Row>
-      </SettingsCard>
-
       <SettingsCard
         title={t("settings.network.workspaceGroup")}
         action={

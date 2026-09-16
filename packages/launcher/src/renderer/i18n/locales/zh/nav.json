@@ -1,53 +1,4 @@
 {
-  "sections": {
-    "overview": "概览",
-    "manage": "管理",
-    "system": "系统"
-  },
-  "items": {
-    "dashboard": {
-      "label": "此电脑",
-      "description": "查看此电脑、已连接的工作区以及在此运行的智能体。"
-    },
-    "agents": {
-      "label": "智能体",
-      "description": "第 2 步 · 创建智能体、设置 API 密钥、测试并连接"
-    },
-    "workspaces": {
-      "label": "已连接的工作区",
-      "description": "此电脑作为设备加入的工作区"
-    },
-    "chat": {
-      "label": "对话",
-      "description": "与本机已加入的工作区对话"
-    },
-    "connections": {
-      "label": "连接",
-      "description": "连接 GitHub、Slack 等外部平台"
-    },
-    "credentials": {
-      "label": "凭据",
-      "description": "在一处管理 API 密钥与机密信息"
-    },
-    "github": {
-      "label": "GitHub",
-      "description": "绑定仓库并查看 issue / PR"
-    },
-    "logs": {
-      "label": "日志",
-      "description": "查看运行时日志并排查问题"
-    },
-    "settings": {
-      "label": "设置",
-      "description": "应用设置与偏好"
-    }
-  },
-  "daemon": {
-    "running": "守护进程运行中",
-    "starting": "守护进程启动中",
-    "stopped": "守护进程已停止",
-    "offline": "守护进程离线"
-  },
   "notifications": {
     "tooltip": "通知",
     "title": "通知",
@@ -56,17 +7,7 @@
     "clear": "清空",
     "empty": "暂无通知。"
   },
-  "search": "搜索…",
-  "menu": {
-    "label": "更多选项"
-  },
-  "toggleSidebar": "折叠 / 展开侧边栏",
   "collapseSidebar": "折叠侧边栏",
   "expandSidebar": "展开侧边栏",
-  "guide": "快速上手指南",
-  "themeToggle": "主题",
-  "themeTooltip": "主题：{{mode}} — 点击切换为{{next}}",
-  "modeSwitch": "在工作区与此电脑之间切换",
-  "modeLauncher": "此电脑",
-  "modeWorkspace": "工作区"
+  "settings": "设置"
 }

@@ -268,17 +268,6 @@ export interface AccountInfo {
   expiresAt: number
 }
 
-/** One membership from GET /v1/account/workspaces — the account scope. */
-export interface AccountWorkspace {
-  workspaceId: string
-  name: string
-  slug: string
-  /** Shared access token; null for a viewer or a workspace without one. */
-  token: string | null
-  role: "owner" | "admin" | "member" | "viewer"
-  lastActivityAt: string | null
-}
-
 /** Where in the renderer's layout the embedded workspace page is drawn. */
 export interface ViewBounds {
   x: number
@@ -539,7 +528,6 @@ declare global {
       ): Promise<{ account: AccountInfo | null; needsEmailConfirmation: boolean }>
       cancelSignIn(): Promise<void>
       signOut(): Promise<void>
-      listAccountWorkspaces(): Promise<AccountWorkspace[]>
       /** A sign-in that had to move to the browser (Google, GitHub). */
       onSignInExternal(cb: () => void): () => void
       onSignInFailed(cb: (info: { message: string }) => void): () => void
@@ -562,8 +550,8 @@ declare global {
       /** Repeat a launcher toast inside the Workspace; ignored when it is not on screen. */
       showWorkspaceNotice(notice: { message: string; type: string }): Promise<void>
       reloadWorkspaceView(): Promise<void>
-      openWorkspaceHome(): Promise<void>
-      onWorkspaceAction(cb: (action: 'computer' | 'sign-in') => void): () => void
+      /** The embedded page's session broke and it asked to be signed out. */
+      onWorkspaceSignIn(cb: () => void): () => void
     }
   }
 }

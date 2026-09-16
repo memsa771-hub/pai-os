@@ -22,7 +22,7 @@ import { slog } from "./bootstrap/startup-log"
  * local disk.
  */
 
-export const WORKSPACE_SCHEME = "openagents"
+export const WORKSPACE_SCHEME = "pai"
 export const WORKSPACE_HOST = "workspace"
 
 /**

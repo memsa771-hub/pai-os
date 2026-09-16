@@ -24,11 +24,11 @@ interface OpenAgentsAuthContextValue {
   applySession: (session: AuthSession) => void;
 }
 
-// `workspace` is the desktop build: the launcher serves the bundle from
-// openagents://workspace/, so that is this app's own host there — the same way
-// workspace.openagents.org is on the web. Without it the desktop app would
-// decide it was a third-party deployment and show the marketing landing page.
-const OPENAGENTS_HOSTNAMES = ['workspace.openagents.org', 'localhost', 'workspace'];
+// `workspace` is the desktop build: PAI Desktop serves the bundle from
+// pai://workspace/, so that is this app's own host there — the same way
+// placement-ai.com is on the web. Without it the desktop app would decide it
+// was a third-party deployment and show the marketing landing page.
+const PAI_HOSTNAMES = ['placement-ai.com', 'workspace.openagents.org', 'localhost', 'workspace'];
 
 // Refresh well before expiry so a page load never races a lapsed token.
 const REFRESH_MARGIN_SECONDS = 60;
@@ -77,7 +77,7 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-    const isDomain = OPENAGENTS_HOSTNAMES.includes(hostname);
+    const isDomain = PAI_HOSTNAMES.includes(hostname);
     setIsOpenAgentsDomain(isDomain);
 
     if (!isDomain) {

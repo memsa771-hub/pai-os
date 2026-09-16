@@ -27,7 +27,7 @@ export default function WelcomePage(): React.JSX.Element {
     <main className="grid h-full overflow-y-auto bg-background lg:grid-cols-[minmax(0,0.85fr)_minmax(0,1.35fr)]" data-testid="app-welcome">
       <section className="flex min-h-[36rem] flex-col justify-center px-10 py-12 xl:px-20">
         <div className="mb-14 flex items-center gap-3 text-lg font-semibold tracking-tight">
-          <BrandMark className="size-8" /> OpenAgents
+          <BrandMark className="size-8" /> Placement AI
         </div>
         <p className="text-xs font-semibold uppercase tracking-widest text-primary">{t("account.welcome.kicker")}</p>
         <h1 className="mt-5 max-w-lg text-4xl leading-tight font-semibold tracking-tight">{t("account.welcome.title")}</h1>

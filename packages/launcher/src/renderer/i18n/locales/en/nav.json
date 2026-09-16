@@ -1,53 +1,4 @@
 {
-  "sections": {
-    "overview": "Overview",
-    "manage": "Manage",
-    "system": "System"
-  },
-  "items": {
-    "dashboard": {
-      "label": "This Computer",
-      "description": "Your device, workspace connections, and the agents running here."
-    },
-    "agents": {
-      "label": "Agents",
-      "description": "Step 2 · Create agents, set API keys, test and connect"
-    },
-    "workspaces": {
-      "label": "Connected workspaces",
-      "description": "Workspaces this computer has joined as a device"
-    },
-    "chat": {
-      "label": "Chat",
-      "description": "Talk to a workspace this machine has joined"
-    },
-    "connections": {
-      "label": "Connections",
-      "description": "Connect external platforms like GitHub and Slack"
-    },
-    "credentials": {
-      "label": "Credentials",
-      "description": "Manage API keys and secrets in one place"
-    },
-    "github": {
-      "label": "GitHub",
-      "description": "Bind repos and view issues / PRs"
-    },
-    "logs": {
-      "label": "Logs",
-      "description": "View runtime logs and troubleshoot"
-    },
-    "settings": {
-      "label": "Settings",
-      "description": "App settings and preferences"
-    }
-  },
-  "daemon": {
-    "running": "Daemon running",
-    "starting": "Daemon starting",
-    "stopped": "Daemon stopped",
-    "offline": "Daemon offline"
-  },
   "notifications": {
     "tooltip": "Notifications",
     "title": "Notifications",
@@ -56,17 +7,7 @@
     "clear": "Clear",
     "empty": "No notifications yet."
   },
-  "search": "Search…",
-  "menu": {
-    "label": "More options"
-  },
-  "toggleSidebar": "Collapse / expand sidebar",
   "collapseSidebar": "Collapse sidebar",
   "expandSidebar": "Expand sidebar",
-  "guide": "Quick start guide",
-  "themeToggle": "Theme",
-  "themeTooltip": "Theme: {{mode}} — click for {{next}}",
-  "modeSwitch": "Switch between this machine and your workspaces",
-  "modeLauncher": "This Computer",
-  "modeWorkspace": "Workspace"
+  "settings": "Settings"
 }

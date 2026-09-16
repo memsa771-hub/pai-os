@@ -3,7 +3,6 @@ import { useTranslation } from "react-i18next"
 import { AlertTriangle, Download, RefreshCw } from "lucide-react"
 import { useLauncherUpdate } from "../hooks/useLauncherUpdate"
 import { useUiStore } from "../store/ui"
-import { useAccountStore } from "../store/account"
 
 /**
  * App-wide update banner. Update state used to be visible only inside
@@ -56,8 +55,6 @@ export function LauncherUpdateBanner({
   if (!state || !isLive || !key || dismissed === key) return null
 
   const goToUpdates = (): void => {
-    // Settings lives on the This Computer side of the window.
-    if (inline) useAccountStore.getState().exitWorkspace()
     openSettingsSection("updates")
   }
 

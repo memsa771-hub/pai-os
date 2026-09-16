@@ -20,7 +20,7 @@ function notif(over: Partial<NotifRecord> = {}): NotifRecord {
 /** Whatever the previous case navigated to must not leak into the next one. */
 beforeEach(() => {
   useUiStore.setState({
-    currentTab: "dashboard",
+    settingsOpen: false,
     settingsSection: null,
     settingsSectionSignal: 0,
     updateBannerDismissed: "downloaded:1.0.0",
@@ -32,7 +32,7 @@ describe("routeNotification", () => {
     expect(
       routeNotification(notif({ payload: { settingsSection: "updates" } })),
     ).toBe(true)
-    expect(useUiStore.getState().currentTab).toBe("settings")
+    expect(useUiStore.getState().settingsOpen).toBe(true)
     expect(useUiStore.getState().settingsSection).toBe("updates")
   })
 
@@ -45,21 +45,15 @@ describe("routeNotification", () => {
     expect(useUiStore.getState().updateBannerDismissed).toBeNull()
   })
 
-  it("routes a plain tab", () => {
-    expect(routeNotification(notif({ payload: { tab: "logs" } }))).toBe(true)
-    expect(useUiStore.getState().currentTab).toBe("logs")
-  })
-
   it("reports going nowhere for an informational entry", () => {
     expect(routeNotification(notif({ kind: "system" }))).toBe(false)
-    expect(useUiStore.getState().currentTab).toBe("dashboard")
+    expect(useUiStore.getState().settingsOpen).toBe(false)
   })
 })
 
 describe("canRouteNotification", () => {
   it("agrees with routeNotification about what leads somewhere", () => {
     const cases: Array<[NotifRecord, boolean]> = [
-      [notif({ payload: { tab: "logs" } }), true],
       [notif({ payload: { settingsSection: "updates" } }), true],
       [notif({ source: "launcher-update" }), true],
       [notif({ kind: "system" }), false],

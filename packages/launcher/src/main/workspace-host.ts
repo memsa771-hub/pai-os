@@ -67,7 +67,7 @@ export interface WorkspaceHostDeps {
  * be exchanged for a workspace session server-side, because a human auth session
  * lives in the page and the launcher cannot keep one.
  */
-export const LAUNCHER_UA_TAG = "OpenAgentsLauncher"
+export const LAUNCHER_UA_TAG = "PAIDesktop"
 
 export class WorkspaceHost {
   private _view: WebContentsView | null = null

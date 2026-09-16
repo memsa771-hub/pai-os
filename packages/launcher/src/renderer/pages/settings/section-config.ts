@@ -1,6 +1,5 @@
 import {
   Bell,
-  Bot,
   Cog,
   Download,
   Globe,
@@ -8,25 +7,21 @@ import {
   Info,
   Languages,
   Palette,
-  Terminal,
   type LucideIcon,
 } from "lucide-react"
 
 export type SectionId =
   | "general"
   | "appearance"
-  | "agents"
   | "notifications"
   | "network"
   | "data"
   | "language"
   | "updates"
-  | "runtime"
   | "about"
 
 export type SectionGroupId =
   | "preferences"
-  | "assistants"
   | "connectivity"
   | "system"
 
@@ -51,12 +46,6 @@ export const SECTION_GROUPS: Array<{
       { id: "general", icon: Cog },
       { id: "appearance", icon: Palette },
       { id: "language", icon: Languages },
-    ],
-  },
-  {
-    id: "assistants",
-    sections: [
-      { id: "agents", icon: Bot },
       { id: "notifications", icon: Bell },
     ],
   },
@@ -71,7 +60,6 @@ export const SECTION_GROUPS: Array<{
     id: "system",
     sections: [
       { id: "updates", icon: Download },
-      { id: "runtime", icon: Terminal },
       { id: "about", icon: Info },
     ],
   },
@@ -88,14 +76,12 @@ export const SECTIONS: Section[] = SECTION_GROUPS.flatMap((g) => g.sections)
  * block rather than guess at a pairing.
  */
 export const RELATED: Partial<Record<SectionId, SectionId[]>> = {
-  general: ["appearance", "runtime"],
+  general: ["appearance", "network"],
   appearance: ["general", "language"],
-  notifications: ["agents", "updates"],
-  network: ["data", "runtime"],
-  data: ["network", "runtime"],
+  notifications: ["updates", "general"],
+  network: ["data", "about"],
+  data: ["network", "about"],
   language: ["appearance", "general"],
-  agents: ["general", "notifications"],
-  updates: ["runtime", "about"],
-  runtime: ["updates", "data"],
-  about: ["updates", "runtime"],
+  updates: ["about", "network"],
+  about: ["updates", "network"],
 }

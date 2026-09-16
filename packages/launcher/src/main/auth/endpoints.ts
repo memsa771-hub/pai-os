@@ -7,15 +7,23 @@
  * main/auth/supabase.ts — not something a self-hosted deployment overrides
  * here.
  *
- *   api   workspace-endpoint.openagents.org   REST (sessions, memberships)
- *   web   workspace.openagents.org            the workspace pages
+ *   api   the backend REST API (sessions, the account's workspace)
+ *   web   the workspace pages (the same product Web signs into)
  *
- * The renderer has the same web/api mapping in `lib/workspace-urls.ts`; main
- * cannot import it (different tsconfig root) so the rule is spelled out again
- * here rather than reached for across the boundary.
+ * Defaults are baked in at build time from workspace/.env (see
+ * electron.vite.config.ts's `define` block), matching the values Web itself
+ * uses (NEXT_PUBLIC_API_URL / the app's own canonical origin) — never
+ * invented here. The renderer has the same web/api mapping in
+ * `lib/workspace-urls.ts`; main cannot import it (different tsconfig root)
+ * so the rule is spelled out again here rather than reached for across the
+ * boundary.
  */
 
-export const DEFAULT_API_BASE = "https://workspace-endpoint.openagents.org"
+export const DEFAULT_API_BASE = process.env.PAI_API_BASE || "https://workspace-endpoint.openagents.org"
+export const DEFAULT_WEB_BASE = process.env.PAI_WEB_BASE || "https://placement-ai.com"
+
+export const WORKSPACE_API_HOSTNAME = new URL(DEFAULT_API_BASE).hostname
+export const WORKSPACE_WEB_HOSTNAME = new URL(DEFAULT_WEB_BASE).hostname
 
 /** REST base for the account API — what `workspaceEndpoint` normalizes to. */
 export function apiBase(configured?: string): string {
@@ -23,18 +31,17 @@ export function apiBase(configured?: string): string {
 }
 
 /**
- * The web origin that serves the workspace pages. `workspace-endpoint.x` and
- * `workspace.x` are the same deployment; anything else is assumed to serve
- * both from one origin.
+ * The web origin that serves the workspace pages.
  *
- * The override exists for the case the derivation cannot cover: a front end
- * served from somewhere unrelated to its API — a preview deployment, or a
- * local dev server being pointed at the hosted backend.
+ * The hosted deployment's two origins are unrelated domains (its own API
+ * host, and the product's public web address), so they cannot be derived
+ * from one another — both are known constants instead. A self-hosted
+ * deployment's API and web pages are assumed to share one origin (the
+ * common case), unless `PAI_WEB_BASE_OVERRIDE` says otherwise.
  */
 export function webBase(configured?: string): string {
-  const override = process.env.OPENAGENTS_WORKSPACE_WEB_BASE
+  const override = process.env.PAI_WEB_BASE_OVERRIDE
   if (override) return override.replace(/\/$/, "")
-  return apiBase(configured)
-    .replace("workspace-endpoint.", "workspace.")
-    .replace(/\/v1$/, "")
+  if (configured) return apiBase(configured)
+  return DEFAULT_WEB_BASE
 }

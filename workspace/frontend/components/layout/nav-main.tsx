@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  BookOpen, CalendarClock, FileText, Globe, Inbox, KanbanSquare, MessageSquare, Sparkles, Waypoints,
+  FileText, Globe, Inbox, KanbanSquare, MessageSquare, Sparkles, Waypoints,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -13,10 +13,11 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
+import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { useWorkspace } from '@/lib/workspace-context';
-import { isRecentAgent } from '@/lib/helpers';
 import { countFiles } from '@/components/files/file-utils';
 import { useT } from '@/lib/i18n';
+import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import { useLayout, type ViewMode } from './layout-context';
 
 interface NavItem {
@@ -30,14 +31,22 @@ interface NavItem {
 
 /** `onNavigate` lets the mobile drawer close itself once a view is picked. */
 export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
-  const { viewMode, openView } = useLayout();
-  const { agents, sessions, files, browserTabs, tasks, workflows, routines, knowledge, unreadNotificationCount } = useWorkspace();
+  const { viewMode, openView, setSelectedAgentName } = useLayout();
+  const {
+    sessions, files, browserTabs, tasks, workflows, unreadNotificationCount,
+    currentSessionId, setCurrentSessionId,
+  } = useWorkspace();
   const t = useT();
 
-  const hasAgents = agents.filter((a) => isRecentAgent(a) && !a.builtin).length > 0;
-  // Fresh workspace (no real agent, no threads) is in guided onboarding — the
-  // "threads" view renders the onboarding flow, so label the nav item to match.
-  const isOnboarding = !hasAgents && sessions.length === 0;
+  const isOnboarding = sessions.length === 0;
+  const isPaiCounselorActive = viewMode === 'threads' && currentSessionId === PAI_PRIMARY_CONVERSATION_ID;
+
+  const openPaiCounselor = (): void => {
+    setCurrentSessionId(PAI_PRIMARY_CONVERSATION_ID);
+    openView('threads');
+    setSelectedAgentName(null);
+    onNavigate?.();
+  };
 
   const items: NavItem[] = [
     isOnboarding
@@ -48,45 +57,47 @@ export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
           icon: <MessageSquare />,
           count: sessions.filter((s) => !s.sessionId.startsWith('routine:') && !s.sessionId.startsWith('task:')).length,
         },
-    ...(hasAgents
-      ? ([
-          { mode: 'files', label: t('views.files'), icon: <FileText />, count: countFiles(files) },
-          { mode: 'browser', label: t('views.browser'), icon: <Globe />, count: browserTabs.length },
-          {
-            mode: 'routines',
-            label: t('views.routines'),
-            icon: <CalendarClock />,
-            count: routines.filter((r) => r.status === 'active').length,
-          },
-          { mode: 'knowledge', label: t('views.knowledge'), icon: <BookOpen />, count: knowledge.length },
-          {
-            mode: 'tasks',
-            label: t('views.tasks'),
-            icon: <KanbanSquare />,
-            // Count only what demands the user: tasks blocked on their input.
-            count: tasks.filter((task) => task.status === 'need_input').length,
-            urgent: true,
-          },
-          {
-            mode: 'workflows',
-            label: t('views.workflows'),
-            icon: <Waypoints />,
-            count: workflows.length,
-          },
-          {
-            mode: 'inbox',
-            label: t('views.inbox'),
-            icon: <Inbox />,
-            count: unreadNotificationCount > 0 ? unreadNotificationCount : undefined,
-          },
-          { mode: 'skills', label: t('views.skills'), icon: <Sparkles /> },
-        ] as NavItem[])
-      : []),
+    { mode: 'files', label: t('views.files'), icon: <FileText />, count: countFiles(files) },
+    { mode: 'browser', label: t('views.browser'), icon: <Globe />, count: browserTabs.length },
+    {
+      mode: 'tasks',
+      label: t('views.tasks'),
+      icon: <KanbanSquare />,
+      // Count only what demands the user: tasks blocked on their input.
+      count: tasks.filter((task) => task.status === 'need_input').length,
+      urgent: true,
+    },
+    {
+      mode: 'workflows',
+      label: t('views.workflows'),
+      icon: <Waypoints />,
+      count: workflows.length,
+    },
+    {
+      mode: 'inbox',
+      label: t('views.inbox'),
+      icon: <Inbox />,
+      count: unreadNotificationCount > 0 ? unreadNotificationCount : undefined,
+    },
   ];
 
   return (
     <SidebarGroup>
       <SidebarGroupLabel>{t('nav.collaboration')}</SidebarGroupLabel>
+      <SidebarGroupContent>
+        <SidebarMenu className="gap-0.25">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              tooltip={t('views.paiCounselor')}
+              isActive={isPaiCounselorActive}
+              onClick={openPaiCounselor}
+            >
+              <AgentAvatar name="pai" size={16} className="[&_svg]:size-full!" />
+              <span>{t('views.paiCounselor')}</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarGroupContent>
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.25">
           {items.map((item) => (

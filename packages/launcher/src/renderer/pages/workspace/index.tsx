@@ -19,7 +19,6 @@ export default function WorkspacePage(_props: {
   const { t } = useTranslation()
   const account = useAccountStore((s) => s.account)
   const authMode = useAccountStore((s) => s.authMode)
-  const targetSignal = useAccountStore((s) => s.workspaceTargetSignal)
   const hostRef = React.useRef<HTMLDivElement>(null)
   const modalOpen = useModalOpen()
   // "missing": the installed app has no Workspace bundle, and retrying cannot help.
@@ -38,12 +37,8 @@ export default function WorkspacePage(_props: {
       const bounds = { x, y, width, height }
       if (shown) { void window.api.setWorkspaceViewBounds(bounds); return }
       shown = true
-      // A workspace asked for from This Computer; otherwise resume the page.
-      const target = useAccountStore.getState().workspaceTarget
-      void window.api.showWorkspaceView(target?.slug ?? null, bounds, target?.token ?? null).then(() => {
-        // Loaded: coming back later resumes wherever the user has gone since.
-        if (!cancelled && target) useAccountStore.getState().clearWorkspaceTarget()
-      }).catch((err: unknown) => {
+      // Always the account's one Workspace — resumes wherever the page was.
+      void window.api.showWorkspaceView(null, bounds).catch((err: unknown) => {
         if (cancelled) return
         void window.api.hideWorkspaceView()
         setError(String((err as Error)?.message ?? err).includes(WORKSPACE_BUNDLE_MISSING) ? "missing" : "failed")
@@ -59,7 +54,7 @@ export default function WorkspacePage(_props: {
       window.removeEventListener("resize", push)
       void window.api.hideWorkspaceView()
     }
-  }, [account?.email, modalOpen, attempt, targetSignal])
+  }, [account?.email, modalOpen, attempt])
 
   if (!account) return authMode === "welcome" ? <WelcomePage /> : <WorkspaceSignIn />
   return <div ref={hostRef} className="relative h-full min-h-0">

@@ -4,12 +4,16 @@ import { useThemeStore } from "@renderer/store/theme"
 import { cn } from "@renderer/lib/utils"
 
 /**
- * The OpenAgents mark. One component so the rail, the About card and anything
- * added later cannot drift onto different artwork.
+ * The Placement AI mark. One component so the rail, the About card and
+ * anything added later cannot drift onto different artwork.
  *
  * The mark ships as a black and a white cut-out (`src/renderer/public/`),
  * referenced RELATIVELY: production loads index.html over file://, where a
  * leading slash resolves to the filesystem root.
+ *
+ * TODO: logo-black.png/logo-white.png are still the old OpenAgents cut-outs —
+ * swap them for real Placement AI artwork in the same two-file black/white
+ * format once it exists.
  */
 export function BrandMark({
   className,
@@ -31,7 +35,7 @@ export function BrandMark({
   return (
     <img
       src={dark ? "logo-white.png" : "logo-black.png"}
-      alt="OpenAgents"
+      alt="Placement AI"
       draggable={false}
       className={cn("shrink-0 select-none object-contain", className)}
     />

@@ -53,9 +53,10 @@ export const messages = {
 
   /** View names. Shared by the sidebar, the nav rail and the app header. */
   views: {
+    paiCounselor: 'PAI Counselor',
     threads: 'Threads',
     onboarding: 'Onboarding',
-    files: 'Files',
+    files: 'Docs',
     knowledge: 'Knowledge',
     browser: 'Browser',
     tasks: 'Tasks',
@@ -67,8 +68,7 @@ export const messages = {
   },
 
   nav: {
-    thisComputer: 'This Computer',
-    collaboration: 'Collaboration',
+    collaboration: 'Workspace',
     agentsWithCount: 'Agents ({online}/{total})',
     onlineWithCount: 'Online ({count})',
     you: '{name} (you)',
