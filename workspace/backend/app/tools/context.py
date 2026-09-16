@@ -13,6 +13,11 @@ class ToolContext:
     conversation: Optional[str] = None
     user_id: Optional[str] = None
     allowed_tools: Optional[frozenset[str]] = field(default=None)
+    # Capabilities this caller holds. ``None`` means "unrestricted" (the
+    # historical behaviour, and what every pre-memory caller still gets); a
+    # frozenset means the caller may only use tools whose declared
+    # capabilities are a subset of it. See app/tools/policy.py:Capability.
+    granted_capabilities: Optional[frozenset[str]] = field(default=None)
 
     @property
     def source(self) -> str:

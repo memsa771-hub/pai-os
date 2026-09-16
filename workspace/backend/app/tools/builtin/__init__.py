@@ -1,6 +1,13 @@
-from app.tools.policy import ToolRisk
+from app.tools.policy import Capability, ToolRisk
 from app.tools.registry import ToolDefinition
-from . import browser, files, operator, tasks, web, workspace
+from . import browser, files, memory, operator, tasks, web, workspace
+
+# Capability shorthands. Declared on the tool so a caller's grant decides
+# access — see app/tools/policy.py and app/memory/permissions.py.
+CAP_MEMORY_READ = frozenset({Capability.MEMORY_READ.value})
+CAP_MEMORY_MANAGE = frozenset({Capability.MEMORY_MANAGE.value})
+CAP_VAULT_READ = frozenset({Capability.VAULT_READ.value})
+CAP_VAULT_MANAGE = frozenset({Capability.VAULT_MANAGE.value})
 
 EMPTY = {"type": "object", "properties": {}, "additionalProperties": False}
 
@@ -55,6 +62,79 @@ def register_builtin_tools(registry):
             "the most recent run in this workspace.",
             obj({"run_id": {"type": "string"}}),
             "operator", ToolRisk.READ, operator.status,
+        ),
+
+        # -- PAI Memory Platform ------------------------------------------
+        # Read tools carry read capabilities, so PAI Operator gets them.
+        # remember/forget carry manage capabilities, so it does not — and a
+        # memory tool added later is governed the same way with no edit to
+        # Operator.
+        ToolDefinition(
+            "memory.context",
+            "Get what you know about this student — profile facts, preferences "
+            "and recent history — as a compact context block. Call this before "
+            "advising, rather than asking the student to repeat themselves.",
+            obj({
+                "query": {"type": "string"},
+                "context_refs": {"type": "array", "items": {"type": "string"}},
+            }),
+            "memory", ToolRisk.READ, memory.get_context,
+            capabilities=CAP_MEMORY_READ | CAP_VAULT_READ,
+        ),
+        ToolDefinition(
+            "vault.get",
+            "Read the student's structured profile. Omit field_key for the full "
+            "snapshot, or pass one (e.g. 'education.cgpa') for that field with "
+            "its provenance.",
+            obj({"field_key": {"type": "string"}}),
+            "memory", ToolRisk.READ, memory.vault_get,
+            capabilities=CAP_VAULT_READ,
+        ),
+        ToolDefinition(
+            "memory.search",
+            "Search the student's long-term preferences, goals and constraints.",
+            obj({
+                "query": {"type": "string"},
+                "memory_type": {"type": "string", "enum": [
+                    "preference", "goal", "constraint", "interest", "context",
+                ]},
+                "limit": {"type": "integer"},
+            }, ["query"]),
+            "memory", ToolRisk.READ, memory.memory_search,
+            capabilities=CAP_MEMORY_READ,
+        ),
+        ToolDefinition(
+            "memory.episodes",
+            "List recent notable events in this student's journey.",
+            obj({"event_type": {"type": "string"}, "limit": {"type": "integer"}}),
+            "memory", ToolRisk.READ, memory.episodes_recent,
+            capabilities=CAP_MEMORY_READ,
+        ),
+        ToolDefinition(
+            "memory.remember",
+            "Durably record something the student explicitly asked you to "
+            "remember. Pass field_key + value for a structured profile fact "
+            "(e.g. 'finance.budget'), or content for a preference or goal. Use "
+            "only for explicit instructions — ordinary conversation is captured "
+            "automatically in the background.",
+            obj({
+                "content": {"type": "string"},
+                "field_key": {"type": "string"},
+                "value": {},
+                "memory_type": {"type": "string", "enum": [
+                    "preference", "goal", "constraint", "interest", "context",
+                ]},
+            }, ["content"]),
+            "memory", ToolRisk.WRITE, memory.remember,
+            capabilities=CAP_MEMORY_MANAGE | CAP_VAULT_MANAGE,
+        ),
+        ToolDefinition(
+            "memory.forget",
+            "Stop using something the student asked you to forget. Pass a query "
+            "to match preferences, or field_key to retract a profile fact.",
+            obj({"query": {"type": "string"}, "field_key": {"type": "string"}}),
+            "memory", ToolRisk.WRITE, memory.forget,
+            capabilities=CAP_MEMORY_MANAGE | CAP_VAULT_MANAGE,
         ),
     ]
     for definition in definitions:

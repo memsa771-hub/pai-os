@@ -1,5 +1,5 @@
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
 from .policy import ToolRisk
@@ -17,6 +17,12 @@ class ToolDefinition:
     risk: ToolRisk
     handler: ToolHandler
     openai_name: Optional[str] = None
+    # Capabilities this tool requires of its caller. Empty (the default) keeps
+    # every existing tool unrestricted; a tool that declares capabilities is
+    # only offered to callers whose grant covers them. Declaring this on the
+    # tool — rather than excluding names in each caller — is what stops a
+    # future memory-write tool leaking into PAI Operator.
+    capabilities: frozenset[str] = field(default_factory=frozenset)
 
     @property
     def transport_name(self) -> str:
@@ -48,7 +54,13 @@ class ToolRegistry:
     def all(self) -> tuple[ToolDefinition, ...]:
         return tuple(self._tools.values())
 
-    def openai_tools_for_agent(self, allowed_tools=None) -> list[dict]:
+    def openai_tools_for_agent(self, allowed_tools=None, granted_capabilities=None) -> list[dict]:
+        """Tool schemas to advertise to a model.
+
+        Filtered by the same two rules the executor enforces, so a caller is
+        never shown a tool it would be refused — the model cannot be tempted
+        by a tool it may not call.
+        """
         allowed = None if allowed_tools is None else set(allowed_tools)
         return [
             {"type": "function", "function": {
@@ -57,5 +69,34 @@ class ToolRegistry:
                 "parameters": tool.arguments,
             }}
             for tool in self._tools.values()
-            if allowed is None or tool.name in allowed or tool.category in allowed
+            if (allowed is None or tool.name in allowed or tool.category in allowed)
+            and self.permits(tool, granted_capabilities)
         ]
+
+    @staticmethod
+    def permits(tool: ToolDefinition, granted_capabilities=None) -> bool:
+        """True if a caller holding `granted_capabilities` may use `tool`.
+
+        ``None`` means an unrestricted caller. Kept here (rather than inlined)
+        so callers building an allow-set and the policy enforcing it agree by
+        construction.
+        """
+        required = tool.capabilities
+        if not required:
+            return True
+        if granted_capabilities is None:
+            return True
+        return set(required) <= set(granted_capabilities)
+
+    def tools_for_capabilities(self, granted_capabilities) -> frozenset[str]:
+        """Names of every registered tool a caller with this grant may use.
+
+        This is what keeps discovery dynamic: callers ask for "everything I am
+        allowed to use" instead of naming tools, so a newly registered tool is
+        picked up automatically — and a newly registered *privileged* tool is
+        automatically withheld.
+        """
+        return frozenset(
+            tool.name for tool in self._tools.values()
+            if self.permits(tool, granted_capabilities)
+        )

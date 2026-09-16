@@ -327,18 +327,31 @@ async def _execute(
 
         # ---- EXECUTE + OBSERVE ----
         from app.tools import ToolContext, get_tool_executor, get_tool_registry
+        # Local import: app.memory.permissions imports this module for the
+        # agent-name constant, so a module-level import would be circular.
+        from app.memory.permissions import OPERATOR_CAPABILITIES
         tool_registry = get_tool_registry()
         tool_executor = get_tool_executor()
-        # Dynamic discovery: everything currently registered, minus
-        # operator.* itself (no self-delegation). Never a hardcoded list —
-        # a plugin's tools show up here the moment it registers them.
+        # Dynamic discovery, capability-bounded. Still "everything currently
+        # registered" (a plugin's tools appear the moment it registers them),
+        # minus operator.* itself (no self-delegation) and minus anything
+        # declaring a capability Operator does not hold.
+        #
+        # Operator holds read capabilities only, so memory/Vault *reads* appear
+        # here automatically while remember/forget never can — enforced by the
+        # capability the tool declares, not by a name-exclusion list here.
+        granted_capabilities = OPERATOR_CAPABILITIES
         allowed_tools = frozenset(
-            t.name for t in tool_registry.all() if not t.name.startswith("operator.")
+            name for name in tool_registry.tools_for_capabilities(granted_capabilities)
+            if not name.startswith("operator.")
         )
-        tools = tool_registry.openai_tools_for_agent(allowed_tools)
+        tools = tool_registry.openai_tools_for_agent(
+            allowed_tools, granted_capabilities=granted_capabilities,
+        )
         tool_context = ToolContext(
             workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
             api=api, allowed_tools=allowed_tools,
+            granted_capabilities=granted_capabilities,
         )
 
         messages: list[dict] = [{"role": "user", "content": (
