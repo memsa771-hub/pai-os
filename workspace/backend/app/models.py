@@ -685,6 +685,44 @@ class WorkflowRun(Base):
     )
 
 
+class ExecutionRun(Base):
+    """Live state for one PAI Operator execution — the hidden execution
+    intelligence PAI Counselor delegates to (see app/services/operator.py).
+
+    Deliberately flat (no separate step table yet): ``plan`` and
+    ``completed_steps`` are JSON string lists, good enough to show "3/7 steps
+    complete" without a second table + relationship this task doesn't need.
+    A future step table can be added without touching this one.
+    """
+    __tablename__ = "execution_runs"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    # Who asked for this — "openagents:pai" for PAI Counselor today; any
+    # future caller (a workflow step, a human action) fits the same column.
+    requested_by = Column(Text, nullable=False)
+    objective = Column(Text, nullable=False)
+    constraints = Column(JSONB, nullable=True)              # e.g. {"do_not_submit_without_approval": true}
+    context_refs = Column(JSONB, nullable=True)              # e.g. ["student_vault", "application_123"]
+    # pending -> understanding -> planning -> executing -> verifying -> one of:
+    #   completed | needs_user_action | failed
+    status = Column(Text, nullable=False, default="pending", server_default="pending")
+    current_step = Column(Text, nullable=True)
+    plan = Column(JSONB, nullable=True)                      # ordered list of step labels
+    completed_steps = Column(JSONB, nullable=True)           # subset of `plan` finished so far
+    missing = Column(JSONB, nullable=True)                   # what verification found incomplete
+    approval_required_for = Column(Text, nullable=True)      # e.g. "final_submission"
+    error = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("idx_execution_runs_workspace", "workspace_id"),
+        Index("idx_execution_runs_workspace_status", "workspace_id", "status"),
+    )
+
+
 class TimerRecord(Base):
     """A scheduled timer that posts a message when it fires."""
     __tablename__ = "timers"

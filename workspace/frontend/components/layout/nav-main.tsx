@@ -13,10 +13,10 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar';
-import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { useWorkspace } from '@/lib/workspace-context';
 import { countFiles } from '@/components/files/file-utils';
 import { useT } from '@/lib/i18n';
+import { PaiSystemStatus } from './pai-system-status';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import { useLayout, type ViewMode } from './layout-context';
 
@@ -83,21 +83,10 @@ export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>{t('nav.collaboration')}</SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu className="gap-0.25">
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              tooltip={t('views.paiCounselor')}
-              isActive={isPaiCounselorActive}
-              onClick={openPaiCounselor}
-            >
-              <AgentAvatar name="pai" size={16} className="[&_svg]:size-full!" />
-              <span>{t('views.paiCounselor')}</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <PaiSystemStatus onOpenCounselor={openPaiCounselor} isCounselorActive={isPaiCounselorActive} />
       </SidebarGroupContent>
+      <SidebarGroupLabel>{t('nav.collaboration')}</SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.25">
           {items.map((item) => (

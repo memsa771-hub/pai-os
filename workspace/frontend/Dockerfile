@@ -16,8 +16,17 @@ RUN npm ci
 # Copy application code
 COPY . .
 
-# Build
-RUN npm run build
+# --webpack, not `npm run build` (Turbopack, Next 16's default): under
+# BuildKit's RUN specifically, Turbopack has reproducibly emitted a build that
+# "succeeds" but silently omits recent source changes from some client chunks
+# — confirmed by diffing this exact source built via BuildKit vs. via a plain
+# `docker run`/local `next build`, both Turbopack, same source, different
+# output. Running the build twice in the same RUN did not fix it either, so
+# this isn't a cold-cache issue — something about Turbopack's worker
+# processes under BuildKit's execution environment. webpack does not
+# reproduce it and is the same bundler `next dev`/local builds already work
+# with elsewhere in this repo.
+RUN npx next build --webpack
 
 # Run
 EXPOSE 3000

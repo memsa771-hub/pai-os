@@ -503,10 +503,13 @@ async def chat_completion_tools(
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-        if provider == "openai" and model.startswith("gpt-5"):
+        if model.startswith("gpt-5"):
             # gpt-5.* defaults to a non-"none" reasoning_effort, which
             # /v1/chat/completions rejects together with function tools
-            # ("use /v1/responses or set reasoning_effort to 'none'").
+            # ("use /v1/responses or set reasoning_effort to 'none'"). Keyed
+            # on the model name, not `provider` — PAI Counselor's provider
+            # string is "placement_ai", not "openai", even though it talks to
+            # the same OpenAI-compatible /v1/chat/completions endpoint.
             kwargs["reasoning_effort"] = "none"
     if max_tokens:
         kwargs["max_tokens"] = max_tokens

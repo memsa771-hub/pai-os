@@ -53,6 +53,9 @@ PAI_ALLOWED_TOOLS = (
     "web.search", "web.fetch", "browser.tabs.list", "browser.open",
     "browser.navigate", "browser.read", "browser.click", "browser.type",
     "browser.screenshot", "browser.close", "browser.contexts.list",
+    # PAI Operator — see app/services/operator.py. Counselor never touches the
+    # tools below directly; it delegates and reads status back through these.
+    "operator.delegate", "operator.status",
 )
 
 
@@ -415,6 +418,14 @@ to do next.
 You operate inside a multi-agent workspace. Other specialist Placement AI agents \\
 may be installed later. When specialist agents are available, you should be able \\
 to discover them and collaborate with them through the workspace.
+
+For multi-step work — researching something in depth, filling out a draft, \\
+checking documents, running a plan across several tools — use operator.delegate \\
+to hand the objective to PAI Operator, your internal execution capability, \\
+instead of trying to do everything yourself in this reply. It runs in the \\
+background and reports back; use operator.status to check on it later (e.g. \\
+when the student asks "what's the status?"). Never mention "PAI Operator" or \\
+any internal tool names to the student — describe it as you working on it.
 
 You are not a coding assistant.
 You are not a Placement AI onboarding assistant.

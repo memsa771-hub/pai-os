@@ -20,6 +20,7 @@ import type {
   NetworkProfile,
   NotificationItem,
   ONMEvent,
+  OperatorRun,
   IntegrationBinding,
   ShareSummary,
   TimerItem,
@@ -1675,6 +1676,34 @@ class WorkspaceApi {
 
   async markNotificationRead(notificationId: string): Promise<void> {
     await this.request<unknown>(`/v1/notifications/${notificationId}/read`, { method: 'PATCH' });
+  }
+
+  private mapOperatorRun(r: Record<string, unknown>): OperatorRun {
+    return {
+      id: r.id as string,
+      objective: r.objective as string,
+      status: r.status as OperatorRun['status'],
+      currentStep: (r.current_step ?? null) as string | null,
+      plan: (r.plan || []) as string[],
+      completedSteps: (r.completed_steps || []) as string[],
+      missing: (r.missing || []) as string[],
+      approvalRequiredFor: (r.approval_required_for ?? null) as string | null,
+      error: (r.error ?? null) as string | null,
+      createdAt: (r.created_at || null) as string | null,
+      updatedAt: (r.updated_at || null) as string | null,
+      completedAt: (r.completed_at ?? null) as string | null,
+    };
+  }
+
+  /** PAI Operator's runs — read-only, for the "PAI is working…" indicator.
+   * Never invoked from the frontend to start work: only PAI Counselor's
+   * operator.delegate tool creates a run. */
+  async listOperatorRuns(opts?: { status?: 'active' | OperatorRun['status']; limit?: number }): Promise<{ runs: OperatorRun[] }> {
+    const params = new URLSearchParams({ network: this.workspaceId });
+    if (opts?.status) params.set('status', opts.status);
+    if (opts?.limit) params.set('limit', String(opts.limit));
+    const raw = await this.request<{ runs: Record<string, unknown>[] }>(`/v1/operator/runs?${params}`);
+    return { runs: (raw.runs || []).map((r) => this.mapOperatorRun(r)) };
   }
 
   async markAllNotificationsRead(): Promise<void> {

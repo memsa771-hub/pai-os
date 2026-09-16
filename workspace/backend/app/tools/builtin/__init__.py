@@ -1,6 +1,6 @@
 from app.tools.policy import ToolRisk
 from app.tools.registry import ToolDefinition
-from . import browser, files, tasks, web, workspace
+from . import browser, files, operator, tasks, web, workspace
 
 EMPTY = {"type": "object", "properties": {}, "additionalProperties": False}
 
@@ -33,6 +33,29 @@ def register_builtin_tools(registry):
         ToolDefinition("browser.screenshot", "Capture a shared browser tab screenshot as base64 PNG.", obj({"tab_id": {"type": "string"}}, ["tab_id"]), "browser", ToolRisk.READ, browser.screenshot),
         ToolDefinition("browser.close", "Close a shared browser tab.", obj({"tab_id": {"type": "string"}}, ["tab_id"]), "browser", ToolRisk.WRITE, browser.close),
         ToolDefinition("browser.contexts.list", "List persistent shared browser contexts.", EMPTY, "browser", ToolRisk.READ, browser.list_contexts),
+        ToolDefinition(
+            "operator.delegate",
+            "Delegate a concrete objective to PAI Operator, the internal execution "
+            "intelligence, to carry out in the background using the available tools "
+            "(browser, docs, tasks, workflows, web search). Returns immediately with "
+            "a run_id — use operator.status to check progress later. Use this for "
+            "multi-step work (research, filling a draft, checking documents), not "
+            "for a single quick lookup you can do yourself with one tool call.",
+            obj({
+                "objective": {"type": "string"},
+                "constraints": {"type": "object", "additionalProperties": True},
+                "context_refs": {"type": "array", "items": {"type": "string"}},
+            }, ["objective"]),
+            "operator", ToolRisk.WRITE, operator.delegate,
+        ),
+        ToolDefinition(
+            "operator.status",
+            "Check the status of a PAI Operator run — what it has done, what's "
+            "missing, and whether it is waiting on your approval. Omit run_id for "
+            "the most recent run in this workspace.",
+            obj({"run_id": {"type": "string"}}),
+            "operator", ToolRisk.READ, operator.status,
+        ),
     ]
     for definition in definitions:
         registry.register(definition)

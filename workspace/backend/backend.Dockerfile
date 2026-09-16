@@ -12,9 +12,12 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Production uses Browser Fabric (cloud) via BROWSERFABRIC_API_KEY — all
-# browser operations are proxied via REST API, no local Chromium needed.
-# For local-browser dev mode, install playwright and run
-# `playwright install chromium`.
+# browser operations are proxied via REST API, no local Chromium needed. This
+# image still installs it: without BROWSERFABRIC_API_KEY set (self-hosted /
+# local dev), app/browser.py falls back to launching Chromium in-process, and
+# a missing binary there is a 500 with no way to configure around it short of
+# getting a Browser Fabric key.
+RUN playwright install --with-deps chromium
 
 # Copy application code
 COPY . .

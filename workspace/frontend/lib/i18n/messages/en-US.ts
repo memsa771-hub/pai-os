@@ -67,6 +67,20 @@ export const messages = {
     skills: 'Skill Hub',
   },
 
+  /** The compact PAI Counselor / PAI Operator identity block — see
+   * components/layout/pai-system-status.tsx. Not a picker: Operator is never
+   * a click target here, only a name, role and status. */
+  paiSystem: {
+    counselorRole: 'Counseling Intelligence',
+    counselorActive: 'Active',
+    operatorName: 'PAI Operator',
+    operatorRole: 'Execution Intelligence',
+    operatorReady: 'Ready',
+    operatorWorking: 'Working',
+    operatorNeedsApproval: 'Needs Approval',
+    operatorError: 'Error',
+  },
+
   nav: {
     collaboration: 'Workspace',
     agentsWithCount: 'Agents ({online}/{total})',

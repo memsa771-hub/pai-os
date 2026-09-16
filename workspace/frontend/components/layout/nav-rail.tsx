@@ -24,6 +24,8 @@ import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { cn } from '@/lib/utils';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
+import { useOperatorStatus } from '@/hooks/use-operator-status';
+import { PaiSystemStatus } from './pai-system-status';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
 import {
   useLayout,
@@ -214,6 +216,16 @@ export function NavRail() {
     setSelectedAgentName(null);
   };
 
+  // PAI Operator is never a chat agent you select — this is the one place its
+  // work becomes visible: a status dot on the PAI Counselor entry itself,
+  // since that's what "PAI is working" actually means to the student.
+  const operatorRun = useOperatorStatus(true);
+  const operatorWorking = !!operatorRun && !['completed', 'needs_user_action', 'failed'].includes(operatorRun.status);
+  const operatorNeedsApproval = operatorRun?.status === 'needs_user_action';
+  const paiCounselorTooltip = operatorRun?.currentStep
+    ? `${t('views.paiCounselor')} — ${operatorRun.currentStep}`
+    : t('views.paiCounselor');
+
   const items: RailItem[] = [
     {
       mode: 'threads',
@@ -299,21 +311,37 @@ export function NavRail() {
       <SidebarContent>
         <SidebarGroup className="px-1.5">
           <SidebarGroupContent>
+            {/* PAI system identity — Counselor (clickable) + Operator (status
+                only, never a nav target). Full two-row form needs room for
+                labels; collapsed the rail falls back to just the Counselor
+                icon with a status dot, same as any other icon-only entry. */}
+            {showLabels ? (
+              <PaiSystemStatus onOpenCounselor={openPaiCounselor} isCounselorActive={isPaiCounselorActive} />
+            ) : (
+              <SidebarMenu className="gap-0.5">
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    className="relative justify-center!"
+                    aria-label={paiCounselorTooltip}
+                    tooltip={{ children: paiCounselorTooltip, hidden: showLabels }}
+                    isActive={isPaiCounselorActive}
+                    onClick={openPaiCounselor}
+                  >
+                    <AgentAvatar name="pai" size={20} className="[&_svg]:size-full!" />
+                    {(operatorWorking || operatorNeedsApproval) && (
+                      <span
+                        className={cn(
+                          'absolute top-0.5 right-0.5 size-1.5 rounded-full',
+                          operatorNeedsApproval ? 'bg-destructive' : 'animate-pulse bg-primary',
+                        )}
+                        aria-hidden="true"
+                      />
+                    )}
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            )}
             <SidebarMenu className="gap-0.5">
-              {/* PAI Counselor: always the fastest way back to the one canonical
-                  conversation, distinct from Threads (which browses all of them). */}
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  className={cn(!showLabels && 'justify-center!')}
-                  aria-label={t('views.paiCounselor')}
-                  tooltip={{ children: t('views.paiCounselor'), hidden: showLabels }}
-                  isActive={isPaiCounselorActive}
-                  onClick={openPaiCounselor}
-                >
-                  <AgentAvatar name="pai" size={20} className="[&_svg]:size-full!" />
-                  {showLabels && <span className="truncate">{t('views.paiCounselor')}</span>}
-                </SidebarMenuButton>
-              </SidebarMenuItem>
               {items.map((item) => (
                 <SidebarMenuItem key={item.mode}>
                   <SidebarMenuButton

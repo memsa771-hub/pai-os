@@ -452,6 +452,30 @@ export interface NotificationItem {
 }
 
 // ---------------------------------------------------------------------------
+// PAI Operator — hidden execution intelligence status (never a chat agent;
+// see workspace/backend/app/services/operator.py)
+// ---------------------------------------------------------------------------
+
+export type OperatorRunStatus =
+  | 'pending' | 'understanding' | 'planning' | 'executing' | 'verifying'
+  | 'completed' | 'needs_user_action' | 'failed';
+
+export interface OperatorRun {
+  id: string;
+  objective: string;
+  status: OperatorRunStatus;
+  currentStep: string | null;
+  plan: string[];
+  completedSteps: string[];
+  missing: string[];
+  approvalRequiredFor: string | null;
+  error: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+  completedAt: string | null;
+}
+
+// ---------------------------------------------------------------------------
 // Agent catalog (supported client types)
 // ---------------------------------------------------------------------------
 
