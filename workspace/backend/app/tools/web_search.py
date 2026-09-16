@@ -6,6 +6,7 @@ import httpx
 from app.config import config
 
 BRAVE_SEARCH_URL = "https://api.search.brave.com/res/v1/web/search"
+TAVILY_SEARCH_URL = "https://api.tavily.com/search"
 
 
 class WebSearchProvider(ABC):
@@ -33,6 +34,27 @@ class BraveWebSearchProvider(WebSearchProvider):
         } for item in items[:count]]
 
 
+class TavilyWebSearchProvider(WebSearchProvider):
+    def __init__(self, api_key: str, base_url: str = TAVILY_SEARCH_URL):
+        self.api_key = api_key
+        self.base_url = base_url
+
+    async def search(self, query: str, limit: int = 5) -> list[dict]:
+        count = max(1, min(limit, 20))
+        async with httpx.AsyncClient(timeout=15) as client:
+            response = await client.post(
+                self.base_url,
+                json={"query": query, "max_results": count},
+                headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"},
+            )
+            response.raise_for_status()
+        items = response.json().get("results") or []
+        return [{
+            "title": item.get("title", ""), "url": item.get("url", ""),
+            "snippet": item.get("content", ""), "source": "tavily",
+        } for item in items[:count]]
+
+
 _provider_override: Optional[WebSearchProvider] = None
 
 
@@ -51,5 +73,10 @@ def get_web_search_provider() -> Optional[WebSearchProvider]:
         return BraveWebSearchProvider(
             config.WEB_SEARCH_API_KEY,
             config.WEB_SEARCH_BASE_URL or BRAVE_SEARCH_URL,
+        )
+    if name == "tavily":
+        return TavilyWebSearchProvider(
+            config.WEB_SEARCH_API_KEY,
+            config.WEB_SEARCH_BASE_URL or TAVILY_SEARCH_URL,
         )
     return None

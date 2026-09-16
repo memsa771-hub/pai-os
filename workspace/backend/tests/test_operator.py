@@ -125,6 +125,22 @@ class TestDelegate:
         assert run.objective == "Prepare University X application"
         assert run.context_refs == ["application_123"]
 
+    def test_delegate_captures_the_calling_thread_as_channel_target(self, client, db, monkeypatch):
+        """`ctx.conversation` is the same thread id PAI Counselor's own tool
+        context carries — delegate() must save it so the finished run knows
+        where to auto-post its result (see cloud_agent._post_response)."""
+        ws_id = _create_workspace(client)["workspaceId"]
+        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        monkeypatch.setattr(config, "PAI_ENABLED", True)
+        monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
+        monkeypatch.setattr(operator, "_execute", lambda *a, **k: asyncio.sleep(0))
+
+        ctx = ToolContext(workspace_id=ws_id, agent_name="pai", api=FakeApi(), conversation="thread-42")
+        result = asyncio.run(operator.delegate(ctx, "Prepare University X application", None, None))
+
+        run = db.execute(select(ExecutionRun).where(ExecutionRun.id == result["data"]["run_id"])).scalar_one()
+        assert run.channel_target == "channel/thread-42"
+
     def test_delegate_rejects_empty_objective(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
         monkeypatch.setattr(operator, "SessionLocal", lambda: db)
@@ -222,6 +238,97 @@ class TestExecutionLoop:
         assert run.missing == ["recommendation_letter"]
         assert run.approval_required_for == "final_submission"
         assert run.completed_at is not None
+
+    def test_terminal_result_is_auto_posted_to_the_originating_thread(self, client, db, monkeypatch):
+        """The whole point of channel_target: when a run finishes, the result
+        must reach the student in the same thread automatically — the same
+        event-pipeline path a normal cloud-agent reply uses — instead of
+        sitting silently in the ExecutionRun row until asked about."""
+        ws_id = _create_workspace(client)["workspaceId"]
+        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
+        monkeypatch.setattr(config, "PAI_MODEL", "gpt-5.4-mini")
+        monkeypatch.setattr(config, "PAI_BASE_URL", "https://api.openai.com/v1")
+
+        async def fake_chat_completion(**kwargs):
+            content = kwargs["messages"][0]["content"]
+            if "PLAN phase" in content:
+                return '["Look up the deadline"]'
+            if "VERIFY phase" in content:
+                return '{"status": "completed", "missing": [], "approval_required_for": null, "summary": "The deadline is March 1."}'
+            return "Understood."
+
+        async def fake_chat_completion_tools(**kwargs):
+            return {"role": "assistant", "content": "Found it."}
+
+        monkeypatch.setattr(operator, "chat_completion", fake_chat_completion)
+        monkeypatch.setattr(operator, "chat_completion_tools", fake_chat_completion_tools)
+
+        posted = []
+
+        async def fake_post_response(db_, workspace_id_, channel_target_, agent_name_, content_, depth):
+            posted.append((workspace_id_, channel_target_, agent_name_, content_))
+
+        monkeypatch.setattr("app.services.cloud_agent._post_response", fake_post_response)
+
+        run = ExecutionRun(
+            workspace_id=ws_id, requested_by="openagents:pai",
+            objective="When is the application deadline?", status="pending",
+            channel_target="channel/thread-42",
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+        asyncio.run(operator._execute(run.id, ws_id, FakeApi(), run.objective, {}, [], run.channel_target))
+
+        assert len(posted) == 1
+        workspace_id_, channel_target_, agent_name_, content_ = posted[0]
+        assert workspace_id_ == ws_id
+        assert channel_target_ == "channel/thread-42"
+        assert agent_name_ == pai.PAI_AGENT_NAME
+        assert content_ == "The deadline is March 1."
+
+    def test_no_post_attempted_without_a_channel_target(self, client, db, monkeypatch):
+        """A run with nowhere to report to (e.g. delegated outside a live
+        thread) must not attempt to post anywhere."""
+        ws_id = _create_workspace(client)["workspaceId"]
+        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
+        monkeypatch.setattr(config, "PAI_MODEL", "gpt-5.4-mini")
+        monkeypatch.setattr(config, "PAI_BASE_URL", "https://api.openai.com/v1")
+
+        async def fake_chat_completion(**kwargs):
+            content = kwargs["messages"][0]["content"]
+            if "PLAN phase" in content:
+                return '["Look up the deadline"]'
+            if "VERIFY phase" in content:
+                return '{"status": "completed", "missing": [], "approval_required_for": null, "summary": "Done."}'
+            return "Understood."
+
+        async def fake_chat_completion_tools(**kwargs):
+            return {"role": "assistant", "content": "Found it."}
+
+        monkeypatch.setattr(operator, "chat_completion", fake_chat_completion)
+        monkeypatch.setattr(operator, "chat_completion_tools", fake_chat_completion_tools)
+
+        posted = []
+        monkeypatch.setattr(
+            "app.services.cloud_agent._post_response",
+            lambda *a, **k: posted.append(a) or asyncio.sleep(0),
+        )
+
+        run = ExecutionRun(
+            workspace_id=ws_id, requested_by="openagents:pai",
+            objective="Do something", status="pending",
+        )
+        db.add(run)
+        db.commit()
+        db.refresh(run)
+
+        asyncio.run(operator._execute(run.id, ws_id, FakeApi(), run.objective, {}, [], None))
+
+        assert posted == []
 
 
 class TestPolicyIsRespected:

@@ -701,6 +701,12 @@ class ExecutionRun(Base):
     # Who asked for this — "openagents:pai" for PAI Counselor today; any
     # future caller (a workflow step, a human action) fits the same column.
     requested_by = Column(Text, nullable=False)
+    # The event target ("channel/<thread-id>") the objective was delegated
+    # from — where the finished result gets posted back to automatically, the
+    # same way a normal cloud-agent reply is (see _post_response). Nullable
+    # because a delegate call without a live thread (tests, future non-chat
+    # callers) simply has nowhere to auto-post to.
+    channel_target = Column(Text, nullable=True)
     objective = Column(Text, nullable=False)
     constraints = Column(JSONB, nullable=True)              # e.g. {"do_not_submit_without_approval": true}
     context_refs = Column(JSONB, nullable=True)              # e.g. ["student_vault", "application_123"]

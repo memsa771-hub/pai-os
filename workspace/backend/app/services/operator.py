@@ -182,6 +182,46 @@ def _publish_run_updated(workspace_id: str, run: ExecutionRun) -> None:
         logger.exception("operator: failed to publish run update for %s", run.id)
 
 
+async def _post_result(
+    db: Any, workspace_id: str, channel_target: Optional[str], message: str,
+) -> None:
+    """Auto-post the finished run's outcome into the thread it was delegated
+    from — the same event-pipeline path a normal cloud-agent reply already
+    uses (see ``cloud_agent._post_response``), so the student sees the result
+    the moment it's ready instead of having to ask "did it work?" in a later
+    turn. Posted as PAI Counselor (``pai.PAI_AGENT_NAME``): Operator never
+    speaks to the student directly, only Counselor does.
+
+    Best-effort — a failure here must never surface as the run itself
+    failing; the ExecutionRun row (already committed by the caller) remains
+    the source of truth either way.
+    """
+    if not channel_target or not message:
+        return
+    try:
+        from app.services.cloud_agent import _post_response
+        db.rollback()
+        await _post_response(db, workspace_id, channel_target, pai.PAI_AGENT_NAME, message, depth=0)
+    except Exception:
+        logger.exception("operator: failed to auto-post result to %s", channel_target)
+
+
+def _terminal_message(status: str, summary: Optional[str], missing: Any, verification: dict) -> str:
+    """Compose the chat message for a run's terminal state — what the
+    student actually sees, in PAI Counselor's voice."""
+    if status == STATUS_COMPLETED:
+        return summary or "Done."
+    if status == STATUS_NEEDS_USER_ACTION:
+        parts = [summary] if summary else []
+        approval = verification.get("approval_required_for")
+        if approval:
+            parts.append(f"I need your go-ahead before continuing: {approval}.")
+        if isinstance(missing, list) and missing:
+            parts.append("Still missing: " + ", ".join(str(m) for m in missing) + ".")
+        return " ".join(p for p in parts if p) or "I need a bit more from you before I can finish this."
+    return summary or "I ran into an issue and couldn't finish this — let me know if you'd like me to try again."
+
+
 def is_available() -> bool:
     """Operator shares Counselor's server credentials — nothing to check
     beyond whether PAI itself is configured."""
@@ -205,11 +245,18 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
     if not is_available():
         return {"ok": False, "error": {"code": "operator_unavailable", "message": "PAI Operator is not configured on the server"}}
 
+    # `ctx.conversation` is the same thread id PAI Counselor's own tool
+    # context carries (see cloud_agent._invoke_assistant_agent) — reconstruct
+    # the event target so the finished run can post its result back into the
+    # exact thread the objective came from, the way any other agent reply does.
+    channel_target = f"channel/{ctx.conversation}" if getattr(ctx, "conversation", None) else None
+
     db = SessionLocal()
     try:
         run = ExecutionRun(
             workspace_id=ctx.workspace_id,
             requested_by=ctx.source,
+            channel_target=channel_target,
             objective=objective,
             constraints=constraints or {},
             context_refs=context_refs or [],
@@ -228,7 +275,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
     # before this finishes. `ctx.api` is a stateless per-call HTTP client
     # (just workspace_id + token), safe to keep using from the background task.
     asyncio.create_task(
-        _execute(run_id, ctx.workspace_id, ctx.api, objective, constraints or {}, context_refs or [])
+        _execute(run_id, ctx.workspace_id, ctx.api, objective, constraints or {}, context_refs or [], channel_target)
     )
 
     return {"ok": True, "data": data}
@@ -259,6 +306,7 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
 async def _execute(
     run_id: str, workspace_id: str, api: Any,
     objective: str, constraints: dict, context_refs: list,
+    channel_target: Optional[str] = None,
 ) -> None:
     db = SessionLocal()
     try:
@@ -302,6 +350,7 @@ async def _execute(
         except Exception as exc:
             logger.exception("operator: understand phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"understand phase failed: {exc}"[:500], completed_at=_now())
+            await _post_result(db, workspace_id, channel_target, "I ran into an issue starting on that — want me to try again?")
             return
 
         # ---- PLAN ----
@@ -321,6 +370,7 @@ async def _execute(
         except Exception as exc:
             logger.exception("operator: plan phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"plan phase failed: {exc}"[:500], completed_at=_now())
+            await _post_result(db, workspace_id, channel_target, "I ran into an issue starting on that — want me to try again?")
             return
         plan = _parse_json_list(plan_raw) or [objective]
         set_status("executing", plan=plan, current_step=plan[0])
@@ -365,6 +415,7 @@ async def _execute(
             except Exception as exc:
                 logger.exception("operator: execute phase failed for run %s", run_id)
                 set_status(STATUS_FAILED, error=f"execute phase failed: {exc}"[:500], completed_at=_now())
+                await _post_result(db, workspace_id, channel_target, "I ran into an issue partway through that — want me to try again?")
                 return
 
             tool_calls = msg.get("tool_calls")
@@ -428,6 +479,7 @@ async def _execute(
             current_step=summary,
             completed_at=_now(),
         )
+        await _post_result(db, workspace_id, channel_target, _terminal_message(status, summary, missing, verification))
     except Exception as exc:
         logger.exception("operator: run %s failed unexpectedly", run_id)
         try:
@@ -438,6 +490,7 @@ async def _execute(
                 run.completed_at = _now()
                 db.commit()
                 _publish_run_updated(workspace_id, run)
+                await _post_result(db, workspace_id, channel_target, "I ran into an unexpected issue and had to stop working on that — want me to try again?")
         except Exception:
             logger.exception("operator: failed to record failure for run %s", run_id)
     finally:
