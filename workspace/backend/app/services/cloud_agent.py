@@ -256,7 +256,13 @@ async def _invoke_assistant_agent(
     system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
     system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
     from app.tools import ToolContext, get_tool_executor, get_tool_registry
+    from app.memory.permissions import capabilities_for_agent
     allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)
+    # Keyed on the agent actually running, not hardcoded to Counselor: this
+    # loop serves every cloud agent, and a user-added one must not inherit
+    # Counselor's memory grant just by running the same code path. Unlisted
+    # agents get NO_CAPABILITIES, so memory tools are withheld from them.
+    granted_capabilities = capabilities_for_agent(agent_name)
     tool_context = ToolContext(
         workspace_id=workspace_id,
         agent_name=agent_name,
@@ -265,10 +271,13 @@ async def _invoke_assistant_agent(
         user_id=(event_data.get("source") or "").removeprefix("human:") or None,
         api=api,
         allowed_tools=allowed_tools,
+        granted_capabilities=granted_capabilities,
     )
     tool_registry = get_tool_registry()
     tool_executor = get_tool_executor()
-    tools = tool_registry.openai_tools_for_agent(allowed_tools)
+    tools = tool_registry.openai_tools_for_agent(
+        allowed_tools, granted_capabilities=granted_capabilities,
+    )
     max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
     logger.info(

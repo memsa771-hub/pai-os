@@ -182,6 +182,37 @@ def _publish_run_updated(workspace_id: str, run: ExecutionRun) -> None:
         logger.exception("operator: failed to publish run update for %s", run.id)
 
 
+def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> str:
+    """Resolve `ExecutionRun.context_refs` to a compact prompt block.
+
+    Returns "" when there are no refs, nothing is known yet, or resolution
+    fails — memory is an enhancement to a run, never a precondition for it, so
+    a memory outage must not fail an otherwise-valid objective.
+
+    Runs on its own short-lived session: this is called from the background
+    execution task, which owns no request session.
+    """
+    if not context_refs:
+        return ""
+    db = SessionLocal()
+    try:
+        from app.memory.context import MemoryContextService
+
+        student = MemoryContextService(db).resolve_refs(
+            workspace_id=workspace_id,
+            context_refs=list(context_refs),
+            caller=PAI_OPERATOR_AGENT_NAME,
+        )
+        return student.to_prompt_block()
+    except Exception:
+        logger.exception(
+            "operator: failed to resolve context_refs for workspace %s", workspace_id
+        )
+        return ""
+    finally:
+        db.close()
+
+
 def is_available() -> bool:
     """Operator shares Counselor's server credentials — nothing to check
     beyond whether PAI itself is configured."""
@@ -285,14 +316,26 @@ async def _execute(
         except Exception:
             state_summary = "Current workspace state (live): (unavailable)"
 
+        # ---- RESOLVE MEMORY CONTEXT ----
+        # `context_refs` on the row stays a lightweight list of strings
+        # (["vault", "memory:preferences"]); it is resolved to real data HERE,
+        # at run time. A run queued an hour ago therefore sees the student's
+        # current profile rather than a snapshot, and ExecutionRun never grows
+        # a copy of the Vault.
+        #
+        # Resolution is capability-gated as `pai-operator`, so this cannot be
+        # used to read more than Operator is granted.
+        memory_block = _resolve_memory_context(workspace_id, context_refs)
+
         # ---- UNDERSTAND ----
         set_status("understanding", current_step="Understanding the objective")
         try:
             understanding = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
-                    f"{state_summary}\n\nObjective from PAI Counselor: {objective}\n"
-                    f"Constraints: {constraints}\nContext references: {context_refs}\n\n"
+                    f"{state_summary}\n{memory_block}\n\n"
+                    f"Objective from PAI Counselor: {objective}\n"
+                    f"Constraints: {constraints}\n\n"
                     "UNDERSTAND phase only. In 2-4 sentences, restate what is actually "
                     "being asked, note what is already known, and name the biggest "
                     "unknown. Do not plan or act yet."
@@ -310,6 +353,8 @@ async def _execute(
             plan_raw = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
+                    f"{memory_block}\n\n" if memory_block else ""
+                ) + (
                     f"Objective: {objective}\nUnderstanding: {understanding}\n\n"
                     "PLAN phase. Reply with ONLY a JSON array of 3-8 short step "
                     "labels (strings) — the concrete ordered steps needed, using "

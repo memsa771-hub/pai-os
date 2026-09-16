@@ -22,17 +22,28 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models import BackgroundJob
 
 logger = logging.getLogger(__name__)
 
-# A job whose worker died holds `locked_at` forever. Anything running longer
-# than this is presumed dead and may be reclaimed. Generous enough that a slow
-# LLM extraction is not stolen from a live worker.
-STALE_LOCK_SECONDS = 15 * 60
+# How long a claim is valid for. A worker must renew (`heartbeat`) before this
+# elapses or its job becomes reclaimable. This is a LEASE, not a timeout on the
+# work: a job may run for hours as long as its worker keeps saying it is alive.
+#
+# The distinction matters because the alternative — "anything running longer
+# than N is presumed dead" — silently runs long jobs twice. With a lease, only
+# a worker that has stopped renewing loses its job.
+LEASE_SECONDS = 5 * 60
+
+# Renew at this interval; comfortably inside LEASE_SECONDS so a slow tick or a
+# brief DB blip does not cost a live worker its lease.
+LEASE_RENEW_SECONDS = 60
+
+# Back-compat alias for the previous constant name.
+STALE_LOCK_SECONDS = LEASE_SECONDS
 
 # Retry backoff, indexed by attempt number; the last entry repeats.
 RETRY_BACKOFF_SECONDS = (10, 60, 300, 1800)
@@ -44,16 +55,6 @@ def _now() -> datetime:
 
 def _worker_id() -> str:
     return f"{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}"
-
-
-def _as_aware(value: Optional[datetime]) -> Optional[datetime]:
-    """SQLite returns naive datetimes; PostgreSQL returns aware ones.
-
-    Comparing the two raises TypeError, so normalise before any comparison.
-    """
-    if value is not None and value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value
 
 
 class JobHandlerRegistry:
@@ -132,12 +133,20 @@ class BackgroundJobService:
             available_at=available_at or _now(),
             idempotency_key=idempotency_key,
         )
-        self.db.add(job)
+
+        # The INSERT goes inside a SAVEPOINT. A unique-key collision here is an
+        # expected race, not a failure of the caller's work: reconciliation may
+        # have already written canonical rows in this same transaction, and a
+        # bare `self.db.rollback()` would discard all of it to handle a
+        # duplicate enqueue. The savepoint rolls back only the failed INSERT
+        # and leaves the outer transaction intact and usable.
         try:
-            self.db.flush()
+            with self.db.begin_nested():
+                self.db.add(job)
+                self.db.flush()
         except IntegrityError:
-            # Lost the race on the unique index — adopt the winner's row.
-            self.db.rollback()
+            if not idempotency_key:
+                raise
             existing = self.db.execute(
                 select(BackgroundJob).where(
                     BackgroundJob.idempotency_key == idempotency_key
@@ -175,6 +184,8 @@ class BackgroundJobService:
         for job in jobs:
             job.status = "running"
             job.attempts = (job.attempts or 0) + 1
+            # `locked_at` is the lease START; the lease expires
+            # LEASE_SECONDS later unless renewed by `heartbeat`.
             job.locked_at = now
             job.locked_by = worker
         if jobs:
@@ -183,36 +194,79 @@ class BackgroundJobService:
                 self.db.refresh(job)
         return jobs
 
-    def reclaim_stale(self, older_than_seconds: int = STALE_LOCK_SECONDS) -> int:
-        """Return jobs whose worker died to the pending pool.
+    def heartbeat(self, job_id: str, worker_id: str) -> bool:
+        """Renew the lease on a job this worker still holds.
 
-        Without this a crash mid-job strands that row in `running` forever.
-        Attempts are NOT incremented here — the attempt was already counted at
-        claim time, so a crash-looping job still exhausts `max_attempts`.
+        Returns False if the lease was lost (another worker reclaimed it, or
+        the job already finished). A caller that sees False should abandon the
+        work rather than finish it, since someone else now owns the job.
+
+        The `locked_by` predicate is what makes that safe: a worker whose lease
+        expired cannot renew it back out from under its successor.
+        """
+        now = _now()
+        result = self.db.execute(
+            update(BackgroundJob)
+            .where(
+                BackgroundJob.id == job_id,
+                BackgroundJob.status == "running",
+                BackgroundJob.locked_by == worker_id,
+            )
+            .values(locked_at=now)
+            .execution_options(synchronize_session=False)
+        )
+        self.db.commit()
+        return (result.rowcount or 0) > 0
+
+    def reclaim_stale(self, older_than_seconds: int = LEASE_SECONDS) -> int:
+        """Requeue jobs whose lease expired, as two set-based UPDATEs.
+
+        Done in SQL rather than by loading every running row into Python: the
+        `running` set is unbounded in principle, and a worker doing this every
+        tick should not pull the table into memory to find the few dead ones.
+
+        Attempts are NOT incremented here — the attempt was counted at claim
+        time, so a crash-looping job still exhausts `max_attempts`.
         """
         cutoff = _now() - timedelta(seconds=older_than_seconds)
-        stale = list(self.db.execute(
-            select(BackgroundJob).where(BackgroundJob.status == "running")
-        ).scalars().all())
+        expired = (
+            BackgroundJob.status == "running",
+            BackgroundJob.locked_at.is_not(None),
+            BackgroundJob.locked_at < cutoff,
+        )
 
-        count = 0
-        for job in stale:
-            locked_at = _as_aware(job.locked_at)
-            if locked_at is not None and locked_at > cutoff:
-                continue
-            if (job.attempts or 0) >= (job.max_attempts or 5):
-                job.status = "failed"
-                job.last_error = "worker lock expired; max attempts exhausted"
-                job.completed_at = _now()
-            else:
-                job.status = "pending"
-                job.locked_at = None
-                job.locked_by = None
-                job.last_error = "worker lock expired; requeued"
-            count += 1
-        if count:
+        # Exhausted first: a job already at max_attempts must not be requeued
+        # by the second statement, so this one has to claim those rows first.
+        failed = self.db.execute(
+            update(BackgroundJob)
+            .where(*expired, BackgroundJob.attempts >= BackgroundJob.max_attempts)
+            .values(
+                status="failed",
+                last_error="worker lease expired; max attempts exhausted",
+                completed_at=_now(),
+            )
+            .execution_options(synchronize_session=False)
+        ).rowcount or 0
+
+        requeued = self.db.execute(
+            update(BackgroundJob)
+            .where(*expired, BackgroundJob.attempts < BackgroundJob.max_attempts)
+            .values(
+                status="pending",
+                locked_at=None,
+                locked_by=None,
+                last_error="worker lease expired; requeued",
+            )
+            .execution_options(synchronize_session=False)
+        ).rowcount or 0
+
+        total = failed + requeued
+        if total:
             self.db.commit()
-        return count
+            # The UPDATEs bypassed the identity map; drop stale ORM state so a
+            # caller holding a job object does not read a pre-reclaim status.
+            self.db.expire_all()
+        return total
 
     # -- completion -------------------------------------------------------
 

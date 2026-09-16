@@ -236,3 +236,153 @@ def test_duplicate_handler_registration_is_rejected():
     registry.register("x.y", handler)
     with pytest.raises(ValueError, match="Duplicate job handler"):
         registry.register("x.y", handler)
+
+
+# ---------------------------------------------------------------------------
+# Leases — a live long-running job must not be reclaimed
+# ---------------------------------------------------------------------------
+
+def test_heartbeat_renews_the_lease(db_session, workspace):
+    """A job that keeps saying it is alive is never stolen.
+
+    Regression: reclaim used to treat "running longer than N" as dead, which
+    silently ran long jobs twice.
+    """
+    service = BackgroundJobService(db_session)
+    service.enqueue("memory.extract", {}, workspace_id=workspace.id)
+    db_session.commit()
+
+    job = service.claim(limit=1, worker_id="worker-a")[0]
+    job_id = job.id
+
+    # Simulate a long run: the lease is about to expire...
+    job.locked_at = _now() - timedelta(minutes=4, seconds=50)
+    db_session.commit()
+
+    # ...but the worker renews it.
+    assert service.heartbeat(job_id, "worker-a") is True
+
+    assert service.reclaim_stale() == 0
+    db_session.refresh(job)
+    assert job.status == "running"
+    assert job.locked_by == "worker-a"
+
+
+def test_expired_lease_is_reclaimed(db_session, workspace):
+    """A worker that stopped renewing loses the job."""
+    service = BackgroundJobService(db_session)
+    service.enqueue("memory.extract", {}, workspace_id=workspace.id)
+    db_session.commit()
+
+    job = service.claim(limit=1, worker_id="worker-a")[0]
+    job.locked_at = _now() - timedelta(minutes=10)
+    db_session.commit()
+
+    assert service.reclaim_stale() == 1
+    db_session.refresh(job)
+    assert job.status == "pending"
+    assert job.locked_by is None
+
+
+def test_heartbeat_fails_after_the_job_was_reclaimed(db_session, workspace):
+    """The losing worker must find out, so it discards its result.
+
+    Without this the original worker finishes and overwrites the outcome of
+    whichever worker legitimately took the job over.
+    """
+    service = BackgroundJobService(db_session)
+    service.enqueue("memory.extract", {}, workspace_id=workspace.id)
+    db_session.commit()
+
+    job = service.claim(limit=1, worker_id="worker-a")[0]
+    job_id = job.id
+    job.locked_at = _now() - timedelta(minutes=10)
+    db_session.commit()
+
+    service.reclaim_stale()
+    taken = service.claim(limit=1, worker_id="worker-b")
+    assert len(taken) == 1 and taken[0].id == job_id
+
+    # worker-a no longer owns it and cannot renew.
+    assert service.heartbeat(job_id, "worker-a") is False
+    # worker-b does.
+    assert service.heartbeat(job_id, "worker-b") is True
+
+
+def test_heartbeat_on_a_finished_job_returns_false(db_session, workspace):
+    service = BackgroundJobService(db_session)
+    service.enqueue("memory.extract", {}, workspace_id=workspace.id)
+    db_session.commit()
+
+    job = service.claim(limit=1, worker_id="worker-a")[0]
+    service.complete(job, {})
+    db_session.commit()
+
+    assert service.heartbeat(job.id, "worker-a") is False
+
+
+def test_reclaim_does_not_load_every_running_job(db_session, workspace):
+    """Reclaim is set-based SQL; it must not scale with the running set.
+
+    Asserted behaviourally: many live jobs, none reclaimed, and the one dead
+    job is found regardless.
+    """
+    service = BackgroundJobService(db_session)
+    for i in range(25):
+        service.enqueue("memory.embed", {"n": i}, workspace_id=workspace.id)
+    db_session.commit()
+
+    claimed = service.claim(limit=25, worker_id="worker-a")
+    assert len(claimed) == 25
+
+    dead = claimed[7]
+    dead.locked_at = _now() - timedelta(minutes=10)
+    db_session.commit()
+
+    assert service.reclaim_stale() == 1
+    db_session.refresh(dead)
+    assert dead.status == "pending"
+    still_running = [j for j in claimed if j.id != dead.id]
+    for job in still_running:
+        db_session.refresh(job)
+        assert job.status == "running"
+
+
+# ---------------------------------------------------------------------------
+# Enqueue must not damage the caller's transaction
+# ---------------------------------------------------------------------------
+
+def test_idempotency_conflict_does_not_roll_back_the_caller(db_session, workspace):
+    """A duplicate enqueue must not discard the caller's own uncommitted work.
+
+    Regression: `enqueue` called `self.db.rollback()` on conflict, which threw
+    away canonical memory rows written earlier in the SAME transaction —
+    exactly what reconciliation does before enqueueing its embed job.
+    """
+    from app.memory.semantic import MemoryService
+
+    service = BackgroundJobService(db_session)
+    service.enqueue(
+        "memory.embed", {"v": 1}, workspace_id=workspace.id,
+        idempotency_key="dup-key",
+    )
+    db_session.commit()
+
+    # Caller writes something important, THEN hits a duplicate enqueue.
+    memory = MemoryService(db_session).create(
+        workspace_id=workspace.id, content="Must survive the conflict",
+        memory_type="preference",
+    )
+    again = service.enqueue(
+        "memory.embed", {"v": 2}, workspace_id=workspace.id,
+        idempotency_key="dup-key",
+    )
+    db_session.commit()
+
+    # The duplicate resolved to the existing job...
+    assert again.idempotency_key == "dup-key"
+    assert db_session.query(BackgroundJob).filter(
+        BackgroundJob.idempotency_key == "dup-key"
+    ).count() == 1
+    # ...and the caller's work survived.
+    assert MemoryService(db_session).get(workspace.id, memory.id) is not None

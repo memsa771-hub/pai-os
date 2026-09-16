@@ -37,15 +37,23 @@ OPERATOR_CAPABILITIES = frozenset({
 })
 
 
-def capabilities_for_agent(agent_name: str) -> frozenset[str]:
-    """Capability grant for an agent.
+# An agent nobody has granted anything. Not a typo for "read-only": a student's
+# profile is not public-by-default to whatever agent happens to join the
+# workspace, and read access is itself a disclosure decision.
+NO_CAPABILITIES: frozenset[str] = frozenset()
 
-    Unknown agents get the read-only grant. Defaulting closed matters: a future
-    agent that nobody thought to add here cannot mutate the student's profile
-    by accident.
+_GRANTS: dict[str, frozenset[str]] = {
+    COUNSELOR_AGENT_NAME: COUNSELOR_CAPABILITIES,
+    OPERATOR_AGENT_NAME: OPERATOR_CAPABILITIES,
+}
+
+
+def capabilities_for_agent(agent_name: str) -> frozenset[str]:
+    """Capability grant for an agent. Unlisted agents get nothing.
+
+    Fails closed on *reads* as well as writes. A third-party agent connected to
+    the workspace — or a future PAI component nobody remembered to add here —
+    cannot read the student's Vault, preferences or history until someone
+    grants it explicitly.
     """
-    if agent_name == COUNSELOR_AGENT_NAME:
-        return COUNSELOR_CAPABILITIES
-    if agent_name == OPERATOR_AGENT_NAME:
-        return OPERATOR_CAPABILITIES
-    return OPERATOR_CAPABILITIES
+    return _GRANTS.get(agent_name, NO_CAPABILITIES)

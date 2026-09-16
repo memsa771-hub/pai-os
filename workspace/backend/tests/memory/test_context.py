@@ -195,11 +195,26 @@ def test_reads_are_capability_gated(db_session, workspace, seed_fields, monkeypa
     assert context.resolved_refs == []
 
 
-def test_unknown_agents_can_still_read(db_session, workspace, seed_fields):
-    """The documented default: unknown agents get read-only, not no access."""
+def test_unknown_agents_read_nothing(db_session, workspace, seed_fields):
+    """Unlisted agents get NO memory access — reads are a disclosure decision.
+
+    A third-party agent connected to this workspace must not be able to read
+    the student's profile just by asking the context service for it.
+    """
     _populate(db_session, workspace.id)
     context = MemoryContextService(db_session).build_student_context(
-        workspace_id=workspace.id, caller="some-future-agent",
+        workspace_id=workspace.id, caller="some-third-party-agent",
+    )
+    assert context.is_empty()
+    assert context.resolved_refs == []
+    assert context.to_prompt_block() == ""
+
+
+def test_operator_reads_are_still_permitted(db_session, workspace, seed_fields):
+    """Operator keeps the read access it needs to act on the student's behalf."""
+    _populate(db_session, workspace.id)
+    context = MemoryContextService(db_session).build_student_context(
+        workspace_id=workspace.id, caller="operator",
     )
     assert context.vault["education.cgpa"] == 8.1
-    assert context.memories
+    assert context.memories and context.episodes

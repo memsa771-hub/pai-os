@@ -25,7 +25,13 @@ import os
 import signal
 
 from app.database import SessionLocal
-from app.jobs.service import BackgroundJobService, _worker_id, job_handlers, run_job
+from app.jobs.service import (
+    LEASE_RENEW_SECONDS,
+    BackgroundJobService,
+    _worker_id,
+    job_handlers,
+    run_job,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +43,29 @@ RECLAIM_EVERY_TICKS = 30
 _shutdown = asyncio.Event()
 
 
+async def _renew_lease(job_id: str, worker: str) -> None:
+    """Hold the lease open for as long as the job is actually running.
+
+    Uses its own session — the handler owns the job's session, and writing the
+    heartbeat through that one would interleave with the handler's own
+    transaction and could commit its half-finished work.
+    """
+    while True:
+        await asyncio.sleep(LEASE_RENEW_SECONDS)
+        db = SessionLocal()
+        try:
+            if not BackgroundJobService(db).heartbeat(job_id, worker):
+                # Lease lost: someone else owns this job now. Stop renewing;
+                # `_process_one` will find the job no longer ours and discard
+                # its result rather than double-completing it.
+                logger.warning("lease lost id=%s worker=%s", job_id, worker)
+                return
+        except Exception:
+            logger.exception("lease renewal failed id=%s", job_id)
+        finally:
+            db.close()
+
+
 async def _process_one(job_id: str, worker: str) -> bool:
     """Run a single claimed job in its own session and transaction.
 
@@ -44,6 +73,7 @@ async def _process_one(job_id: str, worker: str) -> bool:
     cannot take down the rest of the batch.
     """
     db = SessionLocal()
+    lease = asyncio.create_task(_renew_lease(job_id, worker))
     try:
         service = BackgroundJobService(db)
         job = service.get(job_id)
@@ -51,6 +81,17 @@ async def _process_one(job_id: str, worker: str) -> bool:
             return False
         try:
             result = await run_job(job, db)
+            # Re-check ownership before committing. If the lease expired
+            # mid-run and another worker took over, completing here would
+            # overwrite that worker's outcome with ours.
+            db.refresh(job)
+            if job.locked_by != worker or job.status != "running":
+                db.rollback()
+                logger.warning(
+                    "discarding result for id=%s — lease no longer held by %s",
+                    job_id, worker,
+                )
+                return False
             service.complete(job, result if isinstance(result, dict) else {"value": result})
             db.commit()
             logger.info("job succeeded id=%s type=%s worker=%s", job.id, job.job_type, worker)
@@ -59,12 +100,17 @@ async def _process_one(job_id: str, worker: str) -> bool:
             db.rollback()
             # Re-fetch: the rollback detached whatever we had.
             job = service.get(job_id)
-            if job is not None:
+            if job is not None and job.locked_by == worker:
                 service.fail(job, f"{type(exc).__name__}: {exc}")
                 db.commit()
             logger.exception("job failed id=%s type=%s", job_id, getattr(job, "job_type", "?"))
             return False
     finally:
+        lease.cancel()
+        try:
+            await lease
+        except asyncio.CancelledError:
+            pass
         db.close()
 
 

@@ -1,3 +1,21 @@
+# Shared by `backend` and `worker` so the two processes cannot drift apart —
+# a worker running against a different DATABASE_URL or PAI config than the web
+# process is a genuinely confusing failure.
+x-backend-env: &backend-env
+  DATABASE_URL: postgresql://postgres:dev@db:5432/openagents_workspace
+  AUTH_MODE: workspace_token
+  IDENTITY_MODE: standalone
+  CORS_ORIGINS: http://localhost:3000
+  SUPABASE_URL: ${SUPABASE_URL:-}
+  SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+  PAI_ENABLED: ${PAI_ENABLED:-false}
+  PAI_API_KEY: ${PAI_API_KEY:-}
+  PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
+  PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
+  WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
+  WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
+  WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
+
 services:
   db:
     image: postgres:16-alpine
@@ -20,19 +38,7 @@ services:
       context: ./backend
       dockerfile: backend.Dockerfile
     environment:
-      DATABASE_URL: postgresql://postgres:dev@db:5432/openagents_workspace
-      AUTH_MODE: workspace_token
-      IDENTITY_MODE: standalone
-      CORS_ORIGINS: http://localhost:3000
-      SUPABASE_URL: ${SUPABASE_URL:-}
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
-      PAI_ENABLED: ${PAI_ENABLED:-false}
-      PAI_API_KEY: ${PAI_API_KEY:-}
-      PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
-      PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
-      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
-      WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
-      WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
+      <<: *backend-env
     ports:
       - "8000:8000"
     depends_on:
@@ -41,6 +47,32 @@ services:
     volumes:
       - ./backend:/app
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Durable background job worker (PAI memory formation and anything else
+  # enqueued into `background_jobs`). A SEPARATE process from the web service
+  # on purpose: job handlers do slow work (LLM extraction in Phase 2), and the
+  # web process caps its threadpool to match the DB pool so request latency is
+  # never held hostage to background work.
+  #
+  # Safe to scale: `docker compose up -d --scale worker=3`. Claiming uses
+  # FOR UPDATE SKIP LOCKED plus a renewed lease, so N workers never run the
+  # same job twice.
+  worker:
+    build:
+      context: ./backend
+      dockerfile: backend.Dockerfile
+    environment:
+      <<: *backend-env
+      JOB_WORKER_POLL_SECONDS: ${JOB_WORKER_POLL_SECONDS:-2}
+      JOB_WORKER_BATCH: ${JOB_WORKER_BATCH:-5}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend:/app
+    # Overrides the image ENTRYPOINT (which starts uvicorn).
+    entrypoint: ["python", "-m", "app.jobs.worker"]
+    restart: unless-stopped
 
   frontend:
     build:

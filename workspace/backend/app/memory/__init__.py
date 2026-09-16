@@ -20,12 +20,14 @@ app/memory/permissions.py. There is no second memory store for Operator.
 
 from .permissions import (
     COUNSELOR_CAPABILITIES,
+    NO_CAPABILITIES,
     OPERATOR_CAPABILITIES,
     capabilities_for_agent,
 )
 
 __all__ = [
     "COUNSELOR_CAPABILITIES",
+    "NO_CAPABILITIES",
     "OPERATOR_CAPABILITIES",
     "capabilities_for_agent",
 ]

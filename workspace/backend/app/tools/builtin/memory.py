@@ -141,7 +141,7 @@ async def remember(context, args: dict) -> dict:
                 key=field_key,
                 proposed_value=args.get("value"),
                 confidence=1.0,
-                source_type="user_explicit",
+                source_type="user_explicit", allow_user_explicit=True,
                 evidence={"quote": content},
             )
         else:
@@ -152,7 +152,7 @@ async def remember(context, args: dict) -> dict:
                 content=content,
                 entities={"memory_type": args.get("memory_type", "preference")},
                 confidence=1.0,
-                source_type="user_explicit",
+                source_type="user_explicit", allow_user_explicit=True,
             )
 
         result = MemoryReconciler(db).reconcile(candidate)
@@ -193,7 +193,7 @@ async def forget(context, args: dict) -> dict:
                 operation="retract",
                 key=field_key,
                 confidence=1.0,
-                source_type="user_explicit",
+                source_type="user_explicit", allow_user_explicit=True,
             )
         else:
             candidate = candidates.propose(
@@ -202,7 +202,7 @@ async def forget(context, args: dict) -> dict:
                 operation="forget",
                 content=target,
                 confidence=1.0,
-                source_type="user_explicit",
+                source_type="user_explicit", allow_user_explicit=True,
             )
 
         result = MemoryReconciler(db).reconcile(candidate)

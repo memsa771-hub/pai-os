@@ -56,6 +56,33 @@ def other_workspace(db):
 
 
 @pytest.fixture
+def use_test_sessionlocal(monkeypatch):
+    """Point `app.database.SessionLocal` at the test engine.
+
+    Production code that runs outside a request — the job worker, Operator's
+    background task, memory tool handlers — opens its own session via
+    `SessionLocal()` rather than the injected request session. The suite
+    overrides `get_db` but not `SessionLocal`, so without this those paths
+    silently talk to a *different* (empty) database and every assertion about
+    their data fails for the wrong reason.
+    """
+    from tests.conftest import TestingSessionLocal
+    import app.database as database_module
+
+    monkeypatch.setattr(database_module, "SessionLocal", TestingSessionLocal)
+    # Modules that did `from app.database import SessionLocal` hold their own
+    # reference, so patch those bindings too.
+    for module_path in ("app.services.operator", "app.jobs.worker"):
+        try:
+            module = __import__(module_path, fromlist=["SessionLocal"])
+        except ImportError:
+            continue
+        if hasattr(module, "SessionLocal"):
+            monkeypatch.setattr(module, "SessionLocal", TestingSessionLocal)
+    return TestingSessionLocal
+
+
+@pytest.fixture
 def seed_fields(db):
     """Install the standard field definitions.
 

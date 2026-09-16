@@ -4,7 +4,7 @@
 import pytest
 
 from app.jobs.service import BackgroundJobService, run_job
-from app.memory.handlers import JOB_EXTRACT, JOB_RECONCILE
+from app.memory.handlers import JOB_EMBED, JOB_EXTRACT, JOB_RECONCILE
 from app.memory.index import MemoryIndex, MemoryRecord, SearchHit, set_memory_index
 from app.memory.semantic import MemoryService
 from app.memory.vault import VaultService
@@ -91,7 +91,7 @@ async def test_full_pipeline_extract_then_reconcile(db_session, workspace, seed_
     extract = service.enqueue(JOB_EXTRACT, {
         "candidates": [{
             "candidate_type": "vault_fact", "key": "education.cgpa",
-            "proposed_value": 8.2, "confidence": 1.0, "source_type": "user_explicit",
+            "proposed_value": 8.2, "confidence": 1.0,
         }],
     }, workspace_id=workspace.id)
     db_session.commit()
@@ -116,7 +116,7 @@ async def test_reconcile_reports_rejections(db_session, workspace, seed_fields):
     extract = service.enqueue(JOB_EXTRACT, {
         "candidates": [{
             "candidate_type": "vault_fact", "key": "education.cgpa",
-            "proposed_value": 99, "confidence": 1.0, "source_type": "user_explicit",
+            "proposed_value": 99, "confidence": 1.0,
         }],
     }, workspace_id=workspace.id)
     db_session.commit()
@@ -134,14 +134,59 @@ async def test_reconcile_reports_rejections(db_session, workspace, seed_fields):
 
 
 @pytest.mark.asyncio
-async def test_accepted_memories_are_sent_to_the_index(db_session, workspace, recording_index):
+async def test_reconcile_enqueues_embedding_instead_of_indexing_inline(
+    db_session, workspace, recording_index,
+):
+    """Reconciliation must not call the index itself.
+
+    Indexing is a separate durable job so an embedding-provider outage retries
+    on its own schedule instead of failing reconciliation.
+    """
     service = BackgroundJobService(db_session)
     extract = service.enqueue(JOB_EXTRACT, {
         "candidates": [{
             "candidate_type": "semantic_memory",
             "content": "Prefers research-focused universities",
-            "confidence": 0.9, "source_type": "conversation",
+            "confidence": 0.9,
         }],
+    }, workspace_id=workspace.id)
+    db_session.commit()
+    await run_job(extract, db_session)
+    db_session.commit()
+
+    reconcile = db_session.query(BackgroundJob).filter(
+        BackgroundJob.job_type == JOB_RECONCILE
+    ).one()
+    result = await run_job(reconcile, db_session)
+    db_session.commit()
+
+    assert result["accepted"] == 1
+    assert result["embed_enqueued"] == 1
+    # Nothing was indexed synchronously...
+    assert recording_index.indexed == []
+    # ...but a durable embed job now exists to do it.
+    embed = db_session.query(BackgroundJob).filter(
+        BackgroundJob.job_type == JOB_EMBED
+    ).one()
+    assert embed.status == "pending"
+    assert len(embed.payload["memory_ids"]) == 1
+
+    # And running it does the actual indexing.
+    embed.status = "running"
+    await run_job(embed, db_session)
+    assert len(recording_index.indexed) == 1
+    assert "research-focused" in recording_index.indexed[0].text
+
+
+@pytest.mark.asyncio
+async def test_embed_job_is_idempotent_across_reconcile_retries(
+    db_session, workspace, recording_index,
+):
+    """A retried reconcile must not queue the same embedding twice."""
+    service = BackgroundJobService(db_session)
+    extract = service.enqueue(JOB_EXTRACT, {
+        "candidates": [{"candidate_type": "semantic_memory",
+                        "content": "Wants Berlin", "confidence": 0.9}],
     }, workspace_id=workspace.id)
     db_session.commit()
     await run_job(extract, db_session)
@@ -153,16 +198,22 @@ async def test_accepted_memories_are_sent_to_the_index(db_session, workspace, re
     await run_job(reconcile, db_session)
     db_session.commit()
 
-    assert len(recording_index.indexed) == 1
-    record = recording_index.indexed[0]
-    assert record.workspace_id == workspace.id
-    assert record.kind == "semantic_memory"
-    assert "research-focused" in record.text
+    # Re-run the same reconcile job (what a retry after a crash looks like).
+    await run_job(reconcile, db_session)
+    db_session.commit()
+
+    assert db_session.query(BackgroundJob).filter(
+        BackgroundJob.job_type == JOB_EMBED
+    ).count() == 1
 
 
 @pytest.mark.asyncio
-async def test_index_failure_does_not_lose_the_memory(db_session, workspace):
-    """Canonical state must survive an index outage — Postgres is the truth."""
+async def test_index_failure_does_not_roll_back_canonical_memory(db_session, workspace):
+    """An embedding outage must not undo successful reconciliation.
+
+    The memory is canonical in PostgreSQL the moment reconciliation commits;
+    only the separate embed job fails, and only it retries.
+    """
 
     class _BrokenIndex(MemoryIndex):
         async def index(self, records):
@@ -188,12 +239,25 @@ async def test_index_failure_does_not_lose_the_memory(db_session, workspace):
         reconcile = db_session.query(BackgroundJob).filter(
             BackgroundJob.job_type == JOB_RECONCILE
         ).one()
-        with pytest.raises(RuntimeError):
-            await run_job(reconcile, db_session)
+        # Reconciliation SUCCEEDS despite the index being down, because it
+        # never touches the index.
+        result = await run_job(reconcile, db_session)
         db_session.commit()
-
-        # The memory row itself was written before indexing was attempted.
+        assert result["accepted"] == 1
         assert db_session.query(PaiMemory).count() == 1
+
+        # Only the embed job fails, and it is the only thing that retries.
+        embed = db_session.query(BackgroundJob).filter(
+            BackgroundJob.job_type == JOB_EMBED
+        ).one()
+        embed.status = "running"
+        with pytest.raises(RuntimeError):
+            await run_job(embed, db_session)
+        db_session.rollback()
+
+        # Canonical memory survived the index outage.
+        assert db_session.query(PaiMemory).count() == 1
+        assert MemoryService(db_session).list_memories(workspace.id)
     finally:
         from app.memory.index import NullMemoryIndex
         set_memory_index(NullMemoryIndex())

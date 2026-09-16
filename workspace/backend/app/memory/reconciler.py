@@ -22,7 +22,7 @@ from .candidates import MemoryCandidateService
 from .episodic import EpisodicMemoryService
 from .field_definitions import VaultFieldError
 from .semantic import MemoryService
-from .vault import VaultService
+from .vault import VaultOutcome, VaultService
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,10 @@ class ReconcileResult:
     candidate_id: str
     result_id: Optional[str] = None
     reason: Optional[str] = None
+    # What happened to canonical state, when the candidate was a vault_fact.
+    # `accepted` alone is not enough: a candidate that lost a conflict is
+    # neither accepted nor an error, and the caller needs to tell them apart.
+    outcome: Optional[str] = None
 
 
 class MemoryReconciler:
@@ -103,7 +107,7 @@ class MemoryReconciler:
 
         # Validates against the field definition; raises VaultFieldError, which
         # `reconcile` converts into a recorded rejection.
-        fact = self.vault.apply_fact(
+        result = self.vault.apply_fact(
             workspace_id=candidate.workspace_id,
             field_key=candidate.key,
             value=value,
@@ -113,8 +117,39 @@ class MemoryReconciler:
             evidence=candidate.evidence,
             subject_user_id=candidate.subject_user_id,
         )
-        self.candidates.mark_accepted(candidate, fact.id)
-        return ReconcileResult(True, candidate.id, result_id=fact.id)
+
+        # A candidate that lost its conflict, or that needs human confirmation,
+        # did NOT become canonical — marking it accepted would claim a write
+        # that never happened and hide the losing proposal from review.
+        if result.outcome is VaultOutcome.RETAINED:
+            self.candidates.mark_rejected(
+                candidate,
+                f"retained existing value (policy: conflict lost for {candidate.key})",
+            )
+            return ReconcileResult(
+                False, candidate.id, reason="retained",
+                outcome=VaultOutcome.RETAINED.value,
+            )
+
+        if result.outcome is VaultOutcome.NEEDS_REVIEW:
+            # Left `pending` on purpose: this is deferred, not refused. A human
+            # or an explicit user confirmation can still promote it later.
+            candidate.status = "needs_review"
+            candidate.rejection_reason = (
+                f"{candidate.key} requires explicit confirmation "
+                f"(source: {candidate.source_type})"
+            )
+            self.db.flush()
+            return ReconcileResult(
+                False, candidate.id, reason="needs_review",
+                outcome=VaultOutcome.NEEDS_REVIEW.value,
+            )
+
+        self.candidates.mark_accepted(candidate, result.fact.id)
+        return ReconcileResult(
+            True, candidate.id, result_id=result.fact.id,
+            outcome=result.outcome.value,
+        )
 
     def _reconcile_semantic(self, candidate: MemoryCandidate) -> ReconcileResult:
         if candidate.operation == "forget":

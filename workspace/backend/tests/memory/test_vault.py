@@ -9,7 +9,7 @@ import pytest
 from sqlalchemy import select
 
 from app.memory.field_definitions import VaultFieldDefinitionService, VaultFieldError
-from app.memory.vault import VaultService
+from app.memory.vault import VaultOutcome, VaultService
 from app.models import VaultFact
 
 
@@ -33,15 +33,17 @@ def test_vault_accepts_a_field_invented_at_runtime(db_session, workspace):
     })
 
     vault = VaultService(db_session)
-    fact = vault.apply_fact(
+    result = vault.apply_fact(
         workspace_id=workspace.id,
         field_key="career.skills",
         value=["python", "sql"],
         source_type="user_explicit",
     )
 
-    assert fact.field_key == "career.skills"
-    assert vault.snapshot(workspace.id)["career.skills"] == [["python", "sql"]]
+    assert result.outcome is VaultOutcome.CREATED
+    assert result.fact.field_key == "career.skills"
+    # A list-valued field reads back as the list itself, never wrapped again.
+    assert vault.snapshot(workspace.id)["career.skills"] == ["python", "sql"]
 
 
 def test_definition_upsert_versions_rather_than_mutates(db_session):
@@ -215,6 +217,137 @@ def test_multi_cardinality_replaces_the_whole_set(db_session, workspace, seed_fi
     active = vault.get_facts(workspace.id, "preferences.countries")
     assert len(active) == 1
     assert active[0].value["value"] == ["Germany"]
+
+
+# ---------------------------------------------------------------------------
+# Cardinality invariant: exactly ONE active row per key, for every cardinality
+# ---------------------------------------------------------------------------
+
+def test_list_field_reads_back_flat_not_nested(db_session, workspace, seed_fields):
+    """Regression: snapshot() used to wrap a list-valued fact in another list.
+
+    `preferences.countries` must read back as ["Germany", "Canada"], not
+    [["Germany", "Canada"]] — the latter breaks every consumer and would have
+    shipped a nested array into prompt context.
+    """
+    vault = VaultService(db_session)
+    vault.apply_fact(
+        workspace_id=workspace.id, field_key="preferences.countries",
+        value=["Germany", "Canada"], source_type="user_explicit",
+    )
+    assert vault.snapshot(workspace.id)["preferences.countries"] == ["Germany", "Canada"]
+
+
+def test_one_active_row_per_key_for_list_fields(db_session, workspace, seed_fields):
+    """The documented invariant: a list lives in ONE row, not one row per item."""
+    vault = VaultService(db_session)
+    vault.apply_fact(
+        workspace_id=workspace.id, field_key="preferences.countries",
+        value=["Germany", "Canada", "Netherlands"], source_type="user_explicit",
+    )
+    active = vault.get_facts(workspace.id, "preferences.countries")
+    assert len(active) == 1
+    assert active[0].value["value"] == ["Germany", "Canada", "Netherlands"]
+
+
+def test_list_field_ordering_is_preserved(db_session, workspace, seed_fields):
+    """These lists are ranked — "most preferred first" must survive a round trip."""
+    vault = VaultService(db_session)
+    vault.apply_fact(
+        workspace_id=workspace.id, field_key="preferences.countries",
+        value=["Germany", "Canada"], source_type="user_explicit",
+    )
+    assert vault.snapshot(workspace.id)["preferences.countries"] == ["Germany", "Canada"]
+
+    vault.apply_fact(
+        workspace_id=workspace.id, field_key="preferences.countries",
+        value=["Canada", "Germany"], source_type="user_explicit",
+    )
+    assert vault.snapshot(workspace.id)["preferences.countries"] == ["Canada", "Germany"]
+
+
+# ---------------------------------------------------------------------------
+# Write outcomes
+# ---------------------------------------------------------------------------
+
+def test_outcomes_distinguish_created_from_superseded(db_session, workspace, seed_fields):
+    vault = VaultService(db_session)
+    first = vault.apply_fact(
+        workspace_id=workspace.id, field_key="education.cgpa", value=7.0,
+        source_type="document",
+    )
+    assert first.outcome is VaultOutcome.CREATED and first.changed
+
+    second = vault.apply_fact(
+        workspace_id=workspace.id, field_key="education.cgpa", value=8.0,
+        source_type="user_explicit",
+    )
+    assert second.outcome is VaultOutcome.SUPERSEDED and second.changed
+
+
+def test_losing_a_conflict_reports_retained_not_success(db_session, workspace, seed_fields):
+    """A weaker source must be told its value did NOT become canonical."""
+    vault = VaultService(db_session)
+    vault.apply_fact(
+        workspace_id=workspace.id, field_key="education.cgpa", value=8.1,
+        source_type="user_explicit",
+    )
+    result = vault.apply_fact(
+        workspace_id=workspace.id, field_key="education.cgpa", value=6.0,
+        source_type="conversation", confidence=0.9,
+    )
+
+    assert result.outcome is VaultOutcome.RETAINED
+    assert not result.changed
+    assert result.fact.value["value"] == 8.1       # the retained fact
+    assert len(vault.history(workspace.id, "education.cgpa")) == 1
+
+
+def test_manual_review_blocks_inference_even_with_no_existing_fact(db_session, workspace):
+    """A review-gated field must park the FIRST value too, not just updates.
+
+    Regression: the policy was only consulted when a prior fact existed, so
+    the very first inferred value slipped straight into the Vault.
+    """
+    fields = VaultFieldDefinitionService(db_session)
+    fields.upsert_definition({
+        "key": "immigration.visa_refusals",
+        "category": "immigration",
+        "data_type": "integer",
+        "validation_schema": {"type": "integer", "minimum": 0},
+        "conflict_policy": "manual_review",
+    })
+
+    vault = VaultService(db_session)
+    result = vault.apply_fact(
+        workspace_id=workspace.id, field_key="immigration.visa_refusals",
+        value=2, source_type="conversation", confidence=0.95,
+    )
+
+    assert result.outcome is VaultOutcome.NEEDS_REVIEW
+    assert not result.changed
+    assert vault.get_fact(workspace.id, "immigration.visa_refusals") is None
+
+
+def test_manual_review_allows_an_explicit_user_statement(db_session, workspace):
+    """The gate is on inference, not on the student telling us directly."""
+    fields = VaultFieldDefinitionService(db_session)
+    fields.upsert_definition({
+        "key": "immigration.visa_refusals",
+        "category": "immigration",
+        "data_type": "integer",
+        "validation_schema": {"type": "integer", "minimum": 0},
+        "conflict_policy": "manual_review",
+    })
+
+    vault = VaultService(db_session)
+    result = vault.apply_fact(
+        workspace_id=workspace.id, field_key="immigration.visa_refusals",
+        value=1, source_type="user_explicit",
+    )
+
+    assert result.outcome is VaultOutcome.CREATED
+    assert vault.get_fact(workspace.id, "immigration.visa_refusals").value["value"] == 1
 
 
 # ---------------------------------------------------------------------------

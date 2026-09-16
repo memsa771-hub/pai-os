@@ -77,15 +77,25 @@ class ToolRegistry:
     def permits(tool: ToolDefinition, granted_capabilities=None) -> bool:
         """True if a caller holding `granted_capabilities` may use `tool`.
 
-        ``None`` means an unrestricted caller. Kept here (rather than inlined)
-        so callers building an allow-set and the policy enforcing it agree by
-        construction.
+        Two rules, and they are not the same rule:
+
+        * A tool that declares NO capabilities is unrestricted. Every
+          pre-existing tool is in this class, so nothing that worked before
+          capabilities existed is affected by them.
+        * A tool that DOES declare capabilities **fails closed**: a caller with
+          no grant (``None``) is refused, not waved through. ``None`` means
+          "this caller never declared a grant", which for a privileged tool is
+          exactly the case that must be denied.
+
+        This must agree with ``ToolPolicy.authorize`` exactly — if the registry
+        advertised a tool the policy then refused, a model would be handed a
+        tool it cannot call and would waste turns discovering that.
         """
         required = tool.capabilities
         if not required:
             return True
-        if granted_capabilities is None:
-            return True
+        if not granted_capabilities:
+            return False
         return set(required) <= set(granted_capabilities)
 
     def tools_for_capabilities(self, granted_capabilities) -> frozenset[str]:

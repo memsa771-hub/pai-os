@@ -45,6 +45,19 @@ async def extract_memory(job, db) -> dict:
     candidates = MemoryCandidateService(db)
     proposed = []
 
+    # The source type is decided HERE, from the job's declared origin — never
+    # read from the per-candidate spec, because in Phase 2 that spec is model
+    # output. `memory.extract` jobs are enqueued with the channel they read
+    # ("conversation" for chat, "document" for an uploaded file), and every
+    # candidate from this job inherits it.
+    #
+    # `user_explicit` is unreachable from here by construction: it is refused
+    # unless the caller passes `allow_user_explicit`, which only the explicit
+    # remember/forget tools do.
+    source_type = payload.get("source_type") or "conversation"
+    if source_type not in ("conversation", "document", "agent", "system"):
+        raise ValueError(f"memory.extract: untrusted source_type {source_type!r}")
+
     # Explicit pre-parsed proposals (used by tests, and by any caller that has
     # already decided what to propose). LLM extraction lands here in Phase 2.
     for spec in payload.get("candidates") or []:
@@ -57,7 +70,7 @@ async def extract_memory(job, db) -> dict:
             content=spec.get("content"),
             entities=spec.get("entities"),
             confidence=float(spec.get("confidence", 0.5)),
-            source_type=spec.get("source_type", "conversation"),
+            source_type=source_type,
             source_event_ids=spec.get("source_event_ids"),
             evidence=spec.get("evidence"),
         )
@@ -106,30 +119,34 @@ async def reconcile_memory(job, db) -> dict:
 
     accepted = [r for r in results if r.accepted]
 
-    # Index accepted semantic memories for future retrieval. A NullMemoryIndex
-    # makes this a no-op until a real index is configured.
-    if accepted:
-        memories = MemoryService(db)
-        records = []
-        for result in accepted:
-            if not result.result_id:
-                continue
-            memory = memories.get(workspace_id, result.result_id)
-            if memory is not None:
-                records.append(MemoryRecord(
-                    id=memory.id,
-                    workspace_id=workspace_id,
-                    kind="semantic_memory",
-                    text=memory.content,
-                    filters={"memory_type": memory.memory_type},
-                ))
-        if records:
-            await get_memory_index().index(records)
+    # Indexing is deliberately NOT done here. It calls an external provider,
+    # so it fails on a different schedule from reconciliation — and an
+    # embedding outage must never roll back canonical memory that was
+    # correctly reconciled. Instead we enqueue a separate durable job, in this
+    # same transaction: if the commit succeeds both the memory and its embed
+    # job exist; if it fails, neither does.
+    #
+    # The idempotency key is derived from the memory ids, so a retried
+    # reconcile job cannot queue the same embedding work twice.
+    memory_ids = [
+        r.result_id for r in accepted
+        if r.result_id and MemoryService(db).get(workspace_id, r.result_id) is not None
+    ]
+    if memory_ids:
+        from app.jobs.service import BackgroundJobService
+
+        BackgroundJobService(db).enqueue(
+            job_type=JOB_EMBED,
+            workspace_id=workspace_id,
+            payload={"memory_ids": memory_ids},
+            idempotency_key=f"embed:{job.id}",
+        )
 
     return {
         "reconciled": len(results),
         "accepted": len(accepted),
         "rejected": len(results) - len(accepted),
+        "embed_enqueued": len(memory_ids),
     }
 
 

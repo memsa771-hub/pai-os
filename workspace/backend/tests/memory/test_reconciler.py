@@ -63,12 +63,14 @@ def test_reconciler_applies_an_explicit_user_correction(db_session, workspace, s
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=8.4, confidence=1.0,
-        source_type="user_explicit", evidence={"quote": "actually my CGPA is 8.4"},
+        source_type="user_explicit", allow_user_explicit=True,
+        evidence={"quote": "actually my CGPA is 8.4"},
     )
     result = MemoryReconciler(db_session).reconcile(candidate)
     db_session.commit()
 
     assert result.accepted
+    assert result.outcome == "superseded"
     assert vault.get_fact(workspace.id, "education.cgpa").value["value"] == 8.4
     assert candidate.status == "accepted"
     assert candidate.result_id == result.result_id
@@ -116,7 +118,7 @@ def test_invalid_value_is_rejected_with_a_recorded_reason(db_session, workspace,
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=42, confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     result = MemoryReconciler(db_session).reconcile(candidate)
     db_session.commit()
@@ -146,7 +148,7 @@ def test_explicit_user_statement_bypasses_the_confidence_floor(db_session, works
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=8.0, confidence=0.1,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     result = MemoryReconciler(db_session).reconcile(candidate)
     db_session.commit()
@@ -157,7 +159,7 @@ def test_unknown_field_candidate_is_rejected(db_session, workspace, seed_fields)
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="invented.by.the.model", proposed_value=1, confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     result = MemoryReconciler(db_session).reconcile(candidate)
     db_session.commit()
@@ -171,7 +173,7 @@ def test_a_candidate_is_only_reconciled_once(db_session, workspace, seed_fields)
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=8.0, confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     reconciler = MemoryReconciler(db_session)
     assert reconciler.reconcile(candidate).accepted
@@ -203,7 +205,7 @@ def test_forgotten_memory_is_excluded_from_future_reads(db_session, workspace):
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="semantic_memory",
         operation="forget", content="Canada", confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     assert MemoryReconciler(db_session).reconcile(candidate).accepted
     db_session.commit()
@@ -221,7 +223,7 @@ def test_forgetting_something_absent_is_rejected_not_silently_ok(db_session, wor
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="semantic_memory",
         operation="forget", content="Antarctica", confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     result = MemoryReconciler(db_session).reconcile(candidate)
     db_session.commit()
@@ -240,7 +242,7 @@ def test_retract_removes_a_vault_fact_from_reads(db_session, workspace, seed_fie
 
     candidate = MemoryCandidateService(db_session).propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="retract",
-        key="education.cgpa", confidence=1.0, source_type="user_explicit",
+        key="education.cgpa", confidence=1.0, source_type="user_explicit", allow_user_explicit=True,
     )
     assert MemoryReconciler(db_session).reconcile(candidate).accepted
     db_session.commit()
@@ -259,12 +261,12 @@ def test_reconciling_one_workspace_does_not_touch_another(
     candidates.propose(
         workspace_id=workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=8.0, confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     candidates.propose(
         workspace_id=other_workspace.id, candidate_type="vault_fact", operation="upsert",
         key="education.cgpa", proposed_value=5.0, confidence=1.0,
-        source_type="user_explicit",
+        source_type="user_explicit", allow_user_explicit=True,
     )
     db_session.commit()
 

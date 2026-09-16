@@ -39,18 +39,22 @@ class ToolPolicy:
         allowed = context.allowed_tools
         if allowed is not None and tool.name not in allowed and tool.category not in allowed:
             return False, f"Tool not allowed: {tool.name}"
-        # Capability gate. `granted_capabilities is None` means "unrestricted
-        # caller" (the historical default) so existing callers are unaffected;
-        # a caller that declares a grant must cover everything the tool needs.
+        # Capability gate. A tool declaring no capabilities is unrestricted
+        # (every pre-capability tool); one that declares them fails closed for
+        # a caller with no grant. The decision itself lives in
+        # ToolRegistry.permits so advertising and enforcement cannot disagree —
+        # this branch only turns the same answer into a reason string.
         required = getattr(tool, "capabilities", frozenset())
         if required:
+            from .registry import ToolRegistry
+
             granted = context.granted_capabilities
-            if granted is None:
-                return False, f"Tool requires capabilities: {tool.name}"
-            missing = set(required) - set(granted)
-            if missing:
+            if not ToolRegistry.permits(tool, granted):
+                if not granted:
+                    return False, f"Tool requires capabilities: {tool.name}"
+                missing = sorted(set(required) - set(granted))
                 return False, (
-                    f"Tool requires capability {sorted(missing)[0]}: {tool.name}"
+                    f"Tool requires capability {missing[0]}: {tool.name}"
                 )
         if tool.risk is ToolRisk.SENSITIVE and not self.allow_sensitive:
             return False, f"Tool requires approval: {tool.name}"

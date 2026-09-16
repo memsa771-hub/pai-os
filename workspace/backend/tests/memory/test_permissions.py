@@ -26,11 +26,21 @@ async def _noop(context, args):
     return {"ok": True, "data": {}}
 
 
-def _context(agent_name: str, allowed=None, granted=None) -> ToolContext:
+_UNSET = object()
+
+
+def _context(agent_name: str, allowed=None, granted=_UNSET) -> ToolContext:
+    """Build a ToolContext.
+
+    `granted` left unset derives the grant from the agent name (the real
+    runtime behaviour); passing `None` explicitly models a caller that never
+    declared one, which is exactly the fail-closed case under test.
+    """
+    if granted is _UNSET:
+        granted = capabilities_for_agent(agent_name)
     return ToolContext(
         workspace_id="ws-1", agent_name=agent_name, api=None,
-        allowed_tools=allowed,
-        granted_capabilities=granted if granted is not None else capabilities_for_agent(agent_name),
+        allowed_tools=allowed, granted_capabilities=granted,
     )
 
 
@@ -50,9 +60,56 @@ def test_counselor_holds_read_and_manage():
         assert capability.value in COUNSELOR_CAPABILITIES
 
 
-def test_unknown_agents_default_to_read_only():
-    """Defaulting closed — a new agent cannot mutate memory by being forgotten."""
-    assert capabilities_for_agent("some-future-agent") == OPERATOR_CAPABILITIES
+def test_unknown_agents_get_no_capabilities():
+    """Fails closed on READS too, not just writes.
+
+    A third-party agent in the workspace must not be able to read the
+    student's Vault simply because nobody listed it.
+    """
+    assert capabilities_for_agent("some-future-agent") == frozenset()
+    assert capabilities_for_agent("") == frozenset()
+
+
+def test_unknown_agents_are_offered_no_memory_tools():
+    registry = get_tool_registry()
+    allowed = registry.tools_for_capabilities(capabilities_for_agent("random-agent"))
+    for name in MEMORY_READ_TOOLS + MEMORY_WRITE_TOOLS:
+        assert name not in allowed
+    # ...but ordinary, capability-free tools still work for them.
+    assert "web.search" in allowed
+
+
+def test_capability_tools_fail_closed_without_a_grant():
+    """Registry and policy must AGREE that no grant means refused.
+
+    Regression: `permits()` returned True for `granted=None` while
+    `ToolPolicy.authorize` returned False — the registry advertised tools the
+    executor then refused.
+    """
+    registry = get_tool_registry()
+    tool = registry.get("memory.remember")
+
+    assert registry.permits(tool, None) is False
+    assert registry.permits(tool, frozenset()) is False
+
+    allowed, reason = ToolPolicy().authorize(
+        tool, _context("x", allowed=frozenset({"memory.remember"}), granted=None),
+    )
+    assert not allowed and "capabilit" in reason.lower()
+
+
+def test_registry_and_policy_agree_for_every_tool():
+    """No tool may be advertised to a caller the policy would refuse."""
+    registry = get_tool_registry()
+    for grant in (None, frozenset(), OPERATOR_CAPABILITIES, COUNSELOR_CAPABILITIES):
+        context = _context("probe", granted=grant)
+        for tool in registry.all():
+            advertised = registry.permits(tool, grant)
+            authorized, _ = ToolPolicy(allow_sensitive=True).authorize(tool, context)
+            assert advertised == authorized, (
+                f"{tool.name}: advertised={advertised} authorized={authorized} "
+                f"grant={grant}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -173,6 +230,9 @@ def test_tools_without_capabilities_are_unaffected():
     ))
     assert "legacy.tool" in registry.tools_for_capabilities(OPERATOR_CAPABILITIES)
     assert "legacy.tool" in registry.tools_for_capabilities(frozenset())
+    # Including for a caller that never declared a grant at all — this is what
+    # keeps every pre-capability caller working unchanged.
+    assert registry.permits(registry.get("legacy.tool"), None) is True
 
 
 def test_sensitive_risk_behaviour_is_preserved():
