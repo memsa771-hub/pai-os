@@ -20,13 +20,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ListTree, MessageSquare, CalendarClock, Square, ChevronLeft, X, Plus, Globe, Share2, Crown, AlertTriangle, RefreshCw, Sparkles } from 'lucide-react';
+import { ListTree, MessageSquare, CalendarClock, Square, ChevronLeft, X, Plus, Globe, Share2, Crown, AlertTriangle, RefreshCw, Sparkles, Cog } from 'lucide-react';
 import { ShareDialog } from './share-dialog';
 import { OrchestrationControl } from './orchestration-control';
 import { useLayout } from '@/components/layout/layout-context';
 import { DetailHeader } from '@/components/layout/app-header';
 import { cn } from '@/lib/utils';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
+import { usePaiSystemStatus, OPERATOR_DOT_CLASS } from '@/components/layout/pai-system-status';
 import { agentLabel } from '@/lib/helpers';
 import { CreateRoutineDialog } from '@/components/routines/create-routine-dialog';
 import { eventToMessage } from '@/lib/types';
@@ -134,6 +135,7 @@ export function ChatView() {
   const { agents, currentUser, currentSessionId, sessions, updateLastMessage, setSessionActive, updateAgentMode, stopAllAgents, activeSessionIds, stoppingSessionIds, renameSession, addParticipant, removeParticipant, setSessionMaster, setSessionOrchestration, consumeSkipFocus, createRoutine, knowledge } = useWorkspace();
   const t = useT();
   const [showCreateRoutine, setShowCreateRoutine] = useState(false);
+  const { operatorRun, tone: operatorTone, label: operatorStatusLabel } = usePaiSystemStatus();
   const {
     isMobile,
     openMobileList,
@@ -771,6 +773,27 @@ export function ChatView() {
               />
             );
           })()}
+
+          {/* PAI Operator — status only, shown when there's something to see.
+              Not a participant, not a button that opens anything: hover for
+              detail, same tone/label the sidebar identity block uses. */}
+          {operatorTone !== 'ready' && (
+            <span
+              className={cn(
+                'flex items-center gap-1.5 h-7 px-2 rounded-md text-xs font-medium shrink-0',
+                operatorTone === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                  : operatorTone === 'approval' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                  : 'bg-primary/10 text-primary',
+              )}
+              title={`${t('paiSystem.operatorName')} — ${operatorRun?.currentStep || operatorStatusLabel}`}
+            >
+              <Cog className={cn('size-3.5', operatorTone === 'working' && 'animate-spin')} />
+              <span className="hidden sm:inline max-w-32 truncate">
+                {operatorRun?.currentStep || operatorStatusLabel}
+              </span>
+              <span className={cn('size-1.5 shrink-0 rounded-full', OPERATOR_DOT_CLASS[operatorTone])} aria-hidden="true" />
+            </span>
+          )}
 
           {/* Share conversation */}
           <Button
