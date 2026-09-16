@@ -708,6 +708,22 @@ export function ChatView() {
                   {inThread.length === 0 && notInThread.length === 0 && (
                     <p className="text-sm text-muted-foreground px-2 py-3 text-center">{t('chat.noAgentsOnline')}</p>
                   )}
+                  <DropdownMenuSeparator />
+                  <div
+                    className="flex items-center gap-2 px-2 py-1.5"
+                    title={`${t('paiSystem.operatorName')} — ${operatorRun?.currentStep || operatorStatusLabel}`}
+                  >
+                    <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                      <Cog className={cn('size-3', operatorTone === 'working' && 'animate-spin')} />
+                    </span>
+                    <span className="text-sm flex-1 truncate text-muted-foreground">{t('paiSystem.operatorName')}</span>
+                    <span className="flex items-center gap-1 text-2xs text-muted-foreground shrink-0">
+                      <span className={cn('size-1.5 shrink-0 rounded-full', OPERATOR_DOT_CLASS[operatorTone])} aria-hidden="true" />
+                      <span className="truncate max-w-20">
+                        {operatorTone === 'working' && operatorRun?.currentStep ? operatorRun.currentStep : operatorStatusLabel}
+                      </span>
+                    </span>
+                  </div>
                 </DropdownMenuContent>
               </DropdownMenu>
             );
