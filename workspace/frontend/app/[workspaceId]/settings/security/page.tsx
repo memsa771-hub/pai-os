@@ -79,12 +79,10 @@ export default function SecuritySettingsPage() {
       <div className="space-y-2 rounded-lg border p-4">
         <div className="flex items-center gap-1.5">
           <Shield className="size-4 text-muted-foreground" />
-          <Label>{t('admin.claimTitle')}</Label>
+          <Label>{t('admin.ownerTitle')}</Label>
         </div>
         <p className="text-sm text-muted-foreground">
-          {workspace.creatorEmail
-            ? t('admin.claimedBy', { email: workspace.creatorEmail })
-            : t('admin.unclaimed')}
+          {me.email ? t('admin.ownedBy', { email: me.email }) : t('admin.ownedByYou')}
         </p>
       </div>
     </div>

@@ -6,46 +6,46 @@ Tests for workspace CRUD endpoints.
 import pytest
 from unittest.mock import patch, MagicMock
 
+import app.access as access
+
+
+def _claims(email="student@example.com"):
+    return {"provider": "supabase", "email": email, "supabase_uid": "uid",
+            "apple_sub": None, "display_name": "Student"}
+
+
+def _as(monkeypatch, bearer="tok", email="student@example.com"):
+    """Sign in as a verified student — the only way a workspace is created."""
+    monkeypatch.setattr(access, "verify_identity_claims",
+                        lambda t: _claims(email) if t == bearer else None)
+    return {"Authorization": f"Bearer {bearer}"}
+
 
 class TestCreateWorkspace:
-    """POST /v1/workspaces — create a workspace."""
+    """POST /v1/workspaces — provision the signed-in student's workspace."""
 
-    def test_create_workspace(self, client):
-        """Create workspace returns ID, slug, token, and default channel."""
-        resp = client.post("/v1/workspaces", json={
-            "name": "My Workspace",
-            "agent_name": "test-agent",
-        })
+    def test_create_workspace(self, client, monkeypatch):
+        headers = _as(monkeypatch)
+        resp = client.post("/v1/workspaces", json={"name": "My Workspace"}, headers=headers)
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert "workspaceId" in data
-        assert "slug" in data
-        assert "token" in data
-        assert "channel" in data
-        assert data["name"] == "My Workspace"
+        assert data["workspaceId"] and data["slug"] and data["token"]
 
-    def test_create_workspace_has_channel_with_master(self, client):
-        """Default channel has the creating agent as master and participant."""
-        resp = client.post("/v1/workspaces", json={
-            "name": "Test",
-            "agent_name": "agent-alpha",
-        })
-        channel = resp.json()["data"]["channel"]
-        assert channel["masterAgent"] == "agent-alpha"
-        assert "agent-alpha" in channel["participants"]
+    def test_create_requires_an_identity(self, client, monkeypatch):
+        """Anonymous creation is gone: it could only ever make an orphan."""
+        _as(monkeypatch)
+        assert client.post("/v1/workspaces", json={"name": "X"}).status_code == 401
+        assert client.post(
+            "/v1/workspaces", json={"name": "X"},
+            headers={"Authorization": "Bearer forged"},
+        ).status_code == 401
 
-    def test_create_workspace_with_email(self, client):
-        """Creator email is stored."""
-        resp = client.post("/v1/workspaces", json={
-            "name": "Test",
-            "agent_name": "agent-alpha",
-            "creator_email": "user@example.com",
-        })
-        data = resp.json()["data"]
-        ws_id = data["workspaceId"]
-        detail = client.get(f"/v1/workspaces/{ws_id}",
-                            headers={"X-Workspace-Token": data["token"]})
-        assert detail.json()["data"]["creatorEmail"] == "user@example.com"
+    def test_create_is_idempotent_per_student(self, client, monkeypatch):
+        """A second call returns the same workspace, never a second one."""
+        headers = _as(monkeypatch)
+        first = client.post("/v1/workspaces", json={"name": "A"}, headers=headers).json()["data"]
+        second = client.post("/v1/workspaces", json={"name": "B"}, headers=headers).json()["data"]
+        assert first["workspaceId"] == second["workspaceId"]
 
 
 class TestGetWorkspace:
@@ -164,13 +164,14 @@ class TestDeleteWorkspace:
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "deleted"
 
-    def test_deleted_workspace_hidden_from_list(self, client, workspace):
-        """Deleted workspace doesn't appear in list."""
+    def test_deleted_workspace_hidden_from_list(self, client, workspace, monkeypatch):
+        """Deleted workspace doesn't appear in the owner's list."""
+        headers = _as(monkeypatch, email="test@example.com")
         client.delete(
             f"/v1/workspaces/{workspace['id']}",
             headers={"X-Workspace-Token": workspace["token"]},
         )
-        resp = client.get("/v1/workspaces")
+        resp = client.get("/v1/workspaces", headers=headers)
         ids = [w["workspaceId"] for w in resp.json()["data"]]
         assert workspace["id"] not in ids
 
@@ -319,26 +320,27 @@ class TestGenerateMemberDescription:
 
 
 class TestListWorkspaces:
-    """GET /v1/workspaces — list workspaces."""
+    """GET /v1/workspaces — the caller's own workspace, and only that."""
 
-    def test_list_empty(self, client):
-        """Empty workspace list."""
-        resp = client.get("/v1/workspaces")
-        assert resp.status_code == 200
-        assert resp.json()["data"] == []
+    def test_requires_an_identity(self, client):
+        """It used to take no credentials and return every workspace in the
+        deployment, filterable by creator_email."""
+        assert client.get("/v1/workspaces").status_code == 401
 
-    def test_list_returns_workspaces(self, client, workspace):
-        """Workspaces appear in list."""
-        resp = client.get("/v1/workspaces")
-        assert len(resp.json()["data"]) >= 1
+    def test_lists_nothing_before_provisioning(self, client, monkeypatch):
+        headers = _as(monkeypatch)
+        assert client.get("/v1/workspaces", headers=headers).json()["data"] == []
 
-    def test_list_filter_by_agent(self, client, workspace):
-        """Filter workspaces by agent membership."""
-        resp = client.get("/v1/workspaces", params={"agent_name": "agent-alpha"})
-        assert len(resp.json()["data"]) >= 1
+    def test_lists_only_the_callers_own(self, client, monkeypatch, workspace):
+        """`workspace` belongs to test@example.com; this caller is someone else
+        and must not see it."""
+        headers = _as(monkeypatch, email="someone-else@example.com")
+        mine = client.post("/v1/workspaces", json={"name": "Mine"}, headers=headers).json()["data"]
 
-        resp2 = client.get("/v1/workspaces", params={"agent_name": "nonexistent"})
-        assert resp2.json()["data"] == []
+        listed = client.get("/v1/workspaces", headers=headers).json()["data"]
+        ids = [w["workspaceId"] for w in listed]
+        assert ids == [mine["workspaceId"]]
+        assert workspace["id"] not in ids
 
 
 class TestRotateToken:
@@ -652,11 +654,12 @@ class TestMemberDisplayName:
         by_addr = {a["address"]: a for a in disc.json()["data"]["agents"]}
         assert by_addr["openagents:evt-agent"]["role"] == "member"
 
-    def test_create_workspace_rejects_unsafe_agent_name(self, client):
-        resp = client.post("/v1/workspaces", json={
-            "name": "WS",
+    def test_join_rejects_unsafe_agent_name(self, client, workspace):
+        """Agents enter through /v1/join, and the name policy lives there."""
+        resp = client.post("/v1/join", json={
             "agent_name": "safe\n- forged",
-            "creator_email": "t@example.com",
+            "token": workspace["token"],
+            "network": workspace["id"],
         })
         assert resp.status_code == 400
 

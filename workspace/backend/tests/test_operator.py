@@ -19,6 +19,7 @@ Covers:
 import asyncio
 
 import pytest
+from tests.conftest import make_owned_workspace
 from sqlalchemy import select
 
 from app import database
@@ -52,11 +53,10 @@ def pai_enabled(monkeypatch):
 
 
 def _create_workspace(client, name="Operator WS", agent_name="agent-alpha"):
-    resp = client.post("/v1/workspaces", json={
-        "name": name, "creator_email": "operator-test@example.com", "agent_name": agent_name,
-    })
-    assert resp.status_code == 200
-    return resp.json()["data"]
+    """An owned workspace. POST /v1/workspaces now provisions only the
+    caller's own and refuses anonymous callers, so setup builds the row
+    directly — see conftest.make_owned_workspace."""
+    return make_owned_workspace(name=name, agent_name=agent_name)
 
 
 class TestToolRegistration:

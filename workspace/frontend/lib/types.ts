@@ -2,7 +2,6 @@ export interface Workspace {
   workspaceId: string;
   slug: string;
   name: string;
-  creatorEmail: string | null;
   requireLogin: boolean;
   settings: Record<string, unknown>;
   browserfabricApiKey: string | null;

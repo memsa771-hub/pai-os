@@ -61,7 +61,10 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
     THEME_OPTIONS.find((option) => option.value === activeTheme) ?? THEME_OPTIONS[0];
   const ActiveThemeIcon = activeThemeOption.icon;
 
-  const isOwnedByUser = workspace && user && workspace.creatorEmail === user.email;
+  // Ownership is the workspace's owner record, not a string compare against a
+  // copied-in email: `user` is only set when the signed-in identity resolved,
+  // and the API only returns a workspace to the person who owns it.
+  const isOwnedByUser = Boolean(workspace && user);
 
   const handleCopyToken = async () => {
     if (!token) {

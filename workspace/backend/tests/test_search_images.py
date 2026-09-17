@@ -1,3 +1,4 @@
+from tests.conftest import make_owned_workspace
 # -*- coding: utf-8 -*-
 """
 Tests for image search (POST /v1/search/images) and URL file ingestion
@@ -17,13 +18,10 @@ PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"0" * 100
 
 
 def _create_workspace(client):
-    resp = client.post("/v1/workspaces", json={
-        "name": "Image Test Workspace",
-        "agent_name": "agent-image",
-        "creator_email": "test@example.com",
-    })
-    assert resp.status_code == 200
-    data = resp.json()["data"]
+    """An owned workspace. POST /v1/workspaces now provisions only the
+    caller's own and refuses anonymous callers, so setup builds the row
+    directly — see conftest.make_owned_workspace."""
+    data = make_owned_workspace()
     channel = data["channel"]
     channel_name = channel["name"] if isinstance(channel, dict) else channel
     return {"id": data["workspaceId"], "token": data["token"], "channel": channel_name}

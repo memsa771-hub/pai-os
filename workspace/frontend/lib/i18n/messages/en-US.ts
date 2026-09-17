@@ -832,9 +832,9 @@ export const messages = {
     workspaceToken: 'Workspace token',
     workspaceTokenHint:
       'The machine credential agents and devices use to connect. Anyone with this token has full access — share it carefully.',
-    claimTitle: 'Workspace owner',
-    claimedBy: 'Owned by {email}',
-    unclaimed: 'This workspace has no owner yet.',
+    ownerTitle: 'Workspace owner',
+    ownedBy: 'Owned by {email}',
+    ownedByYou: 'Owned by you.',
 
     lastSeen: 'Last seen {time}',
 

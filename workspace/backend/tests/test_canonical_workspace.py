@@ -165,10 +165,12 @@ class TestGetOrCreateOwnedWorkspace:
 # ---------------------------------------------------------------------------
 
 class TestLegacyBackfillShape:
+    """Old rows that predate ownership, and how resolution treats them."""
+
     def test_single_legacy_workspace_resolves_as_canonical(self, db):
         user = User(email="single-legacy@x.com")
         db.add(user); db.flush()
-        ws = Workspace(slug="legacy1", name="Legacy", creator_email=user.email, owner_user_id=user.id, status="active")
+        ws = Workspace(slug="legacy1", name="Legacy", owner_user_id=user.id, status="active")
         db.add(ws)
         db.commit()
 
@@ -182,16 +184,20 @@ class TestLegacyBackfillShape:
         user = User(email="multi-legacy@x.com")
         db.add(user); db.flush()
 
-        canonical = Workspace(slug="canon", name="Canonical", creator_email=user.email, owner_user_id=user.id, status="active")
-        extra_a = Workspace(slug="extra-a", name="Extra A", creator_email=user.email, status="active")
-        extra_b = Workspace(slug="extra-b", name="Extra B", creator_email=user.email, status="active")
+        canonical = Workspace(slug="canon", name="Canonical", owner_user_id=user.id, status="active")
+        # Ownerless rows: what a pre-053 workspace looks like once ownership is
+        # the only handle on it. No API can produce these any more (see
+        # test_workspace_creation_invariants), but old data may still carry them.
+        extra_a = Workspace(slug="extra-a", name="Extra A", status="active")
+        extra_b = Workspace(slug="extra-b", name="Extra B", status="active")
         db.add_all([canonical, extra_a, extra_b])
         db.commit()
 
         resolved = resolve_owned_workspace(db, user)
         assert resolved.id == canonical.id
-        # The extras still exist — their data was not deleted or merged.
-        assert db.query(Workspace).filter(Workspace.creator_email == user.email).count() == 3
+        # The extras still exist — their data was not deleted or merged, just
+        # left unreachable by any human.
+        assert db.query(Workspace).filter(Workspace.status == "active").count() >= 3
         # get_or_create must not create a fourth workspace when one is owned.
         again = get_or_create_owned_workspace(db, user)
         db.commit()

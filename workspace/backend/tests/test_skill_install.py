@@ -16,6 +16,7 @@ import io
 import zipfile
 
 from sqlalchemy import select
+from tests.conftest import make_owned_workspace
 
 
 def _make_zip(files: dict) -> bytes:
@@ -28,11 +29,9 @@ def _make_zip(files: dict) -> bytes:
 
 
 def _make_workspace(client, name="WS2", agent="beta"):
-    resp = client.post("/v1/workspaces", json={
-        "name": name, "agent_name": agent, "creator_email": "other@example.com",
-    })
-    assert resp.status_code == 200, resp.text
-    d = resp.json()["data"]
+    """A second, separately-owned workspace — used to prove cross-workspace
+    isolation. Built directly; see conftest.make_owned_workspace."""
+    d = make_owned_workspace(name=name, agent_name=agent, email="other@example.com")
     return {"id": d["workspaceId"], "token": d["token"]}
 
 

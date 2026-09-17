@@ -95,7 +95,6 @@ class Workspace(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
     slug = Column(Text, unique=True)
     name = Column(Text, nullable=False)
-    creator_email = Column(Text, nullable=True)
     password_hash = Column(Text, nullable=True)
     # The student who owns this as their one personal workspace. NULL for
     # machine-only/legacy workspaces and for a user's non-canonical extra

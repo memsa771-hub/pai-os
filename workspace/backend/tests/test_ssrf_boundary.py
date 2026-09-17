@@ -24,6 +24,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from tests.conftest import make_owned_workspace
 
 from app import net_security
 from app.browser import BLANK_PAGE, guard_browser_url
@@ -839,13 +840,10 @@ class TestLocalBrowserLaunchWiring:
 # ---------------------------------------------------------------------------
 
 def _create_workspace(client):
-    resp = client.post("/v1/workspaces", json={
-        "name": "SSRF Boundary Workspace",
-        "agent_name": "agent-ssrf",
-        "creator_email": "test@example.com",
-    })
-    assert resp.status_code == 200
-    data = resp.json()["data"]
+    """An owned workspace. POST /v1/workspaces now provisions only the
+    caller's own and refuses anonymous callers, so setup builds the row
+    directly — see conftest.make_owned_workspace."""
+    data = make_owned_workspace()
     return {"id": data["workspaceId"], "token": data["token"]}
 
 

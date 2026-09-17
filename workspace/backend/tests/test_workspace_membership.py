@@ -274,11 +274,11 @@ class TestMeEndpoint:
         assert me["isOwner"] is True
         assert me["tokenAccess"] is False
 
-    def test_token_access_is_not_an_identity(self, client):
-        data = client.post("/v1/workspaces", json={"name": "WS"}).json()["data"]
+    def test_token_access_is_not_an_identity(self, client, workspace):
+        """An agent on the machine token is authorized but is not a person."""
         me = client.get(
-            f"/v1/workspaces/{data['workspaceId']}/me",
-            headers={"X-Workspace-Token": data["token"]},
+            f"/v1/workspaces/{workspace['id']}/me",
+            headers={"X-Workspace-Token": workspace["token"]},
         ).json()["data"]
         assert me["authenticated"] is False
         assert me["isOwner"] is False

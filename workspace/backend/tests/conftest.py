@@ -7,6 +7,8 @@ Registers custom compilers so PostgreSQL-specific types work with SQLite.
 Uses StaticPool to share a single in-memory database across all connections.
 """
 
+from datetime import datetime, timezone
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
@@ -93,42 +95,107 @@ def db():
         session.close()
 
 
-@pytest.fixture
-def workspace(client):
-    """Create a workspace and return its details (id, slug, token).
 
-    Owned by test@example.com. Ownership is what grants a human access now
-    (`workspaces.owner_user_id` — see app/access.py); `creator_email` is
-    display only. The bearer-auth tests mock identity as that same address, so
-    the fixture has to model a real, owned workspace rather than the orphaned
-    one anonymous creation produces.
+def make_owned_workspace(name="Test Workspace", agent_name="agent-alpha",
+                         email="test@example.com"):
+    """Build an owned workspace directly, in the shape POST /v1/workspaces
+    used to return.
+
+    That endpoint now only provisions the *calling* student's own workspace and
+    refuses anonymous callers, so tests that just need "a workspace with this
+    agent in it" can no longer go through it. Building the row here keeps that
+    setup possible without reopening an anonymous creation path — and keeps
+    tests/test_workspace_creation_invariants.py meaningful, since it asserts
+    what the *API* can produce.
+
+    Always sets `owner_user_id`: an ownerless active workspace is exactly the
+    state the product no longer has.
     """
-    resp = client.post("/v1/workspaces", json={
-        "name": "Test Workspace",
-        "agent_name": "agent-alpha",
-        "creator_email": "test@example.com",
-    })
-    assert resp.status_code == 200
-    data = resp.json()["data"]
+    import secrets as _secrets
+    from app.models import Channel, ChannelMember, User, Workspace, WorkspaceMember
 
-    from app.models import User, Workspace as WorkspaceModel
     session = TestingSessionLocal()
     try:
-        owner = session.query(User).filter(User.email == "test@example.com").one_or_none()
+        owner = session.query(User).filter(User.email == email).one_or_none()
         if owner is None:
-            owner = User(email="test@example.com", username="testuser")
+            owner = User(email=email, username=email.split("@")[0].replace(".", "")[:32])
             session.add(owner)
             session.flush()
-        ws = session.get(WorkspaceModel, data["workspaceId"])
-        ws.owner_user_id = owner.id
+
+        ws = Workspace(
+            slug=_secrets.token_hex(4),
+            name=name,
+            owner_user_id=owner.id,
+            password_hash=_secrets.token_urlsafe(32),
+            require_login=True,
+            settings={},
+            status="active",
+        )
+        session.add(ws)
+        session.flush()
+
+        channel_payload = None
+        if agent_name:
+            session.add(WorkspaceMember(
+                workspace_id=ws.id, agent_name=agent_name,
+                role="master", status="online",
+                # `status` alone does not mean live: _member_is_online also
+                # wants a fresh heartbeat, and without one the workspace looks
+                # agent-less and posts "no agent online" system notices.
+                last_heartbeat=datetime.now(timezone.utc),
+            ))
+            channel = Channel(
+                workspace_id=ws.id,
+                name=f"session-{_secrets.token_hex(4)}",
+                title="Session 1",
+                created_by=agent_name,
+                master_agent=agent_name,
+                status="active",
+            )
+            session.add(channel)
+            session.flush()
+            session.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
+            session.flush()
+            channel_payload = {
+                "channelId": str(channel.id),
+                "workspaceId": str(ws.id),
+                "name": channel.name,
+                "title": channel.title,
+                "masterAgent": channel.master_agent,
+                "createdBy": channel.created_by,
+                "status": channel.status,
+                "orchestrationMode": channel.orchestration_mode or "dynamic",
+                "participants": [agent_name],
+            }
+        # Mirror provision_workspace: a real workspace comes with PAI Counselor
+        # (a no-op when PAI is disabled or unkeyed, which is the default).
+        try:
+            from app.services.pai import provision_pai, seed_welcome_thread
+            if provision_pai(session, ws):
+                seed_welcome_thread(session, ws)
+        except Exception:
+            pass
         session.commit()
+
+        return {
+            "workspaceId": str(ws.id),
+            "slug": ws.slug,
+            "name": ws.name,
+            "token": ws.password_hash,
+            "channel": channel_payload,
+        }
     finally:
         session.close()
 
+
+@pytest.fixture
+def workspace(client):
+    """An owned workspace with one agent and a starter channel."""
+    data = make_owned_workspace()
     return {
         "id": data["workspaceId"],
         "slug": data["slug"],
-        "name": "Test Workspace",
+        "name": data["name"],
         "token": data["token"],
         "channel": data["channel"],
     }

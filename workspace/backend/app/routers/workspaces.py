@@ -5,7 +5,7 @@ Workspace management endpoints — CRUD for the workspace itself.
 These are NOT part of the ONM spec — they manage the product layer
 (creating networks, listing user's workspaces, updating settings).
 
-POST   /v1/workspaces              Create a new workspace
+POST   /v1/workspaces              Create the signed-in student's workspace
 GET    /v1/workspaces              List workspaces
 GET    /v1/workspaces/{id}         Get workspace details
 PATCH  /v1/workspaces/{id}         Update workspace settings
@@ -87,10 +87,9 @@ def _workspace_access_denied(authorization: Optional[str]):
 # ---------------------------------------------------------------------------
 
 class WorkspaceCreateRequest(BaseModel):
-    name: str
-    agent_name: Optional[str] = None   # Optional — if provided, becomes master member
-    agent_type: Optional[str] = None   # "claude", "openclaw", etc.
-    creator_email: Optional[str] = None
+    # `name` is accepted for compatibility but no longer decides anything: the
+    # student's one workspace is provisioned by app.access.provision_workspace.
+    name: Optional[str] = None
 
 class ChannelUpdateRequest(BaseModel):
     title: Optional[str] = None
@@ -159,7 +158,6 @@ def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
         "workspaceId": str(ws.id),
         "slug": ws.slug,
         "name": ws.name,
-        "creatorEmail": ws.creator_email,
         "requireLogin": bool(ws.require_login),
         "settings": settings,
         # Surface browser_enabled at the top level for clients that don't
@@ -203,125 +201,32 @@ def create_workspace(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ):
-    """Create a new workspace (= ONM network).
+    """Create the signed-in student's personal workspace.
 
-    Placement AI v2.0: a verified human account owns at most one active
-    workspace. When called with a verified identity bearer and that user
-    already has one (`owner_user_id`), this returns their EXISTING canonical
-    workspace instead of creating a second — idempotent-create semantics, so
-    any lingering client call can't produce duplicates. Anonymous creation (no
-    bearer) still works for backward/machine compatibility — creator_email
-    falls back to the request body, and no owner_user_id is set (the caller
-    isn't an authenticated student).
+    Requires a verified identity. There is exactly one valid way a workspace
+    comes into existence in hosted PAI — an authenticated user getting theirs —
+    so this is idempotent: a user who already has one gets it back rather than
+    a second. `owner_user_id` is set at creation time and never NULL.
+
+    Anonymous creation is gone, and with it the "create first, claim later"
+    lifecycle: an ownerless workspace had no human who could reach it (see
+    app/access.py), so it could only ever have been an orphan.
     """
-    # The creating agent's name enters router prompts verbatim — same
-    # character policy as the join handler.
-    if body.agent_name:
-        name_problem = naming.agent_name_problem(body.agent_name)
-        if name_problem:
-            return json_response(
-                ResponseCode.BAD_REQUEST, f"Invalid agent name: {name_problem}",
-            )
-
-    now = datetime.now(timezone.utc)
-
     from app.access import get_or_create_owned_workspace, resolve_current_user
+
     owner = resolve_current_user(db, authorization)
+    if owner is None:
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
 
-    if owner is not None:
-        # A verified human never gets a second workspace — regardless of what
-        # else the request asked for. (`agent_name` is ignored here; seeding
-        # an agent into an existing workspace is a separate operation.)
-        workspace = get_or_create_owned_workspace(db, owner)
-        db.commit()
-        db.refresh(workspace)
-        return success_response({
-            "workspaceId": str(workspace.id),
-            "slug": workspace.slug,
-            "name": workspace.name,
-            "token": workspace.password_hash,
-            "channel": None,
-        })
-
-    # Generate slug and token
-    slug = secrets.token_hex(4)
-    token = secrets.token_urlsafe(32)
-
-    creator_email = owner.email if owner else body.creator_email
-
-    workspace = Workspace(
-        slug=slug,
-        name=body.name,
-        creator_email=creator_email,
-        owner_user_id=owner.id if owner else None,
-        password_hash=token,
-        # Every new workspace enforces login by default (secure-by-default).
-        # Machine access via the workspace token is unaffected — agents, the
-        # agn CLI and ?token= links all pass the token rule — so anonymous
-        # (CLI) creation still works end-to-end. An owner/admin can opt out
-        # via PATCH require_login=false (Security settings).
-        require_login=True,
-        settings={},
-        status="active",
-    )
-    db.add(workspace)
-    db.flush()
-
-    # Optionally add the creating agent as master member
-    if body.agent_name:
-        member = WorkspaceMember(
-            workspace_id=workspace.id,
-            agent_name=body.agent_name,
-            role="master",
-            agent_type=body.agent_type,
-            status="online",
-            last_heartbeat=now,
-        )
-        db.add(member)
-
-    # Seed a default "Session 1" channel ONLY when we know which agent to put in
-    # it. An empty channel (no participants) would surface as a thread with no
-    # agent — instead, an agent-less workspace starts with zero threads and the
-    # user creates their first session via the New Thread dialog (which selects
-    # agents). When agent_name is provided (e.g. tests, TUI), the starter
-    # channel is created with that agent as master + participant.
-    channel = None
-    if body.agent_name:
-        channel = Channel(
-            workspace_id=workspace.id,
-            name=f"session-{secrets.token_hex(4)}",
-            title="Session 1",
-            created_by=body.agent_name,
-            master_agent=body.agent_name,
-            status="active",
-        )
-        db.add(channel)
-        db.flush()
-        db.add(ChannelMember(
-            channel_id=channel.id,
-            agent_name=body.agent_name,
-        ))
-
-    # Auto-provision the built-in PAI Counselor onboarding assistant (no-op when disabled
-    # or no server key is configured). Never let this block workspace creation.
-    try:
-        from app.services.pai import provision_pai, seed_welcome_thread
-        if provision_pai(db, workspace):
-            # Every workspace gets the same canonical PAI conversation, even
-            # when a legacy caller also requested a starter agent/session.
-            seed_welcome_thread(db, workspace)
-    except Exception:
-        logger.warning("create_workspace: failed to provision PAI Counselor", exc_info=True)
-
+    workspace = get_or_create_owned_workspace(db, owner)
     db.commit()
     db.refresh(workspace)
-
     return success_response({
         "workspaceId": str(workspace.id),
         "slug": workspace.slug,
         "name": workspace.name,
-        "token": token,
-        "channel": _format_channel(channel) if channel else None,
+        "token": workspace.password_hash,
+        "channel": None,
     })
 
 
@@ -331,28 +236,31 @@ def create_workspace(
 
 @router.get("")
 def list_workspaces(
-    creator_email: Optional[str] = Query(None),
-    agent_name: Optional[str] = Query(None),
     db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
 ):
-    """List workspaces, optionally filtered by creator or agent membership."""
-    query = select(Workspace).where(Workspace.status != "deleted")
+    """The signed-in student's workspace, as a one-element list.
 
-    if creator_email:
-        query = query.where(Workspace.creator_email == creator_email)
+    This used to take no credentials at all and return EVERY workspace in the
+    deployment — names, slugs, creator emails and agent rosters — filterable by
+    `creator_email`, which made it an enumeration endpoint for the whole tenant
+    base. A student has exactly one workspace and no business seeing anyone
+    else's, so the query is now scoped to the caller's own.
+    """
+    owner = resolve_current_user(db, authorization)
+    if owner is None:
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
 
-    if agent_name:
-        query = query.join(WorkspaceMember).where(
-            WorkspaceMember.agent_name == agent_name
-        )
+    workspaces = db.execute(
+        select(Workspace)
+        .where(Workspace.owner_user_id == owner.id, Workspace.status != "deleted")
+        .options(selectinload(Workspace.members))
+        .order_by(Workspace.last_activity_at.desc())
+    ).scalars().all()
+    db.commit()  # persist the lazily created/refreshed User row
 
-    query = query.options(selectinload(Workspace.members))
-    workspaces = db.execute(query.order_by(Workspace.last_activity_at.desc())).scalars().all()
     now = datetime.now(timezone.utc)
-
-    results = [_format_workspace(ws, ws.members, now) for ws in workspaces]
-
-    return success_response(results)
+    return success_response([_format_workspace(ws, ws.members, now) for ws in workspaces])
 
 
 # ---------------------------------------------------------------------------
@@ -446,74 +354,6 @@ def update_workspace(
             return json_response(ResponseCode.FORBIDDEN, "Only an owner or admin can change login enforcement")
         workspace.require_login = body.require_login
 
-    db.commit()
-    db.refresh(workspace)
-
-    members = db.execute(
-        select(WorkspaceMember).where(WorkspaceMember.workspace_id == workspace.id)
-    ).scalars().all()
-
-    now = datetime.now(timezone.utc)
-    return success_response(_format_workspace(workspace, members, now))
-
-
-# ---------------------------------------------------------------------------
-# POST /v1/workspaces/{workspace_id}/claim — Claim workspace ownership
-# ---------------------------------------------------------------------------
-
-@router.post("/{workspace_id}/claim")
-def claim_workspace(
-    workspace_id: str,
-    db: Session = Depends(get_db),
-    authorization: Optional[str] = Header(None),
-):
-    """
-    Claim ownership of an unowned workspace.
-
-    Requires a valid identity bearer. Sets `owner_user_id`, which IS the access
-    grant — `creator_email` is kept for display only and no longer authorizes
-    anything (see app/access.py). A user already owning an active workspace
-    cannot claim a second one: that is the product invariant, and
-    `uq_workspace_owner_active` enforces it in the database regardless.
-    """
-    user = resolve_current_user(db, authorization)
-    if not user:
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid or expired token")
-    email = user.email
-
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-
-    if not workspace:
-        db.commit()  # persist the lazily created User row
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-
-    already_owned_by_other = (
-        workspace.owner_user_id is not None
-        and str(workspace.owner_user_id) != str(user.id)
-    )
-    if already_owned_by_other:
-        db.commit()
-        return json_response(ResponseCode.FORBIDDEN, "Workspace already claimed by another user")
-
-    if str(workspace.owner_user_id or "") != str(user.id):
-        existing = db.execute(
-            select(Workspace).where(
-                Workspace.owner_user_id == user.id,
-                Workspace.status == "active",
-                Workspace.id != workspace.id,
-            )
-        ).scalar_one_or_none()
-        if existing is not None:
-            db.commit()
-            return json_response(
-                ResponseCode.FORBIDDEN,
-                "You already have a personal workspace",
-            )
-
-    workspace.owner_user_id = user.id
-    workspace.creator_email = email
     db.commit()
     db.refresh(workspace)
 

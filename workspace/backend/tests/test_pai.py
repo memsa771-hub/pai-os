@@ -18,6 +18,7 @@ import subprocess
 import sys
 
 import pytest
+from tests.conftest import make_owned_workspace
 from sqlalchemy import select
 
 from app.config import config
@@ -35,15 +36,10 @@ def pai_enabled(monkeypatch):
 
 
 def _create_workspace(client, name="PAI Counselor WS", agent_name="agent-alpha"):
-    payload = {
-        "name": name,
-        "creator_email": "test@example.com",
-    }
-    if agent_name:
-        payload["agent_name"] = agent_name
-    resp = client.post("/v1/workspaces", json=payload)
-    assert resp.status_code == 200
-    return resp.json()["data"]
+    """An owned workspace. POST /v1/workspaces now provisions only the
+    caller's own and refuses anonymous callers, so setup builds the row
+    directly — see conftest.make_owned_workspace."""
+    return make_owned_workspace(name=name, agent_name=agent_name)
 
 
 def _discover(client, ws_id, token):

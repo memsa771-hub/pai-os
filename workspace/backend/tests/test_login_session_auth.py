@@ -5,7 +5,6 @@ Integration tests for login and session authentication endpoints.
 Covers:
   - Workspace token auth (X-Workspace-Token header)
   - Identity bearer token auth (Authorization: Bearer)
-  - Workspace claim flow (POST /v1/workspaces/{id}/claim)
   - Token rotation security
   - Session lifecycle (join → heartbeat → leave → rejoin)
   - Cross-workspace token isolation
@@ -13,7 +12,10 @@ Covers:
   - Event auth via both token and bearer paths
 """
 
+import itertools
+
 import pytest
+from tests.conftest import make_owned_workspace
 from unittest.mock import patch, MagicMock
 
 
@@ -21,27 +23,20 @@ from unittest.mock import patch, MagicMock
 # Helpers
 # ---------------------------------------------------------------------------
 
+_WS_SEQ = itertools.count()
+
+
 def _create_workspace(client, name="Test WS", agent_name="agent-alpha", creator_email=None):
-    """Create a workspace and return its details."""
-    body = {"name": name, "agent_name": agent_name}
-    if creator_email:
-        body["creator_email"] = creator_email
-    resp = client.post("/v1/workspaces", json=body)
-    assert resp.status_code == 200
-    return resp.json()["data"]
+    """An owned workspace. POST /v1/workspaces now provisions only the caller's
+    own and refuses anonymous callers, so setup builds the row directly — see
+    conftest.make_owned_workspace.
 
-
-def _claim(client, workspace_id, email):
-    """Claim a workspace for `email` — the product path that turns an
-    anonymously-created workspace into someone's personal one by setting
-    `owner_user_id`. Ownership, not creator_email, is what grants access."""
-    with _mock_identity_verify(email):
-        resp = client.post(
-            f"/v1/workspaces/{workspace_id}/claim",
-            headers={"Authorization": f"Bearer claim-{email}"},
-        )
-    assert resp.status_code == 200, resp.text
-    return resp
+    Each workspace gets a distinct owner unless one is named: a single user
+    cannot hold two active workspaces (uq_workspace_owner_active), so the
+    cross-workspace isolation tests would otherwise collide on the index.
+    """
+    email = creator_email or f"owner-{next(_WS_SEQ)}@example.com"
+    return make_owned_workspace(name=name, agent_name=agent_name, email=email)
 
 
 def _mock_identity_verify(email):
@@ -223,91 +218,6 @@ class TestBearerAuth:
 # Workspace Claim Flow
 # ===========================================================================
 
-class TestWorkspaceClaim:
-    """POST /v1/workspaces/{id}/claim — claim workspace ownership."""
-
-    def test_claim_unclaimed_workspace(self, client):
-        """User can claim a workspace that has no creator_email set."""
-        ws = _create_workspace(client, name="Unclaimed WS", agent_name="bot")
-        ws_id = ws["workspaceId"]
-
-        with _mock_identity_verify("claimer@example.com"):
-            resp = client.post(
-                f"/v1/workspaces/{ws_id}/claim",
-                headers={"Authorization": "Bearer claim-token"},
-            )
-        assert resp.status_code == 200
-        data = resp.json()["data"]
-        assert data["creatorEmail"] == "claimer@example.com"
-
-    def test_claim_already_owned_by_same_user(self, client, workspace):
-        """Re-claiming by the same owner succeeds (idempotent)."""
-        with _mock_identity_verify("test@example.com"):
-            resp = client.post(
-                f"/v1/workspaces/{workspace['id']}/claim",
-                headers={"Authorization": "Bearer valid-token"},
-            )
-        assert resp.status_code == 200
-        assert resp.json()["data"]["creatorEmail"] == "test@example.com"
-
-    def test_claim_already_owned_by_different_user(self, client, workspace):
-        """Claiming a workspace owned by someone else is forbidden."""
-        with _mock_identity_verify("attacker@evil.com"):
-            resp = client.post(
-                f"/v1/workspaces/{workspace['id']}/claim",
-                headers={"Authorization": "Bearer attacker-token"},
-            )
-        assert resp.status_code == 403
-        assert "already claimed" in resp.json()["message"].lower()
-
-    def test_claim_without_bearer_token(self, client, workspace):
-        """Claim without bearer token returns 401."""
-        resp = client.post(f"/v1/workspaces/{workspace['id']}/claim")
-        assert resp.status_code == 401
-
-    def test_claim_with_invalid_bearer(self, client, workspace):
-        """Claim with invalid Firebase token returns 401."""
-        with _mock_identity_verify(None):
-            resp = client.post(
-                f"/v1/workspaces/{workspace['id']}/claim",
-                headers={"Authorization": "Bearer expired-token"},
-            )
-        assert resp.status_code == 401
-
-    def test_claim_nonexistent_workspace(self, client):
-        """Claiming nonexistent workspace returns 404."""
-        with _mock_identity_verify("user@example.com"):
-            resp = client.post(
-                "/v1/workspaces/nonexistent/claim",
-                headers={"Authorization": "Bearer valid-token"},
-            )
-        assert resp.status_code == 404
-
-    def test_claimed_workspace_accessible_via_bearer(self, client):
-        """After claiming, the owner can use bearer auth to access protected endpoints."""
-        ws = _create_workspace(client, name="Claimable", agent_name="bot")
-        ws_id = ws["workspaceId"]
-
-        # Claim
-        with _mock_identity_verify("owner@example.com"):
-            client.post(
-                f"/v1/workspaces/{ws_id}/claim",
-                headers={"Authorization": "Bearer claim-token"},
-            )
-
-        # Now use bearer auth to rotate token (a protected action)
-        with _mock_identity_verify("owner@example.com"):
-            resp = client.post(
-                f"/v1/workspaces/{ws_id}/rotate-token",
-                headers={"Authorization": "Bearer owner-token"},
-            )
-        assert resp.status_code == 200
-
-
-# ===========================================================================
-# Token Rotation Security
-# ===========================================================================
-
 class TestTokenRotationSecurity:
     """Security tests for token rotation."""
 
@@ -438,11 +348,12 @@ class TestCrossWorkspaceIsolation:
         assert resp_a.json()["data"]["workspace_id"] != resp_b.json()["data"]["workspace_id"]
 
     def test_bearer_auth_scoped_to_creator_workspace(self, client):
-        """Bearer auth only works for workspaces where the user is creator."""
+        """Bearer auth only reaches the workspace the user OWNS.
+
+        Ownership is set when the workspace is created — there is no claim
+        step to perform afterwards."""
         ws_a = _create_workspace(client, name="WS A", agent_name="agent-a", creator_email="alice@example.com")
         ws_b = _create_workspace(client, name="WS B", agent_name="agent-b", creator_email="bob@example.com")
-        _claim(client, ws_a["workspaceId"], "alice@example.com")
-        _claim(client, ws_b["workspaceId"], "bob@example.com")
 
         # Alice can rotate her workspace token
         with _mock_identity_verify("alice@example.com"):

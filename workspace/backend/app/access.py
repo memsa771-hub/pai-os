@@ -113,7 +113,6 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
     ws = Workspace(
         slug=secrets.token_hex(4),
         name=name,
-        creator_email=user.email,
         owner_user_id=user.id,
         password_hash=secrets.token_urlsafe(32),
         require_login=True,

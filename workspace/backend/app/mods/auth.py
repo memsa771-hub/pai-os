@@ -8,7 +8,7 @@ Delegates to app.access.verify_workspace_access — the single source of truth
 shared with the REST routers — so the event pipeline honours the same rules:
   1. Workspace token (X-Workspace-Token) — the machine credential (agents).
   2. Member identity (Supabase/Apple bearer → membership row, or legacy
-     creator_email / collaborator match).
+     owner_user_id match).
   3. Open, non-enforced workspace (no token AND require_login=False).
 This is also where enforced-login (require_login) takes effect on the write
 path: an anonymous event to an enforced open workspace is now rejected.
