@@ -195,9 +195,18 @@ class Config:
     PAI_MEMORY_CONTEXT_TIMEOUT_MS: int = int(
         os.environ.get("PAI_MEMORY_CONTEXT_TIMEOUT_MS", "1500")
     )
-    # Master switch for automatic injection into PAI Counselor.
+    # Master switch for automatic FOREGROUND injection into PAI Counselor.
+    #
+    # OFF by default: the model's behaviour with injected memory has not been
+    # evaluated against a real Counselor yet, and a bad interaction shows up as
+    # PAI confidently asserting stale facts at a student. Background memory
+    # formation (extraction -> reconciliation -> index) is unaffected and keeps
+    # running, so enabling this later needs no backfill.
+    #
+    # Pilot rollout — see docs/pai-memory-rollout.md:
+    #   PAI_MEMORY_CONTEXT_ENABLED=true   (+ MEMORY_VECTOR_BACKEND=qdrant for hybrid)
     PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
-        "PAI_MEMORY_CONTEXT_ENABLED", "true"
+        "PAI_MEMORY_CONTEXT_ENABLED", "false"
     ).lower() in ("true", "1", "yes")
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.

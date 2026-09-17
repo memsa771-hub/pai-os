@@ -291,12 +291,15 @@ async def _invoke_assistant_agent(
     system_prompt = system_prompt + "\n\n" + state_summary
 
     if memory_context is not None and memory_context.has_content:
-        from app.memory.foreground import MEMORY_RULES
+        from app.memory.foreground import MEMORY_RULES, MEMORY_RULES_TRAILER
 
-        # Rules THEN data. The standing instruction must precede the
-        # untrusted region so it governs everything inside it.
+        # Rules, data, then a closing reminder. The trailer is not decoration:
+        # with the rule only above the block, the injected text was the last
+        # thing the model read, and behavioural evaluation caught gpt-4o-mini
+        # obeying it. Restating the boundary after the data closes that gap.
         system_prompt = (
-            system_prompt + "\n\n" + MEMORY_RULES + "\n\n" + memory_context.block
+            system_prompt + "\n\n" + MEMORY_RULES + "\n\n"
+            + memory_context.block + "\n\n" + MEMORY_RULES_TRAILER
         )
 
     if memory_context is not None:
