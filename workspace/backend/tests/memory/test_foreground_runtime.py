@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import threading
 import time
 from pathlib import Path
 
@@ -279,3 +280,231 @@ async def test_context_service_records_the_retrieval_mode(
     )
     # NullMemoryIndex is the default, so the retriever degrades.
     assert service.last_retrieval_mode == "lexical_fallback"
+
+
+# ---------------------------------------------------------------------------
+# 5. Admission-slot lifecycle
+#
+# Slots must follow the concurrent Future, not the callable. Releasing inside
+# the callable leaked one slot per QUEUED-then-cancelled operation, because the
+# callable that owned the release never ran.
+# ---------------------------------------------------------------------------
+
+def _pin_executor(monkeypatch, workers: int, max_inflight: int):
+    monkeypatch.setattr("app.config.config.PAI_MEMORY_FOREGROUND_WORKERS", workers,
+                        raising=False)
+    monkeypatch.setattr("app.config.config.PAI_MEMORY_FOREGROUND_MAX_INFLIGHT",
+                        max_inflight, raising=False)
+    foreground_executor.reset_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_queued_cancellation_releases_its_slot(monkeypatch):
+    """A: workers=1, max_inflight=2 — the exact leak scenario.
+
+    Job 1 occupies the only worker. Job 2 is admitted but queued. Job 2's
+    caller times out, the queued future is cancelled before starting, and its
+    slot must come back.
+    """
+    _pin_executor(monkeypatch, workers=1, max_inflight=2)
+    release = threading.Event()
+    started = threading.Event()
+
+    def _blocker():
+        started.set()
+        release.wait(timeout=5)
+        return "first"
+
+    def _never_runs():
+        raise AssertionError("queued callable should not have executed")
+
+    first = asyncio.create_task(foreground_executor.run_bounded(_blocker))
+    await asyncio.to_thread(started.wait, 2)
+
+    # Admitted but queued behind the single worker.
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(
+            foreground_executor.run_bounded(_never_runs), 0.2
+        )
+
+    # The queued future was cancelled before running — its slot is back.
+    for _ in range(50):
+        if foreground_executor.inflight_count() == 1:
+            break
+        await asyncio.sleep(0.02)
+    assert foreground_executor.inflight_count() == 1, (
+        "queued cancellation leaked an admission slot"
+    )
+
+    release.set()
+    assert await first == "first"
+    for _ in range(50):
+        if foreground_executor.inflight_count() == 0:
+            break
+        await asyncio.sleep(0.02)
+    assert foreground_executor.inflight_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_repeated_queued_timeouts_never_pin_at_busy(monkeypatch):
+    """B: many rounds of queued timeouts must not exhaust admission forever."""
+    _pin_executor(monkeypatch, workers=1, max_inflight=2)
+
+    for _ in range(12):
+        release = threading.Event()
+        started = threading.Event()
+
+        def _blocker():
+            started.set()
+            release.wait(timeout=5)
+            return "ok"
+
+        holder = asyncio.create_task(foreground_executor.run_bounded(_blocker))
+        await asyncio.to_thread(started.wait, 2)
+
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(
+                foreground_executor.run_bounded(lambda: "queued"), 0.1
+            )
+
+        release.set()
+        await holder
+        for _ in range(50):
+            if foreground_executor.inflight_count() == 0:
+                break
+            await asyncio.sleep(0.02)
+
+    # Admission still works after a dozen queued timeouts.
+    assert foreground_executor.inflight_count() == 0
+    assert await foreground_executor.run_bounded(lambda: "still working") == \
+        "still working"
+
+
+@pytest.mark.asyncio
+async def test_running_operation_keeps_its_slot_until_the_thread_exits(monkeypatch):
+    """C: a timed-out but RUNNING call still holds the database."""
+    _pin_executor(monkeypatch, workers=2, max_inflight=4)
+    release = threading.Event()
+    started = threading.Event()
+
+    def _slow():
+        started.set()
+        release.wait(timeout=5)
+        return "done"
+
+    task = asyncio.create_task(foreground_executor.run_bounded(_slow))
+    await asyncio.to_thread(started.wait, 2)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    # Still running -> slot correctly retained.
+    assert foreground_executor.inflight_count() == 1
+
+    release.set()
+    for _ in range(50):
+        if foreground_executor.inflight_count() == 0:
+            break
+        await asyncio.sleep(0.02)
+    assert foreground_executor.inflight_count() == 0, (
+        "slot not released after the thread finished"
+    )
+
+
+def test_queued_cancellation_releases_immediately(monkeypatch):
+    """D: a never-started operation frees its slot without waiting.
+
+    Driven synchronously against the concurrent Future rather than through an
+    event loop: awaiting introduces scheduling slack that makes "was it still
+    queued?" timing-dependent, and this property is about the Future's own
+    lifecycle, not asyncio's.
+    """
+    _pin_executor(monkeypatch, workers=1, max_inflight=3)
+    release = threading.Event()
+    started = threading.Event()
+
+    def _blocker():
+        started.set()
+        release.wait(timeout=5)
+        return "first"
+
+    def _never_runs():
+        raise AssertionError("queued callable executed after cancellation")
+
+    executor = foreground_executor._get_executor()
+
+    # Occupy the single worker, mirroring run_bounded's accounting.
+    assert foreground_executor._acquire()
+    busy = executor.submit(_blocker)
+    busy.add_done_callback(lambda _f: foreground_executor._release())
+    assert started.wait(2)
+
+    # Admit a second operation that must sit QUEUED.
+    assert foreground_executor._acquire()
+    queued = executor.submit(_never_runs)
+    queued.add_done_callback(lambda _f: foreground_executor._release())
+    assert foreground_executor.inflight_count() == 2
+
+    # Cancellable precisely because it has not started.
+    assert queued.cancel(), "future had already started; not a queued case"
+    # The done-callback fires on cancellation, so the slot is back immediately
+    # — without waiting for the still-running first job.
+    assert foreground_executor.inflight_count() == 1
+    assert not release.is_set()
+
+    release.set()
+    assert busy.result(timeout=5) == "first"
+    assert foreground_executor.inflight_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_no_double_or_negative_release_under_cancellation(monkeypatch):
+    """E: racing cancellation must not push the counter below zero."""
+    _pin_executor(monkeypatch, workers=2, max_inflight=6)
+
+    async def _one():
+        task = asyncio.create_task(
+            foreground_executor.run_bounded(lambda: time.sleep(0.05) or "x")
+        )
+        await asyncio.sleep(0)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+    await asyncio.gather(*[_one() for _ in range(20)])
+    for _ in range(100):
+        if foreground_executor.inflight_count() == 0:
+            break
+        await asyncio.sleep(0.02)
+
+    count = foreground_executor.inflight_count()
+    assert count == 0, f"counter settled at {count}, expected 0"
+    assert count >= 0, "counter went negative"
+
+
+@pytest.mark.asyncio
+async def test_stress_leaves_no_leaked_slots(monkeypatch):
+    """Strengthened: after everything settles, in-flight must be exactly 0.
+
+    Previously this only checked the cap, which a leak satisfies trivially.
+    """
+    _pin_executor(monkeypatch, workers=4, max_inflight=8)
+
+    async def _turn(i):
+        try:
+            return await asyncio.wait_for(
+                foreground_executor.run_bounded(lambda: time.sleep(0.02) or i), 0.5
+            )
+        except (asyncio.TimeoutError, foreground_executor.ForegroundBusy):
+            return None
+
+    await asyncio.gather(*[_turn(i) for i in range(40)])
+    for _ in range(100):
+        if foreground_executor.inflight_count() == 0:
+            break
+        await asyncio.sleep(0.02)
+
+    assert foreground_executor.inflight_count() == 0, "admission slots leaked"

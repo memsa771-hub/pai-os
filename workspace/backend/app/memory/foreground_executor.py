@@ -89,26 +89,52 @@ async def run_bounded(fn: Callable[..., Any], *args) -> Any:
     shedding load rather than queueing behind stuck threads, since a queued
     call would only time out later having added more pressure.
 
-    The awaiting side may be cancelled by a timeout; the thread continues to
-    completion and releases its slot then. That is the honest behaviour: the
-    slot is occupied for as long as the database actually holds it.
+    **Slot ownership follows the concurrent Future, not the callable.**
+    Releasing inside the callable's `finally` leaked: when every worker was
+    busy, an admitted call could sit QUEUED, the awaiting side time out, the
+    queued future be cancelled before starting — and the callable that owned
+    the release would never run. Slots leaked one per queued timeout until
+    `_inflight` pinned at the cap and every later request returned `busy`
+    forever.
+
+    A single done-callback on the concurrent Future covers all three endings —
+    completed, raised, cancelled-before-start — and `Future.add_done_callback`
+    fires exactly once, so double-release is not possible.
+
+    A timed-out but still RUNNING operation keeps its slot until the thread
+    actually exits, which is correct: the database is still holding it.
     """
     if not _acquire():
         raise ForegroundBusy(
             f"{inflight_count()} foreground memory operations already in flight"
         )
 
-    loop = asyncio.get_running_loop()
+    released = False
 
-    def _wrapped():
-        try:
-            return fn(*args)
-        finally:
+    def _release_once(_future) -> None:
+        # Guarded as well as single-registered: cheap, and makes the invariant
+        # hold even if a future implementation invokes callbacks differently.
+        nonlocal released
+        if not released:
+            released = True
             _release()
 
-    # `run_in_executor` future cancellation does not stop the thread, which is
-    # exactly why `_release` lives in the thread's own finally.
-    return await loop.run_in_executor(_get_executor(), _wrapped)
+    try:
+        future = _get_executor().submit(fn, *args)
+    except Exception:
+        # Submission itself failed (e.g. pool shut down) — no future exists to
+        # carry the release.
+        _release()
+        raise
+
+    future.add_done_callback(_release_once)
+
+    # `wrap_future` bridges the concurrent Future to this loop. Cancelling the
+    # awaiting side propagates to the concurrent Future: if it has not started
+    # it is cancelled (callback fires, slot freed immediately); if it is
+    # already running the cancel is refused and the slot stays held until the
+    # thread finishes.
+    return await asyncio.wrap_future(future)
 
 
 def reset_for_tests() -> None:

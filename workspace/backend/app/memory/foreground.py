@@ -362,19 +362,42 @@ def _hybrid_blocking(workspace_id: str, query: str, caller: str):
     db = new_session()
     try:
         service = MemoryContextService(db)
-        student = asyncio.run(service.build_student_context_async(
-            workspace_id=workspace_id,
-            query=query,
-            caller=caller,
-            # Vault sensitivity flags are honoured: automatic context never
-            # carries fields the definition marks sensitive.
-            include_sensitive=False,
-        ))
-        # The retriever records whether it really ran hybrid or fell back;
-        # reading it here is what keeps rollout telemetry honest.
-        return student, getattr(service, "last_retrieval_mode", None)
+
+        async def _run():
+            try:
+                student = await service.build_student_context_async(
+                    workspace_id=workspace_id,
+                    query=query,
+                    caller=caller,
+                    # Vault sensitivity flags are honoured: automatic context
+                    # never carries fields the definition marks sensitive.
+                    include_sensitive=False,
+                )
+                # The retriever records whether it really ran hybrid or fell
+                # back; reading it here keeps rollout telemetry honest.
+                return student, getattr(service, "last_retrieval_mode", None)
+            finally:
+                # Close any Qdrant client this short-lived loop created, while
+                # the loop is still alive. Without this the loop closes around
+                # open async HTTP resources.
+                await _close_foreground_index()
+
+        return asyncio.run(_run())
     finally:
         db.close()
+
+
+async def _close_foreground_index() -> None:
+    """Release the loop-scoped Qdrant client, if the index has one."""
+    try:
+        from .index import get_memory_index
+
+        index = get_memory_index()
+        closer = getattr(index, "aclose_current", None)
+        if closer is not None:
+            await closer()
+    except Exception:
+        logger.debug("memory context: foreground index cleanup failed", exc_info=True)
 
 
 def _structured(workspace_id: str, query: str, caller: str):

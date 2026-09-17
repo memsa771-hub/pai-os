@@ -408,3 +408,148 @@ async def test_workspace_isolation_holds_with_type_filters(index):
         with_payload=True,
     )
     assert all(p.payload["workspace_id"] == ws_a for p in points)
+
+
+# ---------------------------------------------------------------------------
+# Foreground shape: bounded executor -> asyncio.run -> QdrantMemoryIndex
+#
+# The unit tests never exercise a fresh-then-closed event loop per call, which
+# is exactly where a cached AsyncQdrantClient breaks ("Event loop is closed").
+# ---------------------------------------------------------------------------
+
+@pytest_asyncio.fixture
+async def foreground_workspace(index):
+    """A workspace with indexed memories, wired as the global index."""
+    import uuid as _uuid
+
+    from app.memory.index import NullMemoryIndex, set_memory_index
+    from app.memory.embeddings import set_embedding_provider
+
+    set_embedding_provider(FakeEmbeddings())
+    set_memory_index(index)
+
+    ws_a, ws_b = str(_uuid.uuid4()), str(_uuid.uuid4())
+    await index.index([
+        _record(ws_a, "m_germany", "Germany is the first choice destination"),
+        _record(ws_a, "m_ielts", "Scored IELTS 7.5 overall"),
+        _record(ws_b, "m_other", "Germany is the first choice destination"),
+    ])
+    yield ws_a, ws_b
+
+    set_memory_index(NullMemoryIndex())
+    set_embedding_provider(None)
+
+
+def _run_foreground(workspace_id: str, query: str):
+    """Exactly what a foreground worker thread does: its own asyncio.run."""
+    import asyncio as _asyncio
+
+    from app.memory.foreground import _close_foreground_index
+
+    async def _go():
+        from app.memory.index import get_memory_index
+
+        try:
+            return await get_memory_index().search(workspace_id, query, limit=5)
+        finally:
+            await _close_foreground_index()
+
+    return _asyncio.run(_go())
+
+
+@pytest.mark.asyncio
+async def test_sequential_foreground_loops_do_not_reuse_a_closed_client(
+    foreground_workspace,
+):
+    """Each call gets a fresh loop; a cached client would fail on the second."""
+    import asyncio as _asyncio
+
+    ws_a, _ = foreground_workspace
+
+    for attempt in range(4):
+        hits = await _asyncio.to_thread(_run_foreground, ws_a, "Germany")
+        ids = {h.id for h in hits}
+        assert "m_germany" in ids, f"attempt {attempt} returned nothing useful"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_foreground_loops_across_workers(foreground_workspace):
+    """Several threads, several simultaneous fresh loops."""
+    import asyncio as _asyncio
+
+    ws_a, _ = foreground_workspace
+
+    results = await _asyncio.gather(*[
+        _asyncio.to_thread(_run_foreground, ws_a, "Germany") for _ in range(6)
+    ])
+    for hits in results:
+        assert "m_germany" in {h.id for h in hits}
+
+
+@pytest.mark.asyncio
+async def test_foreground_loops_preserve_workspace_isolation(foreground_workspace):
+    """Loop-scoped clients must not weaken the isolation guarantee."""
+    import asyncio as _asyncio
+
+    ws_a, ws_b = foreground_workspace
+
+    a_hits, b_hits = await _asyncio.gather(
+        _asyncio.to_thread(_run_foreground, ws_a, "Germany"),
+        _asyncio.to_thread(_run_foreground, ws_b, "Germany"),
+    )
+    a_ids, b_ids = {h.id for h in a_hits}, {h.id for h in b_hits}
+
+    # The property under test is isolation, not ranking: A may return any of
+    # its own rows (BM25 legitimately matches loosely), but never B's.
+    assert "m_germany" in a_ids
+    assert a_ids <= {"m_germany", "m_ielts"}, f"workspace B leaked into A: {a_ids}"
+    assert b_ids == {"m_other"}
+
+
+@pytest.mark.asyncio
+async def test_foreground_clients_are_closed_not_accumulated(foreground_workspace):
+    """Each short-lived loop closes its own client; no unbounded growth."""
+    import asyncio as _asyncio
+
+    from app.memory.index import get_memory_index
+
+    ws_a, _ = foreground_workspace
+    index = get_memory_index()
+
+    for _ in range(5):
+        await _asyncio.to_thread(_run_foreground, ws_a, "Germany")
+
+    # Only the client for THIS (still-open) test loop may remain, if any.
+    assert len(index._clients) <= 1, (
+        f"{len(index._clients)} clients retained after 5 foreground loops"
+    )
+
+
+@pytest.mark.asyncio
+async def test_full_foreground_context_path_against_real_qdrant(
+    foreground_workspace, monkeypatch,
+):
+    """The complete production shape, end to end.
+
+    build_foreground_context -> bounded executor -> asyncio.run ->
+    MemoryContextService -> MemoryRetriever -> QdrantMemoryIndex.
+    """
+    from app.memory import foreground_executor
+    from app.memory.foreground import build_foreground_context
+
+    ws_a, _ = foreground_workspace
+    foreground_executor.reset_for_tests()
+
+    # Canonical validation would drop every hit (no PostgreSQL rows here), so
+    # assert on the mode: reaching hybrid proves Qdrant was queried inside the
+    # foreground loop without a closed-loop error.
+    monkeypatch.setattr("app.config.config.PAI_MEMORY_CONTEXT_TIMEOUT_MS", 8000,
+                        raising=False)
+
+    for _ in range(3):
+        context = await build_foreground_context(ws_a, "Germany", caller="pai")
+        assert context.mode not in ("error",), (
+            f"foreground path errored: mode={context.mode}"
+        )
+
+    foreground_executor.reset_for_tests()

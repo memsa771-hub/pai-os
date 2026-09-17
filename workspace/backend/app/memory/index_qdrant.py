@@ -20,7 +20,9 @@ PostgreSQL and drops anything inactive or missing. A stale point for a
 forgotten memory therefore cannot surface it, even before deletion lands.
 """
 
+import asyncio
 import logging
+import threading
 import time
 import uuid
 from typing import Any, Optional
@@ -70,7 +72,10 @@ class QdrantMemoryIndex(MemoryIndex):
         self._url = url
         self._collection = collection
         self._api_key = api_key
-        self._client = None
+        # Clients keyed by owning event loop: {id(loop): (loop, client)}.
+        # See `_get_client` for why one shared client is unsafe here.
+        self._clients: dict[int, tuple] = {}
+        self._clients_lock = threading.Lock()
         self._ensured = False
         self._embeddings = embedding_provider
         self._sparse = sparse_encoder
@@ -94,13 +99,70 @@ class QdrantMemoryIndex(MemoryIndex):
         return self._sparse
 
     def _get_client(self):
-        if self._client is None:
-            try:
-                from qdrant_client import AsyncQdrantClient
-            except ImportError as exc:  # pragma: no cover
-                raise QdrantUnavailable("qdrant-client is not installed") from exc
-            self._client = AsyncQdrantClient(url=self._url, api_key=self._api_key)
-        return self._client
+        """An AsyncQdrantClient owned by the CURRENT event loop.
+
+        `AsyncQdrantClient` holds async HTTP/gRPC resources bound to the loop
+        that created them. Foreground retrieval runs on a thread pool where
+        each call does its own `asyncio.run(...)` — a fresh loop that is
+        closed afterwards — so one cached client would be reused under a
+        different, later loop and fail with "Event loop is closed".
+
+        Keying the cache by loop fixes ownership rather than papering over it;
+        a lock would serialise access to a client that is still bound to a
+        dead loop. The background worker keeps one long-lived loop and so
+        keeps one long-lived client, unchanged.
+
+        Entries for finished loops are dropped here, and `aclose_current` is
+        what actually closes a foreground client before its loop ends.
+        """
+        try:
+            from qdrant_client import AsyncQdrantClient
+        except ImportError as exc:  # pragma: no cover
+            raise QdrantUnavailable("qdrant-client is not installed") from exc
+
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        key = id(loop) if loop is not None else 0
+        with self._clients_lock:
+            # Evict clients whose loop has since closed, so a recycled id()
+            # can never resolve to a stale client.
+            for stale_key in [
+                k for k, (client_loop, _) in self._clients.items()
+                if client_loop is not None and client_loop.is_closed()
+            ]:
+                self._clients.pop(stale_key, None)
+
+            entry = self._clients.get(key)
+            if entry is not None and not (entry[0] is not None and entry[0].is_closed()):
+                return entry[1]
+
+            client = AsyncQdrantClient(url=self._url, api_key=self._api_key)
+            self._clients[key] = (loop, client)
+            return client
+
+    async def aclose_current(self) -> None:
+        """Close and forget the client owned by the current loop.
+
+        Called by foreground retrieval before its `asyncio.run` loop ends, so
+        a short-lived loop never leaves an unclosed client behind. Best-effort:
+        a failure to close must not fail the retrieval that already succeeded.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        with self._clients_lock:
+            entry = self._clients.pop(id(loop), None)
+        if entry is None:
+            return
+        try:
+            await entry[1].close()
+        except Exception:
+            logger.debug("qdrant: closing foreground client failed", exc_info=True)
 
     async def ensure_collection(self) -> None:
         """Create the collection if absent. Idempotent.
