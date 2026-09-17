@@ -42,10 +42,22 @@ class Config:
     SUPABASE_URL: str = os.environ.get("SUPABASE_URL", "")
     SUPABASE_ANON_KEY: str = os.environ.get("SUPABASE_ANON_KEY", "")
 
-    # Blast-radius cap for POST /v1/auth/sign-in-username (per process, sliding
-    # hour, keyed by client IP).
+    # Failed sign-ins allowed against ONE username per hour, before that
+    # account is locked out (per process, sliding window). Keyed by username,
+    # not by client address: the attack this stops is a brute force against a
+    # single account, and an address key would instead punish every student
+    # behind one school NAT or reverse proxy for each other's typos.
     SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR: int = int(
         os.environ.get("SIGN_IN_USERNAME_MAX_ATTEMPTS_PER_HOUR", "20")
+    )
+
+    # Loose per-source backstop for the two unauthenticated auth endpoints,
+    # covering what a per-username limit cannot: password spraying (one common
+    # password against many accounts) and username enumeration. Deliberately
+    # generous, because behind a proxy or a campus NAT this is shared by every
+    # student at once — it is a ceiling on abuse, not a login quota.
+    AUTH_MAX_REQUESTS_PER_SOURCE_PER_HOUR: int = int(
+        os.environ.get("AUTH_MAX_REQUESTS_PER_SOURCE_PER_HOUR", "120")
     )
 
     # Sign in with Apple. Native ("Sign in with Apple" on the iOS app) issues an
