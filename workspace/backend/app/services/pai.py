@@ -72,6 +72,11 @@ PAI_ALLOWED_TOOLS = (
     # PAI Operator — see app/services/operator.py. Counselor never touches
     # execution tools directly; it delegates and reads status back through these.
     "operator.delegate", "operator.status",
+    # PAI Memory Platform — see app/memory/. Counselor holds the full grant
+    # (read + manage); remember/forget are the explicit-user-command path and
+    # still go through the deterministic reconciler.
+    "memory.context", "vault.get", "memory.search", "memory.episodes",
+    "memory.remember", "memory.forget",
 )
 
 
@@ -497,7 +502,10 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
 def build_tools() -> list[dict]:
     """Compatibility facade; schemas are owned by the shared ToolRegistry."""
     from app.tools import get_tool_registry
-    return get_tool_registry().openai_tools_for_agent(PAI_ALLOWED_TOOLS)
+    from app.memory.permissions import COUNSELOR_CAPABILITIES
+    return get_tool_registry().openai_tools_for_agent(
+        PAI_ALLOWED_TOOLS, granted_capabilities=COUNSELOR_CAPABILITIES,
+    )
 
 
 
@@ -506,6 +514,7 @@ async def execute_tool(
 ) -> dict:
     """Compatibility facade; execution is owned by the shared ToolExecutor."""
     from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor
+    from app.memory.permissions import capabilities_for_agent
     aliases = {
         "list_agents": "workspace.agents.list", "list_threads": "workspace.threads.list",
         "create_thread": "workspace.thread.create", "list_tasks": "tasks.list",
@@ -514,5 +523,8 @@ async def execute_tool(
     context = ToolContext(
         workspace_id=api.workspace_id, agent_name=agent_name, api=api,
         allowed_tools=frozenset(PAI_ALLOWED_TOOLS), audience=AUDIENCE_COUNSELOR,
+        # Keyed on the calling agent, so this facade cannot be used to borrow
+        # Counselor's grant from a different agent.
+        granted_capabilities=capabilities_for_agent(agent_name),
     )
     return await get_tool_executor().execute(aliases.get(name, name), args, context)

@@ -137,6 +137,87 @@ class Config:
     PAI_MODEL: str = os.environ.get("PAI_MODEL", "gpt-5.4-mini")
     # Safety cap on the tool-calling loop per user message.
     PAI_MAX_TOOL_ITERATIONS: int = int(os.environ.get("PAI_MAX_TOOL_ITERATIONS", "6"))
+    # Memory extraction (app/memory/extractor.py). Each falls back to the
+    # matching PAI_* value, so extraction works with no extra configuration —
+    # but extraction is a cheap structured-output task that runs on every turn,
+    # so it can be moved to a smaller/faster model independently of Counselor.
+    MEMORY_EXTRACTOR_PROVIDER: str = os.environ.get("MEMORY_EXTRACTOR_PROVIDER", "")
+    MEMORY_EXTRACTOR_MODEL: str = os.environ.get("MEMORY_EXTRACTOR_MODEL", "")
+    MEMORY_EXTRACTOR_API_KEY: str = os.environ.get("MEMORY_EXTRACTOR_API_KEY", "")
+    MEMORY_EXTRACTOR_BASE_URL: str = os.environ.get("MEMORY_EXTRACTOR_BASE_URL", "")
+
+    # ---- Memory retrieval index (app/memory/index_qdrant.py) --------------
+    # Qdrant is a DERIVED index. Losing it costs a reindex, never data.
+    # Unset backend -> NullMemoryIndex, and retrieval degrades to the existing
+    # structured/lexical paths.
+    MEMORY_VECTOR_BACKEND: str = os.environ.get("MEMORY_VECTOR_BACKEND", "")
+    QDRANT_URL: str = os.environ.get("QDRANT_URL", "")
+    QDRANT_API_KEY: str = os.environ.get("QDRANT_API_KEY", "")
+    QDRANT_COLLECTION: str = os.environ.get("QDRANT_COLLECTION", "pai_memory")
+
+    # Embeddings. Deliberately NOT defaulted to the PAI chat credentials: a
+    # chat-model key/endpoint does not necessarily serve an embeddings route,
+    # and silently pointing at one turns a config mistake into a runtime error
+    # on every indexing job. Fallback happens only when PAI is explicitly an
+    # OpenAI-compatible endpoint (see embeddings.resolve_config).
+    MEMORY_EMBEDDING_PROVIDER: str = os.environ.get("MEMORY_EMBEDDING_PROVIDER", "openai")
+    MEMORY_EMBEDDING_MODEL: str = os.environ.get(
+        "MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"
+    )
+    MEMORY_EMBEDDING_API_KEY: str = os.environ.get("MEMORY_EMBEDDING_API_KEY", "")
+    MEMORY_EMBEDDING_BASE_URL: str = os.environ.get("MEMORY_EMBEDDING_BASE_URL", "")
+    # Dimensions of the configured model. Stored alongside each indexed point
+    # so a model change is detectable and can trigger a reindex rather than
+    # silently mixing incompatible vector spaces.
+    MEMORY_EMBEDDING_DIM: int = int(os.environ.get("MEMORY_EMBEDDING_DIM", "1536"))
+    # Sparse (lexical) encoder. Qdrant/bm25 via fastembed, with the collection's
+    # sparse vector configured with Modifier.IDF so Qdrant computes real BM25
+    # scoring server-side rather than us approximating it.
+    MEMORY_SPARSE_MODEL: str = os.environ.get("MEMORY_SPARSE_MODEL", "Qdrant/bm25")
+
+    # Retrieval shape. Fetch a wide candidate pool, rerank, return few.
+    MEMORY_RETRIEVAL_CANDIDATES: int = int(
+        os.environ.get("MEMORY_RETRIEVAL_CANDIDATES", "40")
+    )
+    MEMORY_RETRIEVAL_LIMIT: int = int(os.environ.get("MEMORY_RETRIEVAL_LIMIT", "8"))
+    MEMORY_RERANKER: str = os.environ.get("MEMORY_RERANKER", "")
+
+    # ---- Foreground memory injection (app/memory/foreground.py) -----------
+    # Hard ceiling on the rendered student-context block. MemoryContextService
+    # already caps per section; this is the backstop so pathological values
+    # (a very long free-text Vault field) cannot expand the system prompt.
+    # Conservative on purpose — this is context, not the conversation.
+    PAI_MEMORY_CONTEXT_MAX_CHARS: int = int(
+        os.environ.get("PAI_MEMORY_CONTEXT_MAX_CHARS", "2500")
+    )
+    # Retrieval is on the response-critical path. Past this, PAI drops to the
+    # PostgreSQL-only fallback rather than making the student wait.
+    PAI_MEMORY_CONTEXT_TIMEOUT_MS: int = int(
+        os.environ.get("PAI_MEMORY_CONTEXT_TIMEOUT_MS", "1500")
+    )
+    # Master switch for automatic FOREGROUND injection into PAI Counselor.
+    #
+    # OFF by default: the model's behaviour with injected memory has not been
+    # evaluated against a real Counselor yet, and a bad interaction shows up as
+    # PAI confidently asserting stale facts at a student. Background memory
+    # formation (extraction -> reconciliation -> index) is unaffected and keeps
+    # running, so enabling this later needs no backfill.
+    #
+    # Pilot rollout — see docs/pai-memory-rollout.md:
+    #   PAI_MEMORY_CONTEXT_ENABLED=true   (+ MEMORY_VECTOR_BACKEND=qdrant for hybrid)
+    PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
+        "PAI_MEMORY_CONTEXT_ENABLED", "false"
+    ).lower() in ("true", "1", "yes")
+    # Foreground retrieval runs on its own small thread pool so a stalled
+    # PostgreSQL cannot block the event loop (see foreground_executor.py).
+    # Threads cannot be killed, so MAX_INFLIGHT — not the pool size — is what
+    # bounds abandoned DB work when the database is slow.
+    PAI_MEMORY_FOREGROUND_WORKERS: int = int(
+        os.environ.get("PAI_MEMORY_FOREGROUND_WORKERS", "4")
+    )
+    PAI_MEMORY_FOREGROUND_MAX_INFLIGHT: int = int(
+        os.environ.get("PAI_MEMORY_FOREGROUND_MAX_INFLIGHT", "8")
+    )
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")

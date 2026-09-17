@@ -254,9 +254,73 @@ async def _invoke_assistant_agent(
     api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
     system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
-    system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
+
+    # Workspace state and student memory are independent reads, so overlap
+    # them: memory retrieval adds an embedding call plus a Qdrant round trip,
+    # and paying that after the state summary would add its full latency to
+    # every turn. Both are bounded (memory by its own timeout) and neither
+    # touches the other's session.
+    memory_context = None
+    inject_memory = (
+        config.PAI_MEMORY_CONTEXT_ENABLED
+        # Only the BUILT-IN counsellor. A user-created cloud agent runs this
+        # same loop and must never be handed the student's profile — gated on
+        # the same identity constant the capability grants use, not a second
+        # permission system.
+        and agent_name == pai.PAI_AGENT_NAME
+        and content
+    )
+    if inject_memory:
+        from app.memory.foreground import build_foreground_context
+
+        state_summary, memory_context = await asyncio.gather(
+            pai.workspace_state_summary(api),
+            build_foreground_context(
+                workspace_id=workspace_id,
+                # The CURRENT student message is the retrieval query. It is
+                # not copied into the memory block — it is already in
+                # `messages`, and duplicating it would let stale context be
+                # mistaken for a restatement.
+                query=content,
+                caller=pai.PAI_AGENT_NAME,
+            ),
+        )
+    else:
+        state_summary = await pai.workspace_state_summary(api)
+
+    system_prompt = system_prompt + "\n\n" + state_summary
+
+    if memory_context is not None and memory_context.has_content:
+        from app.memory.foreground import MEMORY_RULES, MEMORY_RULES_TRAILER
+
+        # Rules, data, then a closing reminder. The trailer is not decoration:
+        # with the rule only above the block, the injected text was the last
+        # thing the model read, and behavioural evaluation caught gpt-4o-mini
+        # obeying it. Restating the boundary after the data closes that gap.
+        system_prompt = (
+            system_prompt + "\n\n" + MEMORY_RULES + "\n\n"
+            + memory_context.block + "\n\n" + MEMORY_RULES_TRAILER
+        )
+
+    if memory_context is not None:
+        # Counts and sizes only — never the rendered block, which is student
+        # content.
+        logger.info(
+            "assistant memory: workspace=%s mode=%s vault=%d memories=%d "
+            "episodes=%d chars=%d truncated=%s elapsed_ms=%d",
+            workspace_id, memory_context.mode, memory_context.vault_facts,
+            memory_context.memories, memory_context.episodes,
+            memory_context.chars, memory_context.truncated,
+            memory_context.elapsed_ms,
+        )
     from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor, get_tool_registry
+    from app.memory.permissions import capabilities_for_agent
     allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)
+    # Keyed on the agent actually running, not hardcoded to Counselor: this
+    # loop serves every cloud agent, and a user-added one must not inherit
+    # Counselor's memory grant just by running the same code path. Unlisted
+    # agents get NO_CAPABILITIES, so memory tools are withheld from them.
+    granted_capabilities = capabilities_for_agent(agent_name)
     tool_context = ToolContext(
         workspace_id=workspace_id,
         agent_name=agent_name,
@@ -270,10 +334,13 @@ async def _invoke_assistant_agent(
         # again, this still blocks it — audience is enforced independently
         # of the allow-list above.
         audience=AUDIENCE_COUNSELOR,
+        granted_capabilities=granted_capabilities,
     )
     tool_registry = get_tool_registry()
     tool_executor = get_tool_executor()
-    tools = tool_registry.openai_tools_for_agent(allowed_tools)
+    tools = tool_registry.openai_tools_for_agent(
+        allowed_tools, granted_capabilities=granted_capabilities,
+    )
     max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
     logger.info(
@@ -329,9 +396,28 @@ async def _invoke_assistant_agent(
             "I've done what I can for now — let me know if you'd like anything else!"
         )
 
-    await _post_response(
+    assistant_event_id = await _post_response(
         db, workspace_id, channel_target, agent_name, final_text, depth,
     )
+
+    # The turn is now committed and the student has their reply. Only now do we
+    # queue memory formation — enqueue is a single INSERT, and the actual
+    # extraction (LLM call, reconciliation) happens in the durable worker, so
+    # nothing above this line waited on it.
+    #
+    # Restricted to the built-in counsellor: a user-added assistant agent is
+    # not the student's adviser and its conversations are not student truth.
+    if assistant_event_id and agent_name == pai.PAI_AGENT_NAME:
+        from app.memory.turn_hook import enqueue_turn_extraction
+
+        enqueue_turn_extraction(
+            db=db,
+            workspace_id=workspace_id,
+            channel_target=channel_target,
+            user_event_id=event_data.get("id"),
+            assistant_event_id=assistant_event_id,
+            agent_name=agent_name,
+        )
 
 
 async def _invoke_image_agent(
@@ -684,7 +770,7 @@ async def _post_response(
     attachments: Optional[list] = None,
     message_type: str = "chat",
     metadata: Optional[dict] = None,
-) -> None:
+) -> Optional[str]:
     """Post the cloud agent's response back through the event pipeline.
 
     ``message_type``/``metadata`` let a caller other than an ordinary chat
@@ -694,6 +780,10 @@ async def _post_response(
     ``operator._post_result``) so the frontend can render it as an Operator
     execution result rather than an ordinary PAI Counselor reply, without
     this pipeline needing to know anything about Operator.
+
+    Returns the persisted event id (None if the post was rejected), so callers
+    that need to reference the committed turn — e.g. memory extraction — can
+    do so without re-querying for it.
     """
     from app.models import Workspace
     from app.pipeline_factory import pipeline
@@ -706,7 +796,7 @@ async def _post_response(
 
     if not workspace:
         logger.error("cloud_agent: workspace %s not found", workspace_id)
-        return
+        return None
 
     payload: dict = {
         "content": content,
@@ -737,7 +827,7 @@ async def _post_response(
         await pipeline.process(event, context)
     except EventRejected as exc:
         logger.warning("cloud_agent: response event rejected: %s", exc.reason)
-        return
+        return None
 
     db.commit()
 
@@ -811,6 +901,12 @@ async def _post_response(
         )
     except Exception:
         logger.warning("cloud_agent: failed to schedule integration relay", exc_info=True)
+
+    # LAST. Every post-commit hook above must run before this returns —
+    # returning early once orphaned the Redis publish, workflow advance and
+    # integration relay, which cloud replies reach ONLY from here (they bypass
+    # the POST /v1/events route that schedules them for everyone else).
+    return event.id
 
 
 async def _post_error_message(

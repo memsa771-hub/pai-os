@@ -977,3 +977,285 @@ class Feedback(Base):
     context = Column(JSONB, nullable=True)              # {url, userAgent, locale, ...}
     status = Column(Text, nullable=False, default="new", server_default=text("'new'"))  # new | triaged | closed
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+
+# ---------------------------------------------------------------------------
+# PAI Memory Platform
+#
+# Three separate kinds of memory, deliberately not merged into one table:
+#
+#   Vault     (pai_vault_facts)  canonical *structured* student state — CGPA,
+#                                budget, target intake. Authoritative, schema
+#                                validated, provenance-carrying. NOT vector
+#                                memory; it is queried by structured filter.
+#   Semantic  (pai_memories)     durable preferences/goals/constraints learned
+#                                over time — "prefers research-focused unis".
+#   Episodic  (pai_episodes)     things that *happened* — "removed University X
+#                                because tuition exceeded budget".
+#
+# Nothing an LLM says lands in these tables directly. Extraction writes
+# `pai_memory_candidates`; a deterministic reconciler promotes candidates into
+# the three tables above. See app/memory/ for the services.
+# ---------------------------------------------------------------------------
+
+
+class VaultFieldDefinition(Base):
+    """Schema for ONE Vault field, as data rather than as Python branches.
+
+    The whole point of this table is that adding `tests.pte.score` is an INSERT,
+    not a code change: reconciliation and retrieval read `validation_schema`,
+    `cardinality` and `conflict_policy` from here instead of branching on the
+    field name. There is deliberately no `if key == "cgpa"` anywhere.
+
+    Rows are versioned rather than edited in place so a fact can always be
+    re-validated against the definition that was in force when it was accepted.
+    """
+    __tablename__ = "pai_vault_field_definitions"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    # Dotted path, e.g. "education.cgpa", "tests.ielts.score".
+    key = Column(Text, nullable=False)
+    category = Column(Text, nullable=False)              # education | tests | finance | preferences | career | ...
+    data_type = Column(Text, nullable=False)             # string | number | integer | boolean | object | array
+    # JSON Schema fragment validated against a proposed value. Deterministic,
+    # inspectable, and editable without a deploy.
+    validation_schema = Column(JSONB, nullable=True)
+    # "single": one active fact (a CGPA). "multi": a set (preferred countries).
+    cardinality = Column(Text, nullable=False, default="single", server_default=text("'single'"))
+    # How the reconciler resolves a new value against an existing active one:
+    #   latest_wins        — supersede (most profile facts)
+    #   highest_confidence — keep the better-evidenced value
+    #   manual_review      — never auto-apply; park for a human/explicit command
+    conflict_policy = Column(Text, nullable=False, default="latest_wins", server_default=text("'latest_wins'"))
+    # normal | sensitive — sensitive fields are withheld from low-trust callers
+    # and from prompt context unless explicitly requested.
+    sensitivity = Column(Text, nullable=False, default="normal", server_default=text("'normal'"))
+    # Whether this field should be offered to text/hybrid retrieval later.
+    searchable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    version = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        # One *active* definition per key; superseded versions stay for audit.
+        Index("uq_vault_field_key_version", "key", "version", unique=True),
+        Index("idx_vault_field_enabled", "enabled"),
+    )
+
+
+class VaultFact(Base):
+    """One canonical structured fact about the student, with provenance.
+
+    History rather than overwrite: superseding a fact sets `status='superseded'`
+    and `valid_until`, and inserts a new row. "What was their CGPA in March and
+    who told us?" stays answerable, which matters when an agent acts on a fact
+    and the student later disputes it.
+
+    Scoped by workspace_id, matching every other table here (v2.0 is
+    one-student-one-workspace). `subject_user_id` is reserved for a future
+    multi-student workspace and is unused today.
+    """
+    __tablename__ = "pai_vault_facts"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)        # reserved; NULL = the workspace's student
+    field_key = Column(Text, nullable=False)             # -> pai_vault_field_definitions.key
+    field_version = Column(Integer, nullable=True)       # definition version this was validated against
+    value = Column(JSONB, nullable=False)                # always wrapped: {"value": ...}
+    confidence = Column(Float, nullable=False, default=1.0, server_default=text("1.0"))
+    # user_explicit | document | conversation | agent | system.
+    # user_explicit outranks inference in the reconciler.
+    source_type = Column(Text, nullable=False)
+    source_event_id = Column(Text, nullable=True)        # events.id that evidences this
+    evidence = Column(JSONB, nullable=True)              # {"quote": "...", "file_id": "..."}
+    valid_from = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    valid_until = Column(DateTime(timezone=True), nullable=True)
+    # active | superseded | retracted (retracted = user said "that's wrong")
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_vault_facts_workspace", "workspace_id"),
+        # The hot read: "active facts for this workspace", and the single-
+        # cardinality conflict lookup by key.
+        Index("idx_vault_facts_ws_status_key", "workspace_id", "status", "field_key"),
+    )
+
+
+class PaiMemory(Base):
+    """Semantic memory — a durable learned statement about the student.
+
+    Canonical text lives here in PostgreSQL. Embeddings live in a retrieval
+    index keyed by `id` (see app/memory/index.py); deliberately no vector
+    column and no provider-specific field on this model, so swapping pgvector
+    for Qdrant never touches the business schema.
+    """
+    __tablename__ = "pai_memories"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    # preference | goal | constraint | interest | context
+    memory_type = Column(Text, nullable=False)
+    content = Column(Text, nullable=False)
+    entities = Column(JSONB, nullable=True)              # {"countries": ["DE"], "universities": [...]}
+    importance = Column(Float, nullable=False, default=0.5, server_default=text("0.5"))
+    confidence = Column(Float, nullable=False, default=1.0, server_default=text("1.0"))
+    source_type = Column(Text, nullable=True)
+    source_event_ids = Column(JSONB, nullable=True)
+    meta = Column("metadata", JSONB, nullable=True)      # attr renamed: `metadata` is reserved by SQLAlchemy
+    valid_from = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    valid_until = Column(DateTime(timezone=True), nullable=True)
+    # active | superseded | forgotten  ("forget Canada" -> forgotten, not deleted)
+    # Exact-normalized dedupe key (app/memory/dedupe.py). Indexed so dedupe is
+    # a lookup, not a scan. NOT semantic similarity — that is the vector index.
+    fingerprint = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_pai_memories_workspace", "workspace_id"),
+        Index("idx_pai_memories_ws_status_type", "workspace_id", "status", "memory_type"),
+        Index(
+            "idx_pai_memories_ws_status_fingerprint",
+            "workspace_id", "status", "fingerprint",
+        ),
+        # The actual no-duplicates invariant. The application's fingerprint
+        # lookup is a fast path; this is what makes two concurrent workers
+        # safe. Partial so forgotten rows may share a fingerprint and a NULL
+        # fingerprint never collides.
+        Index(
+            "uq_pai_memories_ws_fingerprint_active", "workspace_id", "fingerprint",
+            unique=True,
+            postgresql_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+            sqlite_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+        ),
+    )
+
+
+class PaiEpisode(Base):
+    """Episodic memory — something that happened, with a time it happened at.
+
+    Separate from semantic memory because the useful query differs: episodes
+    are retrieved by recency and event type ("what changed lately?"), whereas
+    semantic memories are retrieved by similarity to the current question.
+    """
+    __tablename__ = "pai_episodes"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    # e.g. shortlist_removed | document_uploaded | deadline_missed | decision_made
+    event_type = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    entities = Column(JSONB, nullable=True)
+    importance = Column(Float, nullable=False, default=0.5, server_default=text("0.5"))
+    occurred_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    source_event_ids = Column(JSONB, nullable=True)
+    meta = Column("metadata", JSONB, nullable=True)
+    # Exact-normalized dedupe key — see PaiMemory.fingerprint.
+    fingerprint = Column(Text, nullable=True)
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_pai_episodes_workspace", "workspace_id"),
+        Index("idx_pai_episodes_ws_status_time", "workspace_id", "status", "occurred_at"),
+        Index(
+            "idx_pai_episodes_ws_status_fingerprint",
+            "workspace_id", "status", "fingerprint",
+        ),
+        Index(
+            "uq_pai_episodes_ws_fingerprint_active", "workspace_id", "fingerprint",
+            unique=True,
+            postgresql_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+            sqlite_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+        ),
+    )
+
+
+class MemoryCandidate(Base):
+    """A *proposal* to change memory. The quarantine between LLMs and truth.
+
+    Extraction (an LLM) writes rows here and nothing else. The reconciler reads
+    them and decides what, if anything, becomes canonical. This is the seam
+    that makes "an LLM hallucinated a CGPA of 9.9" a rejected candidate row
+    rather than a corrupted Vault.
+    """
+    __tablename__ = "pai_memory_candidates"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    candidate_type = Column(Text, nullable=False)        # vault_fact | semantic_memory | episode
+    operation = Column(Text, nullable=False)             # upsert | retract | forget
+    key = Column(Text, nullable=True)                    # field_key for vault_fact
+    proposed_value = Column(JSONB, nullable=True)        # {"value": ...} for vault_fact
+    content = Column(Text, nullable=True)                # text for semantic/episode
+    entities = Column(JSONB, nullable=True)
+    confidence = Column(Float, nullable=False, default=0.5, server_default=text("0.5"))
+    source_type = Column(Text, nullable=False, default="conversation", server_default=text("'conversation'"))
+    source_event_ids = Column(JSONB, nullable=True)
+    evidence = Column(JSONB, nullable=True)
+    # pending | accepted | rejected | superseded
+    status = Column(Text, nullable=False, default="pending", server_default=text("'pending'"))
+    rejection_reason = Column(Text, nullable=True)
+    reconciled_at = Column(DateTime(timezone=True), nullable=True)
+    result_id = Column(Text, nullable=True)              # id of the row this produced, when accepted
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_memory_candidates_workspace", "workspace_id"),
+        Index("idx_memory_candidates_ws_status", "workspace_id", "status"),
+    )
+
+
+class BackgroundJob(Base):
+    """Durable work queue. Deliberately generic — not a memory-only table.
+
+    PAI Operator uses `asyncio.create_task()`, which loses work on restart.
+    That is acceptable for a run whose status the user is watching; it is not
+    acceptable for memory formation, where silent loss means the student's
+    profile quietly drifts from what they told us.
+
+    Claiming uses `SELECT ... FOR UPDATE SKIP LOCKED` on PostgreSQL so N
+    workers never hand the same job out twice. PostgreSQL stays the source of
+    truth — no broker.
+    """
+    __tablename__ = "background_jobs"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True)
+    job_type = Column(Text, nullable=False)              # e.g. memory.extract, memory.embed
+    payload = Column(JSONB, nullable=True)
+    # pending | running | succeeded | failed | cancelled
+    status = Column(Text, nullable=False, default="pending", server_default=text("'pending'"))
+    priority = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    attempts = Column(Integer, nullable=False, default=0, server_default=text("0"))
+    max_attempts = Column(Integer, nullable=False, default=5, server_default=text("5"))
+    # Visibility timestamp: a job is claimable only once NOW() >= available_at.
+    # Retry backoff is just pushing this forward.
+    available_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    locked_at = Column(DateTime(timezone=True), nullable=True)
+    locked_by = Column(Text, nullable=True)              # worker id, for stale-lock reclaim
+    last_error = Column(Text, nullable=True)
+    # Unique when present -> enqueueing the same logical work twice is a no-op.
+    idempotency_key = Column(Text, nullable=True)
+    result = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # The claim query's index: pending jobs that are due, best first.
+        Index("idx_background_jobs_claim", "status", "available_at", "priority"),
+        Index("idx_background_jobs_workspace", "workspace_id"),
+        UniqueConstraint("idempotency_key", name="uq_background_jobs_idempotency"),
+    )

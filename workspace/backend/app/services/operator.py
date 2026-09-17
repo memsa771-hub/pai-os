@@ -55,7 +55,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from app.config import config
-from app.database import SessionLocal
+from app.database import new_session
 from app.models import ExecutionRun
 from app.services import pai
 from app.services.cloud_providers import chat_completion, chat_completion_tools
@@ -294,6 +294,37 @@ def _terminal_message(status: str, summary: Optional[str], missing: Any, verific
     return summary or "I ran into an issue and couldn't finish this — let me know if you'd like me to try again."
 
 
+def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> str:
+    """Resolve `ExecutionRun.context_refs` to a compact prompt block.
+
+    Returns "" when there are no refs, nothing is known yet, or resolution
+    fails — memory is an enhancement to a run, never a precondition for it, so
+    a memory outage must not fail an otherwise-valid objective.
+
+    Runs on its own short-lived session: this is called from the background
+    execution task, which owns no request session.
+    """
+    if not context_refs:
+        return ""
+    db = new_session()
+    try:
+        from app.memory.context import MemoryContextService
+
+        student = MemoryContextService(db).resolve_refs(
+            workspace_id=workspace_id,
+            context_refs=list(context_refs),
+            caller=PAI_OPERATOR_AGENT_NAME,
+        )
+        return student.to_prompt_block()
+    except Exception:
+        logger.exception(
+            "operator: failed to resolve context_refs for workspace %s", workspace_id
+        )
+        return ""
+    finally:
+        db.close()
+
+
 def is_available() -> bool:
     """Operator shares Counselor's server credentials — nothing to check
     beyond whether PAI itself is configured."""
@@ -323,7 +354,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
     # exact thread the objective came from, the way any other agent reply does.
     channel_target = f"channel/{ctx.conversation}" if getattr(ctx, "conversation", None) else None
 
-    db = SessionLocal()
+    db = new_session()
     try:
         run = ExecutionRun(
             workspace_id=ctx.workspace_id,
@@ -356,7 +387,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
 async def get_status(ctx, run_id: Optional[str]) -> dict:
     """Read an ExecutionRun back — how PAI Counselor answers "what's the
     status of X?" without re-running anything."""
-    db = SessionLocal()
+    db = new_session()
     try:
         query = select(ExecutionRun).where(ExecutionRun.workspace_id == ctx.workspace_id)
         if run_id:
@@ -380,7 +411,7 @@ async def _execute(
     objective: str, constraints: dict, context_refs: list,
     channel_target: Optional[str] = None,
 ) -> None:
-    db = SessionLocal()
+    db = new_session()
     try:
         run = db.get(ExecutionRun, run_id)
         if not run:
@@ -405,14 +436,26 @@ async def _execute(
         except Exception:
             state_summary = "Current workspace state (live): (unavailable)"
 
+        # ---- RESOLVE MEMORY CONTEXT ----
+        # `context_refs` on the row stays a lightweight list of strings
+        # (["vault", "memory:preferences"]); it is resolved to real data HERE,
+        # at run time. A run queued an hour ago therefore sees the student's
+        # current profile rather than a snapshot, and ExecutionRun never grows
+        # a copy of the Vault.
+        #
+        # Resolution is capability-gated as `pai-operator`, so this cannot be
+        # used to read more than Operator is granted.
+        memory_block = _resolve_memory_context(workspace_id, context_refs)
+
         # ---- UNDERSTAND ----
         set_status("understanding", current_step="Understanding the objective")
         try:
             understanding = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
-                    f"{state_summary}\n\nObjective from PAI Counselor: {objective}\n"
-                    f"Constraints: {constraints}\nContext references: {context_refs}\n\n"
+                    f"{state_summary}\n{memory_block}\n\n"
+                    f"Objective from PAI Counselor: {objective}\n"
+                    f"Constraints: {constraints}\n\n"
                     "UNDERSTAND phase only. In 2-4 sentences, restate what is actually "
                     "being asked, note what is already known, and name the biggest "
                     "unknown. Do not plan or act yet."
@@ -431,6 +474,8 @@ async def _execute(
             plan_raw = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
+                    f"{memory_block}\n\n" if memory_block else ""
+                ) + (
                     f"Objective: {objective}\nUnderstanding: {understanding}\n\n"
                     "PLAN phase. Reply with ONLY a JSON array of 3-8 step objects — "
                     '[{"id": "short_snake_case_id", "title": "short label"}, ...] — '
@@ -450,16 +495,31 @@ async def _execute(
 
         # ---- EXECUTE + OBSERVE ----
         from app.tools import AUDIENCE_OPERATOR, ToolContext, get_tool_executor, get_tool_registry
+        # Local import: app.memory.permissions imports this module for the
+        # agent-name constant, so a module-level import would be circular.
+        from app.memory.permissions import OPERATOR_CAPABILITIES
         tool_registry = get_tool_registry()
         tool_executor = get_tool_executor()
         # Dynamic discovery: everything registered for the "operator"
-        # audience (see ToolDefinition.audiences in tools/registry.py) — never
-        # a hardcoded list, so a plugin's tools show up here the moment it
-        # registers them with that audience. operator.delegate/status are
-        # counselor-only, so this can never self-delegate; a tool that opts
-        # into no audience (or "internal" only) is invisible here too.
-        allowed_tools = frozenset(t.name for t in tool_registry.for_audience(AUDIENCE_OPERATOR))
-        tools = tool_registry.openai_tools_for_audience(AUDIENCE_OPERATOR)
+        # audience (see ToolDefinition.audiences in tools/registry.py) that
+        # Operator's capability grant also covers (see tools/policy.py and
+        # app/memory/permissions.py) — never a hardcoded list, so a plugin's
+        # tools show up here the moment it registers them with that audience,
+        # and a privileged one (declaring a capability Operator does not hold)
+        # never does. operator.delegate/status are counselor-only, so this can
+        # never self-delegate; a tool that opts into no audience (or
+        # "internal" only) is invisible here too.
+        #
+        # Operator holds read capabilities only, so memory/Vault *reads*
+        # appear here automatically while remember/forget never can — both
+        # because they are audience=counselor-only and because they declare a
+        # capability (manage) Operator's grant does not cover.
+        granted_capabilities = OPERATOR_CAPABILITIES
+        allowed_tools = frozenset(
+            t.name for t in tool_registry.for_audience(AUDIENCE_OPERATOR)
+            if tool_registry.permits(t, granted_capabilities)
+        )
+        tools = tool_registry.openai_tools_for_audience(AUDIENCE_OPERATOR, granted_capabilities)
         tool_context = ToolContext(
             workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
             api=api, allowed_tools=allowed_tools,
@@ -467,6 +527,7 @@ async def _execute(
             # allowed_tools above, so a tool that shouldn't be reachable by
             # Operator stays blocked even if it ever ended up in that set.
             audience=AUDIENCE_OPERATOR,
+            granted_capabilities=granted_capabilities,
         )
 
         plan_listing = "\n".join(f"- {s['id']}: {s['title']}" for s in plan)
