@@ -308,18 +308,38 @@ class TestPaiTools:
         pai_row = next(a for a in agents["agents"] if a["name"] == "pai")
         assert pai_row["builtin"] is True
 
-    def test_create_and_list_tasks(self, client, pai_enabled):
+    def test_counselor_cannot_create_tasks_directly(self, client, pai_enabled):
+        """tasks.create is real execution (a write), so it's Operator-only —
+        Counselor must delegate ("add this to my tasks" -> operator.delegate)
+        instead of calling it itself. See PAI_ALLOWED_TOOLS in
+        app/services/pai.py and the tool audiences in
+        app/tools/builtin/__init__.py."""
         from app.services.pai import execute_tool
 
         data = _create_workspace(client)
         api = self._api(data)
 
-        created = asyncio.run(execute_tool(api, "pai", "create_task", {
+        result = asyncio.run(execute_tool(api, "pai", "create_task", {
             "title": "Write onboarding docs", "priority": "high",
-            "assignee": "agent-alpha",
         }))
+        assert result["ok"] is False
+        assert result["error"]["code"] == "tool_not_allowed"
+
+    def test_list_tasks_via_counselor(self, client, pai_enabled):
+        """Reading tasks stays available to Counselor even though creating
+        them doesn't — lightweight reads/context inspection are its job."""
+        from app.services.pai import execute_tool
+        from app.tools import ToolContext, get_tool_executor
+
+        data = _create_workspace(client)
+        api = self._api(data)
+
+        # Seeded the way PAI Operator would (tasks.create is operator-only).
+        ctx = ToolContext(workspace_id=data["workspaceId"], agent_name="pai-operator", api=api)
+        created = asyncio.run(get_tool_executor().execute("tasks.create", {
+            "title": "Write onboarding docs", "priority": "high",
+        }, ctx))
         assert created["ok"], created
-        assert created["status"] == "backlog"
 
         # Visible on the real Tasks board endpoint...
         resp = client.get("/v1/tasks", params={"network": data["workspaceId"]},

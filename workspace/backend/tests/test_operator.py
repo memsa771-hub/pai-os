@@ -233,11 +233,24 @@ class TestExecutionLoop:
         # instance above is stale — read it back fresh instead of refreshing.
         run = db.execute(select(ExecutionRun).where(ExecutionRun.id == run.id)).scalar_one()
         assert run.status == "needs_user_action"
-        assert run.plan == ["Read requirements", "Check documents"]
-        assert run.completed_steps == ["tasks.list"]
+        # Plan progress is semantic ("N/M steps done"), never a stand-in for
+        # which tools got called — see ExecutionRun in app/models.py. Neither
+        # step was confirmed done by VERIFY (no completed_step_ids, status
+        # isn't "completed"), so the first stays the one "working" on.
+        assert run.plan == [
+            {"id": "read_requirements", "title": "Read requirements", "status": "working"},
+            {"id": "check_documents", "title": "Check documents", "status": "pending"},
+        ]
+        assert run.completed_steps == []
+        # Tool-call history is tracked separately from plan progress.
+        assert run.tool_calls == [{"tool": "tasks.list", "ok": True}]
         assert run.missing == ["recommendation_letter"]
         assert run.approval_required_for == "final_submission"
         assert run.completed_at is not None
+        assert run.result["summary"] == "Draft 82% complete."
+        assert run.result["tool_calls"] == [{"tool": "tasks.list", "ok": True}]
+        assert run.verification["approval_required_for"] == "final_submission"
+        assert run.result_type == "text"
 
     def test_terminal_result_is_auto_posted_to_the_originating_thread(self, client, db, monkeypatch):
         """The whole point of channel_target: when a run finishes, the result
@@ -266,8 +279,8 @@ class TestExecutionLoop:
 
         posted = []
 
-        async def fake_post_response(db_, workspace_id_, channel_target_, agent_name_, content_, depth):
-            posted.append((workspace_id_, channel_target_, agent_name_, content_))
+        async def fake_post_response(db_, workspace_id_, channel_target_, agent_name_, content_, depth, **kwargs):
+            posted.append((workspace_id_, channel_target_, agent_name_, content_, kwargs))
 
         monkeypatch.setattr("app.services.cloud_agent._post_response", fake_post_response)
 
@@ -279,15 +292,22 @@ class TestExecutionLoop:
         db.add(run)
         db.commit()
         db.refresh(run)
+        run_id, objective, channel_target = run.id, run.objective, run.channel_target
 
-        asyncio.run(operator._execute(run.id, ws_id, FakeApi(), run.objective, {}, [], run.channel_target))
+        asyncio.run(operator._execute(run_id, ws_id, FakeApi(), objective, {}, [], channel_target))
 
         assert len(posted) == 1
-        workspace_id_, channel_target_, agent_name_, content_ = posted[0]
+        workspace_id_, channel_target_, agent_name_, content_, kwargs = posted[0]
         assert workspace_id_ == ws_id
         assert channel_target_ == "channel/thread-42"
         assert agent_name_ == pai.PAI_AGENT_NAME
         assert content_ == "The deadline is March 1."
+        # Attribution: the frontend tells this apart from an ordinary
+        # Counselor reply via message_type + the run id/status in metadata —
+        # see cloud_agent._post_response and components/chat/chat-message.tsx.
+        assert kwargs["message_type"] == "operator_result"
+        assert kwargs["metadata"]["execution_run_id"] == run_id
+        assert kwargs["metadata"]["execution_status"] == "completed"
 
     def test_no_post_attempted_without_a_channel_target(self, client, db, monkeypatch):
         """A run with nowhere to report to (e.g. delegated outside a live

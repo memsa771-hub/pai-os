@@ -47,14 +47,19 @@ PAI_CATEGORY = "assistant"                    # triggers the tool loop
 # resolved from config at call time so it can be rotated in one place.
 PAI_KEY_PLACEHOLDER = "__server_managed__"
 PAI_PRIMARY_CHANNEL = "pai-counselor"
+# PAI Counselor's tool boundary: lightweight reads/context-inspection plus the
+# two Operator hand-off tools — nothing that performs real execution (writes,
+# browser automation, destructive or multi-step actions). Those live behind
+# PAI Operator (see app/services/operator.py), which discovers them itself
+# via the "operator" tool audience (see app/tools/registry.py) rather than a
+# list maintained here. Do not add write/execution tools to this tuple —
+# route that work through operator.delegate instead; see the module docstring
+# and PAI_SYSTEM_PROMPT below for the counsel-vs-execute split this enforces.
 PAI_ALLOWED_TOOLS = (
     "workspace.agents.list", "workspace.threads.list", "workspace.thread.create",
-    "tasks.list", "tasks.create", "files.list", "files.read", "files.write",
-    "web.search", "web.fetch", "browser.tabs.list", "browser.open",
-    "browser.navigate", "browser.read", "browser.click", "browser.type",
-    "browser.screenshot", "browser.close", "browser.contexts.list",
-    # PAI Operator — see app/services/operator.py. Counselor never touches the
-    # tools below directly; it delegates and reads status back through these.
+    "tasks.list", "files.list", "files.read", "web.search", "web.fetch",
+    # PAI Operator — see app/services/operator.py. Counselor never touches
+    # execution tools directly; it delegates and reads status back through these.
     "operator.delegate", "operator.status",
 )
 
@@ -409,23 +414,30 @@ class WorkspaceApi:
 PAI_SYSTEM_PROMPT = """\\
 You are PAI Counselor, the primary education counselor inside Placement AI.
 
-You are the student's main interface to their education journey.
+You are the student's ONLY point of contact. As far as the student is \\
+concerned, they are simply talking to PAI — there is no multi-agent \\
+workspace, no agents to install, connect, or manage, and no agent picker. \\
+Never describe Placement AI in those terms, never suggest the student \\
+install/connect/configure an agent, and never offer "agent options" — that \\
+product model does not exist for the student. Any other internal capability \\
+(including PAI Operator, tools, and anything the tool registry exposes) is an \\
+implementation detail you use, never something you expose or name to them.
 
-Your role is to understand what the student wants, ask useful questions when \\
-necessary, explain education options clearly, and help the student decide what \\
-to do next.
+Your role is to talk, listen, and counsel: understand what the student wants, \\
+ask useful questions when necessary, explain education options clearly, and \\
+help the student decide what to do next. You may use a lightweight read (e.g. \\
+checking a file or an existing thread) when it helps you answer directly.
 
-You operate inside a multi-agent workspace. Other specialist Placement AI agents \\
-may be installed later. When specialist agents are available, you should be able \\
-to discover them and collaborate with them through the workspace.
-
-For multi-step work — researching something in depth, filling out a draft, \\
-checking documents, running a plan across several tools — use operator.delegate \\
-to hand the objective to PAI Operator, your internal execution capability, \\
-instead of trying to do everything yourself in this reply. It runs in the \\
-background and reports back; use operator.status to check on it later (e.g. \\
-when the student asks "what's the status?"). Never mention "PAI Operator" or \\
-any internal tool names to the student — describe it as you working on it.
+You do not execute multi-step work yourself. The instant a request is really \\
+asking you to DO something rather than talk about it — research something in \\
+depth, produce a report or draft, check documents, fill something out, run a \\
+plan across several tools — call operator.delegate with a clear objective and \\
+hand it to PAI Operator, your internal execution capability, instead of \\
+attempting it in this reply. It runs in the background and reports back on \\
+its own; use operator.status to check on it later (e.g. when the student asks \\
+"what's the status?", "hua kya?", "kahan tak pohcha"). Never mention "PAI \\
+Operator", "ExecutionRun", or any internal tool name to the student — describe \\
+whatever it is doing as you working on it, in your own voice.
 
 You are not a coding assistant.
 You are not a Placement AI onboarding assistant.
@@ -449,12 +461,12 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
             for a in agents if not a.get("builtin")
         ]
         if real:
-            lines.append(f"- Connected agents (besides you): {', '.join(real)}")
+            # Grounding only — e.g. a real background agent a developer has
+            # running. Never surface this to the student as something to
+            # manage; see the "no agent picker" rule in PAI_SYSTEM_PROMPT.
+            lines.append(f"- Other internal processes active: {', '.join(real)}")
         else:
-            lines.append(
-                "- No other agents are connected yet — the user has only you "
-                "(PAI Counselor). Offer to explain the available agent options."
-            )
+            lines.append("- You are the student's only point of contact right now.")
         channels = discover["data"].get("channels") or []
         if channels:
             titles = [c.get("title") or c.get("address", "") for c in channels[:15]]

@@ -689,10 +689,13 @@ class ExecutionRun(Base):
     """Live state for one PAI Operator execution — the hidden execution
     intelligence PAI Counselor delegates to (see app/services/operator.py).
 
-    Deliberately flat (no separate step table yet): ``plan`` and
-    ``completed_steps`` are JSON string lists, good enough to show "3/7 steps
-    complete" without a second table + relationship this task doesn't need.
-    A future step table can be added without touching this one.
+    Deliberately flat (no separate step table yet): ``plan`` is a JSON list of
+    ``{"id", "title", "status"}`` objects — real plan progress ("3/5 steps
+    complete"), not a name for whatever tool the model happened to call.
+    Tool-call history is a genuinely different concept (every action taken,
+    not the objective's semantic steps) and is tracked separately in
+    ``tool_calls`` so the two are never conflated again. A future step table
+    can be added without touching this one.
     """
     __tablename__ = "execution_runs"
 
@@ -714,11 +717,23 @@ class ExecutionRun(Base):
     #   completed | needs_user_action | failed
     status = Column(Text, nullable=False, default="pending", server_default="pending")
     current_step = Column(Text, nullable=True)
-    plan = Column(JSONB, nullable=True)                      # ordered list of step labels
-    completed_steps = Column(JSONB, nullable=True)           # subset of `plan` finished so far
+    plan = Column(JSONB, nullable=True)                      # ordered [{"id","title","status"}, ...]
+    completed_steps = Column(JSONB, nullable=True)           # titles of `plan` entries with status == completed
+    tool_calls = Column(JSONB, nullable=True)                # raw action history: [{"tool","ok"}, ...] — NOT plan progress
     missing = Column(JSONB, nullable=True)                   # what verification found incomplete
     approval_required_for = Column(Text, nullable=True)      # e.g. "final_submission"
     error = Column(Text, nullable=True)
+    # The durable result of the run — the actual source of truth even if
+    # posting it back into chat fails. Shape is caller-defined (e.g. a
+    # research summary with findings/sources, or an application's completed
+    # field count) — flexible on purpose, this is not a 200-char summary.
+    result = Column(JSONB, nullable=True)
+    # The raw VERIFY-phase output (status/missing/approval/summary/whatever
+    # else that pass produced) — kept in full alongside the flattened
+    # `missing`/`approval_required_for` columns above for quick querying.
+    verification = Column(JSONB, nullable=True)
+    result_type = Column(Text, nullable=True)                 # e.g. "text", "research", "application"
+    result_artifact_id = Column(Text, nullable=True)           # e.g. a generated FileRecord.id, when applicable
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
     completed_at = Column(DateTime(timezone=True), nullable=True)

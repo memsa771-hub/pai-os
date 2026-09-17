@@ -117,6 +117,20 @@ class WorkspaceApi {
     return `${API_URL}/v1/events/stream?${params}`;
   }
 
+  /** PAI Operator publishes run updates with target "core" (not a channel —
+   * Operator has no thread of its own; see app/services/operator.py). This
+   * is the realtime counterpart to listOperatorRuns() below: an exact-target
+   * SSE stream so the "PAI is working…" indicator updates the instant a run
+   * changes, instead of only on the next poll. */
+  getOperatorEventsUrl(): string {
+    const params = new URLSearchParams({
+      network: this.workspaceId,
+      target: 'core',
+    });
+    if (this.token) params.set('token', this.token);
+    return `${API_URL}/v1/events/stream?${params}`;
+  }
+
   /** Whether configure() has run with a non-empty workspace id. */
   isConfigured(): boolean {
     return this.workspaceId !== '';
@@ -1678,17 +1692,27 @@ class WorkspaceApi {
     await this.request<unknown>(`/v1/notifications/${notificationId}/read`, { method: 'PATCH' });
   }
 
-  private mapOperatorRun(r: Record<string, unknown>): OperatorRun {
+  /** Map a raw ExecutionRun payload (GET /v1/operator/runs, or the SSE
+   * "workspace.operator.run_updated" event payload — same shape, see
+   * operator.serialize_run) into the frontend's OperatorRun. Public so the
+   * realtime hook (use-operator-status.ts) can reuse it for SSE payloads,
+   * not just this class's own polling call below. */
+  mapOperatorRun(r: Record<string, unknown>): OperatorRun {
     return {
       id: r.id as string,
       objective: r.objective as string,
       status: r.status as OperatorRun['status'],
       currentStep: (r.current_step ?? null) as string | null,
-      plan: (r.plan || []) as string[],
+      plan: (r.plan || []) as OperatorRun['plan'],
       completedSteps: (r.completed_steps || []) as string[],
+      toolCalls: (r.tool_calls || []) as OperatorRun['toolCalls'],
       missing: (r.missing || []) as string[],
       approvalRequiredFor: (r.approval_required_for ?? null) as string | null,
       error: (r.error ?? null) as string | null,
+      result: (r.result ?? null) as Record<string, unknown> | null,
+      verification: (r.verification ?? null) as Record<string, unknown> | null,
+      resultType: (r.result_type ?? null) as string | null,
+      resultArtifactId: (r.result_artifact_id ?? null) as string | null,
       createdAt: (r.created_at || null) as string | null,
       updatedAt: (r.updated_at || null) as string | null,
       completedAt: (r.completed_at ?? null) as string | null,

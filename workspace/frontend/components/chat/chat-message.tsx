@@ -2,7 +2,7 @@
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Copy, Check, User, FileIcon, Download, Eye } from 'lucide-react';
+import { Copy, Check, User, FileIcon, Download, Eye, Cog } from 'lucide-react';
 import { toast } from 'sonner';
 import { memo, useCallback, useMemo, useState } from 'react';
 import type { WorkspaceMessage, WorkspaceAgent } from '@/lib/types';
@@ -108,6 +108,39 @@ function Attachments({ items }: { items: Attachment[] }) {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Badge for a message posted by `operator._post_result` (message_type
+ * "operator_result", metadata.execution_status set — see
+ * app/services/operator.py / cloud_agent._post_response). PAI Counselor is
+ * still the sender the student sees below this, but the badge makes clear
+ * this particular reply is a finished PAI Operator execution result, not an
+ * ordinary conversational turn.
+ */
+function OperatorResultBadge({ status }: { status: string | undefined }) {
+  const t = useT();
+  const label = status === 'completed'
+    ? t('paiSystem.operatorResultCompleted')
+    : status === 'needs_user_action'
+      ? t('paiSystem.operatorResultNeedsAction')
+      : t('paiSystem.operatorResultFailed');
+  const tone = status === 'completed'
+    ? 'text-emerald-600 dark:text-emerald-400'
+    : status === 'needs_user_action'
+      ? 'text-amber-600 dark:text-amber-400'
+      : 'text-destructive';
+
+  return (
+    <div className="mb-1 flex items-center gap-1.5 text-2xs font-medium text-muted-foreground">
+      <Cog className="size-3" />
+      <span>{t('paiSystem.operatorName')}</span>
+      <span aria-hidden="true">·</span>
+      <span>{t('paiSystem.operatorRole')}</span>
+      <span aria-hidden="true">·</span>
+      <span className={tone}>{label}</span>
     </div>
   );
 }
@@ -229,6 +262,9 @@ export const ChatMessage = memo(function ChatMessage({ message, agents = [], isL
             )}
           </div>
           <div className="mt-0.5 text-sm leading-relaxed">
+            {message.messageType === 'operator_result' && (
+              <OperatorResultBadge status={message.metadata?.execution_status as string | undefined} />
+            )}
             <MarkdownContent content={message.content} agentNames={agentNames} agentLabels={agentLabels} />
             <Attachments items={attachments} />
 

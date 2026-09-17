@@ -28,10 +28,12 @@ the status of my application?" in a later turn without re-running anything.
 Execution itself follows a real five-phase loop — UNDERSTAND, PLAN, EXECUTE,
 OBSERVE, VERIFY — using the exact same ``ToolRegistry``/``ToolExecutor``/
 ``ToolPolicy`` as every other tool-calling agent: Operator's tool list is
-whatever the registry currently holds (minus ``operator.*`` itself, so it
-cannot delegate to itself), discovered at call time, not a hardcoded list —
-so a future plugin's tools become available to it the moment they register,
-with no code change here. SENSITIVE tools stay blocked by the shared
+whatever the registry currently exposes to the "operator" audience (see
+``ToolDefinition.audiences`` in ``app/tools/registry.py``), discovered at call
+time, not a hardcoded list — so a future plugin's tools become available to
+it the moment they register with that audience, with no code change here.
+``operator.delegate``/``operator.status`` are Counselor-only, so this can
+never self-delegate. SENSITIVE tools stay blocked by the shared
 ``ToolPolicy`` default exactly as they are for every other caller; nothing in
 this module ever bypasses it.
 
@@ -113,19 +115,6 @@ def _extract_json(raw: str) -> Optional[str]:
     return text or None
 
 
-def _parse_json_list(raw: str) -> Optional[list]:
-    text = _extract_json(raw)
-    if not text:
-        return None
-    try:
-        value = _json.loads(text)
-    except Exception:
-        return None
-    if isinstance(value, list) and all(isinstance(v, str) for v in value):
-        return value[:12]
-    return None
-
-
 def _parse_json_object(raw: str) -> dict:
     text = _extract_json(raw)
     if not text:
@@ -135,6 +124,73 @@ def _parse_json_object(raw: str) -> dict:
     except Exception:
         return {}
     return value if isinstance(value, dict) else {}
+
+
+def _slugify(text: str, fallback: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
+    return slug[:60] or fallback
+
+
+def _parse_plan(raw: str) -> list[dict]:
+    """Parse the PLAN phase reply into ordered ``{"id","title","status"}``
+    steps — real, semantic plan progress (see the ExecutionRun docstring in
+    app/models.py), never a stand-in for tool-call history.
+
+    Tolerates the model replying with plain strings instead of the requested
+    ``{"id","title"}`` objects — instructions models don't always follow to
+    the letter — by deriving an id from the title text.
+    """
+    text = _extract_json(raw)
+    if not text:
+        return []
+    try:
+        value = _json.loads(text)
+    except Exception:
+        return []
+    if not isinstance(value, list):
+        return []
+
+    steps: list[dict] = []
+    seen_ids: set[str] = set()
+    for index, item in enumerate(value[:12]):
+        if isinstance(item, dict):
+            title = str(item.get("title") or item.get("label") or "").strip()
+            raw_id = str(item.get("id") or "").strip()
+        elif isinstance(item, str):
+            title = item.strip()
+            raw_id = ""
+        else:
+            continue
+        if not title:
+            continue
+        step_id = _slugify(raw_id or title, f"step_{index + 1}")
+        while step_id in seen_ids:
+            step_id = f"{step_id}_{index + 1}"
+        seen_ids.add(step_id)
+        steps.append({"id": step_id, "title": title, "status": "pending"})
+
+    if steps:
+        steps[0]["status"] = "working"
+    return steps
+
+
+def _mark_plan_progress(plan: list[dict], completed_ids: Any, all_completed: bool) -> list[dict]:
+    """Apply VERIFY-phase findings onto the plan's per-step status — the only
+    place plan progress ever changes, so "N/M steps completed" always
+    reflects what verification actually confirmed, not what tools were
+    merely called (see the ExecutionRun docstring in app/models.py)."""
+    if not plan:
+        return plan
+    completed = set(completed_ids) if isinstance(completed_ids, list) else set()
+    updated = []
+    marked_working = False
+    for step in plan:
+        status = "completed" if (all_completed or step["id"] in completed) else "pending"
+        if status == "pending" and not marked_working:
+            status = "working"
+            marked_working = True
+        updated.append({**step, "status": status})
+    return updated
 
 
 def serialize_run(run: ExecutionRun) -> dict:
@@ -151,9 +207,14 @@ def serialize_run(run: ExecutionRun) -> dict:
         "current_step": run.current_step,
         "plan": run.plan or [],
         "completed_steps": run.completed_steps or [],
+        "tool_calls": run.tool_calls or [],
         "missing": run.missing or [],
         "approval_required_for": run.approval_required_for,
         "error": run.error,
+        "result": run.result,
+        "verification": run.verification,
+        "result_type": run.result_type,
+        "result_artifact_id": run.result_artifact_id,
         "created_at": run.created_at.isoformat() if run.created_at else None,
         "updated_at": run.updated_at.isoformat() if run.updated_at else None,
         "completed_at": run.completed_at.isoformat() if run.completed_at else None,
@@ -183,7 +244,8 @@ def _publish_run_updated(workspace_id: str, run: ExecutionRun) -> None:
 
 
 async def _post_result(
-    db: Any, workspace_id: str, channel_target: Optional[str], message: str,
+    db: Any, workspace_id: str, channel_target: Optional[str],
+    run_id: str, status: str, message: str,
 ) -> None:
     """Auto-post the finished run's outcome into the thread it was delegated
     from — the same event-pipeline path a normal cloud-agent reply already
@@ -191,6 +253,12 @@ async def _post_result(
     the moment it's ready instead of having to ask "did it work?" in a later
     turn. Posted as PAI Counselor (``pai.PAI_AGENT_NAME``): Operator never
     speaks to the student directly, only Counselor does.
+
+    Carries ``message_type: "operator_result"`` plus the run id/status as
+    event metadata (never surfaced as text) so the frontend can attribute
+    this message to PAI Operator's execution intelligence instead of
+    rendering it as an ordinary Counselor reply — see the module docstring's
+    "Operator result attribution" note.
 
     Best-effort — a failure here must never surface as the run itself
     failing; the ExecutionRun row (already committed by the caller) remains
@@ -201,7 +269,11 @@ async def _post_result(
     try:
         from app.services.cloud_agent import _post_response
         db.rollback()
-        await _post_response(db, workspace_id, channel_target, pai.PAI_AGENT_NAME, message, depth=0)
+        await _post_response(
+            db, workspace_id, channel_target, pai.PAI_AGENT_NAME, message, depth=0,
+            message_type="operator_result",
+            metadata={"execution_run_id": run_id, "execution_status": status},
+        )
     except Exception:
         logger.exception("operator: failed to auto-post result to %s", channel_target)
 
@@ -350,7 +422,7 @@ async def _execute(
         except Exception as exc:
             logger.exception("operator: understand phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"understand phase failed: {exc}"[:500], completed_at=_now())
-            await _post_result(db, workspace_id, channel_target, "I ran into an issue starting on that — want me to try again?")
+            await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, "I ran into an issue starting on that — want me to try again?")
             return
 
         # ---- PLAN ----
@@ -360,46 +432,53 @@ async def _execute(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
                     f"Objective: {objective}\nUnderstanding: {understanding}\n\n"
-                    "PLAN phase. Reply with ONLY a JSON array of 3-8 short step "
-                    "labels (strings) — the concrete ordered steps needed, using "
-                    "the tools you have (browser, docs/files, tasks, workflows, web "
-                    "search). No prose, no markdown fences, just the JSON array."
+                    "PLAN phase. Reply with ONLY a JSON array of 3-8 step objects — "
+                    '[{"id": "short_snake_case_id", "title": "short label"}, ...] — '
+                    "the concrete ordered steps needed, using the tools you have "
+                    "(browser, docs/files, tasks, workflows, web search). No prose, "
+                    "no markdown fences, just the JSON array."
                 )}],
                 system_prompt=OPERATOR_SYSTEM_PROMPT, max_tokens=400, base_url=base_url,
             )
         except Exception as exc:
             logger.exception("operator: plan phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"plan phase failed: {exc}"[:500], completed_at=_now())
-            await _post_result(db, workspace_id, channel_target, "I ran into an issue starting on that — want me to try again?")
+            await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, "I ran into an issue starting on that — want me to try again?")
             return
-        plan = _parse_json_list(plan_raw) or [objective]
-        set_status("executing", plan=plan, current_step=plan[0])
+        plan = _parse_plan(plan_raw) or [{"id": "objective", "title": objective, "status": "working"}]
+        set_status("executing", plan=plan, current_step=plan[0]["title"])
 
         # ---- EXECUTE + OBSERVE ----
-        from app.tools import ToolContext, get_tool_executor, get_tool_registry
+        from app.tools import AUDIENCE_OPERATOR, ToolContext, get_tool_executor, get_tool_registry
         tool_registry = get_tool_registry()
         tool_executor = get_tool_executor()
-        # Dynamic discovery: everything currently registered, minus
-        # operator.* itself (no self-delegation). Never a hardcoded list —
-        # a plugin's tools show up here the moment it registers them.
-        allowed_tools = frozenset(
-            t.name for t in tool_registry.all() if not t.name.startswith("operator.")
-        )
+        # Dynamic discovery: everything registered for the "operator"
+        # audience (see ToolDefinition.audiences in tools/registry.py) — never
+        # a hardcoded list, so a plugin's tools show up here the moment it
+        # registers them with that audience. operator.delegate/status are
+        # counselor-only, so this can never self-delegate; a tool that opts
+        # into no audience (or "internal" only) is invisible here too.
+        allowed_tools = frozenset(t.name for t in tool_registry.for_audience(AUDIENCE_OPERATOR))
         tools = tool_registry.openai_tools_for_agent(allowed_tools)
         tool_context = ToolContext(
             workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
             api=api, allowed_tools=allowed_tools,
         )
 
+        plan_listing = "\n".join(f"- {s['id']}: {s['title']}" for s in plan)
         messages: list[dict] = [{"role": "user", "content": (
-            f"Objective: {objective}\nPlan:\n" + "\n".join(f"- {s}" for s in plan) +
+            f"Objective: {objective}\nPlan:\n{plan_listing}"
             "\n\nEXECUTE phase. Work through the plan using the available tools. "
             "Stop calling tools and reply in plain text as soon as you have gone as "
             "far as you safely can without a human's approval, or the objective is "
             "done."
         )}]
         system_prompt = OPERATOR_SYSTEM_PROMPT + "\n\n" + state_summary
-        completed_steps: list[str] = []
+        # Raw tool-call history — a record of *actions taken*, deliberately
+        # separate from `plan` (real step progress, only ever updated by
+        # VERIFY below). Conflating the two was the bug: a plan with 3 steps
+        # and 5 tool calls is not "5/3 steps done". See ExecutionRun docstring.
+        tool_call_log: list[dict] = []
         final_text = ""
         max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
@@ -414,17 +493,17 @@ async def _execute(
                 )
             except Exception as exc:
                 logger.exception("operator: execute phase failed for run %s", run_id)
-                set_status(STATUS_FAILED, error=f"execute phase failed: {exc}"[:500], completed_at=_now())
-                await _post_result(db, workspace_id, channel_target, "I ran into an issue partway through that — want me to try again?")
+                set_status(STATUS_FAILED, error=f"execute phase failed: {exc}"[:500], completed_at=_now(), tool_calls=tool_call_log)
+                await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, "I ran into an issue partway through that — want me to try again?")
                 return
 
-            tool_calls = msg.get("tool_calls")
-            if not tool_calls:
+            requested_calls = msg.get("tool_calls")
+            if not requested_calls:
                 final_text = msg.get("content", "") or ""
                 break
 
             messages.append(msg)
-            for tc in tool_calls:
+            for tc in requested_calls:
                 tool_def = tool_registry.get(tc["function"]["name"])
                 tool_name = tool_def.name if tool_def else tc["function"]["name"]
                 try:
@@ -434,15 +513,14 @@ async def _execute(
                 # OBSERVE: the executor's own result IS the observation — did
                 # the call actually succeed, not just "was it made".
                 result = await tool_executor.execute(tool_name, tool_args, tool_context)
-                if result.get("ok"):
-                    completed_steps.append(tool_name)
+                tool_call_log.append({"tool": tool_name, "ok": bool(result.get("ok"))})
                 messages.append({
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": _json.dumps(result, default=str)[:4000],
                 })
             set_status(
-                "executing", completed_steps=completed_steps,
-                current_step=f"Ran {len(completed_steps)} action(s) so far",
+                "executing", tool_calls=tool_call_log,
+                current_step=f"Ran {len(tool_call_log)} action(s) so far",
             )
 
         # ---- VERIFY ----
@@ -451,11 +529,12 @@ async def _execute(
             verify_raw = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 messages=[{"role": "user", "content": (
-                    f"Objective: {objective}\n"
+                    f"Objective: {objective}\nPlan steps:\n{plan_listing}\n"
                     f"Final message: {final_text or '(stopped after the tool-call budget, no final summary)'}\n"
-                    f"Actions actually taken: {completed_steps}\n\n"
+                    f"Actions actually taken: {tool_call_log}\n\n"
                     'VERIFY phase. Reply with ONLY JSON: {"status": '
-                    '"completed" | "needs_user_action" | "failed", "missing": '
+                    '"completed" | "needs_user_action" | "failed", "completed_step_ids": '
+                    '[plan step ids above that are genuinely done], "missing": '
                     '[short strings], "approval_required_for": short string or null, '
                     '"summary": "one short sentence, for the student, via PAI Counselor"}'
                 )}],
@@ -471,6 +550,15 @@ async def _execute(
             status = STATUS_COMPLETED if final_text else STATUS_NEEDS_USER_ACTION
         missing = verification.get("missing")
         summary = verification.get("summary") or final_text[:200] or None
+        plan = _mark_plan_progress(plan, verification.get("completed_step_ids"), status == STATUS_COMPLETED)
+        completed_titles = [s["title"] for s in plan if s["status"] == "completed"]
+        result = {
+            "summary": summary,
+            "final_message": final_text or None,
+            "plan": plan,
+            "tool_calls": tool_call_log,
+            "artifact_id": None,
+        }
 
         set_status(
             status,
@@ -478,8 +566,15 @@ async def _execute(
             approval_required_for=verification.get("approval_required_for"),
             current_step=summary,
             completed_at=_now(),
+            plan=plan,
+            completed_steps=completed_titles,
+            tool_calls=tool_call_log,
+            result=result,
+            verification=verification or None,
+            result_type="text",
+            result_artifact_id=None,
         )
-        await _post_result(db, workspace_id, channel_target, _terminal_message(status, summary, missing, verification))
+        await _post_result(db, workspace_id, channel_target, run_id, status, _terminal_message(status, summary, missing, verification))
     except Exception as exc:
         logger.exception("operator: run %s failed unexpectedly", run_id)
         try:
@@ -490,7 +585,7 @@ async def _execute(
                 run.completed_at = _now()
                 db.commit()
                 _publish_run_updated(workspace_id, run)
-                await _post_result(db, workspace_id, channel_target, "I ran into an unexpected issue and had to stop working on that — want me to try again?")
+                await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, "I ran into an unexpected issue and had to stop working on that — want me to try again?")
         except Exception:
             logger.exception("operator: failed to record failure for run %s", run_id)
     finally:

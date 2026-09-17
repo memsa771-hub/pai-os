@@ -460,16 +460,40 @@ export type OperatorRunStatus =
   | 'pending' | 'understanding' | 'planning' | 'executing' | 'verifying'
   | 'completed' | 'needs_user_action' | 'failed';
 
+/** A single semantic step of the plan — real progress ("3/5 steps done"),
+ * never a stand-in for which tools got called. See ExecutionRun in
+ * workspace/backend/app/models.py. */
+export interface OperatorPlanStep {
+  id: string;
+  title: string;
+  status: 'pending' | 'working' | 'completed';
+}
+
+/** One tool invocation Operator made — action history, tracked separately
+ * from plan progress (see OperatorPlanStep above). */
+export interface OperatorToolCall {
+  tool: string;
+  ok: boolean;
+}
+
 export interface OperatorRun {
   id: string;
   objective: string;
   status: OperatorRunStatus;
   currentStep: string | null;
-  plan: string[];
+  plan: OperatorPlanStep[];
   completedSteps: string[];
+  toolCalls: OperatorToolCall[];
   missing: string[];
   approvalRequiredFor: string | null;
   error: string | null;
+  /** The durable result of the run — present once terminal; caller-defined
+   * shape (e.g. {summary, final_message, plan, tool_calls, artifact_id}). */
+  result: Record<string, unknown> | null;
+  /** Raw VERIFY-phase output, kept in full alongside `missing`/`approvalRequiredFor`. */
+  verification: Record<string, unknown> | null;
+  resultType: string | null;
+  resultArtifactId: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   completedAt: string | null;

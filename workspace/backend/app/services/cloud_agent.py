@@ -677,8 +677,19 @@ async def _post_response(
     db, workspace_id: str, channel_target: str, agent_name: str,
     content: str, depth: int,
     attachments: Optional[list] = None,
+    message_type: str = "chat",
+    metadata: Optional[dict] = None,
 ) -> None:
-    """Post the cloud agent's response back through the event pipeline."""
+    """Post the cloud agent's response back through the event pipeline.
+
+    ``message_type``/``metadata`` let a caller other than an ordinary chat
+    turn attribute its post distinctly — e.g. PAI Operator auto-posting a
+    finished run's result uses ``message_type="operator_result"`` plus
+    ``{"execution_run_id", "execution_status"}`` (see
+    ``operator._post_result``) so the frontend can render it as an Operator
+    execution result rather than an ordinary PAI Counselor reply, without
+    this pipeline needing to know anything about Operator.
+    """
     from app.models import Workspace
     from app.pipeline_factory import pipeline
     from openagents.core.onm_events import Event
@@ -694,7 +705,7 @@ async def _post_response(
 
     payload: dict = {
         "content": content,
-        "message_type": "chat",
+        "message_type": message_type,
     }
     if attachments:
         payload["attachments"] = attachments
@@ -704,7 +715,7 @@ async def _post_response(
         source=f"openagents:{agent_name}",
         target=channel_target,
         payload=payload,
-        metadata={"cloud_agent_depth": depth + 1},
+        metadata={"cloud_agent_depth": depth + 1, **(metadata or {})},
         visibility="channel",
         network=workspace_id,
     )

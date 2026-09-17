@@ -1,7 +1,13 @@
 from .context import ToolContext
 from .executor import ToolExecutor
 from .policy import ToolPolicy, ToolRisk
-from .registry import ToolDefinition, ToolRegistry
+from .registry import (
+    AUDIENCE_COUNSELOR,
+    AUDIENCE_INTERNAL,
+    AUDIENCE_OPERATOR,
+    ToolDefinition,
+    ToolRegistry,
+)
 
 _registry = None
 
@@ -19,4 +25,8 @@ def get_tool_executor() -> ToolExecutor:
     return ToolExecutor(get_tool_registry())
 
 
-__all__ = ["ToolContext", "ToolExecutor", "ToolPolicy", "ToolRisk", "ToolDefinition", "ToolRegistry", "get_tool_registry", "get_tool_executor"]
+__all__ = [
+    "ToolContext", "ToolExecutor", "ToolPolicy", "ToolRisk", "ToolDefinition", "ToolRegistry",
+    "get_tool_registry", "get_tool_executor",
+    "AUDIENCE_COUNSELOR", "AUDIENCE_OPERATOR", "AUDIENCE_INTERNAL",
+]

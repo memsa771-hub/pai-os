@@ -870,6 +870,7 @@ async def stream_events(
     request: Request,
     network: str = Query(...),
     channel: Optional[str] = Query(None),
+    target: Optional[str] = Query(None, description="Filter to an exact event target, e.g. 'core' for workspace-level events like PAI Operator run updates"),
     token: Optional[str] = Query(None),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
@@ -879,6 +880,12 @@ async def stream_events(
     Uses Redis pub/sub under the hood. Falls back gracefully — if Redis
     is unavailable the connection closes and the client should fall back
     to polling.
+
+    ``channel`` and ``target`` are mutually exclusive filters: ``channel``
+    matches ``channel/<name>`` (thread messages), ``target`` matches an exact
+    non-channel target such as ``core`` (e.g. PAI Operator's
+    ``workspace.operator.run_updated``, published with target "core" — see
+    ``app/services/operator.py``). Neither set means unfiltered.
     """
     effective_token = x_workspace_token or token
 
@@ -901,6 +908,7 @@ async def stream_events(
     finally:
         db.close()
     target_prefix = f"channel/{channel}" if channel else None
+    exact_target = target or None
 
     async def event_generator():
         keepalive_interval = 30
@@ -919,7 +927,12 @@ async def stream_events(
             if data is not None:
                 try:
                     event = _json.loads(data)
-                    if not (target_prefix and event.get("target", "") != target_prefix):
+                    event_target = event.get("target", "")
+                    passes = (
+                        (not target_prefix or event_target == target_prefix)
+                        and (not exact_target or event_target == exact_target)
+                    )
+                    if passes:
                         event_id = event.get("id", "")
                         yield f"id: {event_id}\ndata: {data.decode()}\n\n"
                         last_keepalive = asyncio.get_event_loop().time()

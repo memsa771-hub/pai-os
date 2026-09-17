@@ -79,6 +79,12 @@ export const messages = {
     operatorWorking: 'Working',
     operatorNeedsApproval: 'Needs Approval',
     operatorError: 'Error',
+    // Status badge on an auto-posted operator_result chat message (see
+    // components/chat/chat-message.tsx) — distinct from the sidebar/header
+    // labels above, which describe the *current* run, not a finished one.
+    operatorResultCompleted: 'Completed',
+    operatorResultNeedsAction: 'Needs Your Input',
+    operatorResultFailed: "Couldn't Finish",
   },
 
   nav: {
