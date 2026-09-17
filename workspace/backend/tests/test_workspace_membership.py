@@ -1,23 +1,30 @@
-﻿# -*- coding: utf-8 -*-
-"""Tests for enforced-login v1.0: users, memberships, access rules,
-reconciliation and auto-provision (Phase 1).
+# -*- coding: utf-8 -*-
+"""One student, one personal workspace — the whole human authorization model.
 
-Identity-token verification is stubbed (no real Supabase/Apple) by patching
+A human may touch a workspace iff `user.id == workspace.owner_user_id`. There
+is no membership table, no role hierarchy, no invitation and no email fallback.
+Agents keep their own credential: the workspace machine token.
+
+Identity verification is stubbed (no real Supabase/Apple) by patching
 app.access.verify_identity_claims, which every caller routes through.
 """
 
 import asyncio
 from types import SimpleNamespace
 
+import pytest
+from sqlalchemy.exc import IntegrityError
+
 import app.access as access
 from app.access import (
+    get_or_create_owned_workspace,
     get_or_create_user,
+    is_workspace_owner,
     provision_workspace,
-    reconcile_memberships,
     verify_workspace_access,
 )
 from app.mods.auth import AuthMod
-from app.models import User, Workspace, WorkspaceCollaborator, WorkspaceMembership
+from app.models import User, Workspace
 
 
 def _claims(email, uid="uid", name="Test User"):
@@ -26,299 +33,197 @@ def _claims(email, uid="uid", name="Test User"):
 
 
 def _stub_identity(monkeypatch, mapping):
-    """Map bearer string -> claims dict (or None)."""
+    """Map bearer string -> claims dict (or None).
+
+    Two entry points need stubbing: `access.verify_identity_claims` (the access
+    check) and `firebase_auth.verify_identity_token` (used by the router to tell
+    "bad credentials" 401 from "valid user, not yours" 403).
+    """
+    import app.firebase_auth as firebase_auth
     monkeypatch.setattr(access, "verify_identity_claims", lambda tok: mapping.get(tok))
+    monkeypatch.setattr(
+        firebase_auth, "verify_identity_token",
+        lambda tok: (mapping.get(tok) or {}).get("email"),
+    )
 
-
-# ---------------------------------------------------------------------------
-# verify_workspace_access — the single access check
-# ---------------------------------------------------------------------------
-
-class TestAccessRules:
-    def test_token_match_allows(self, db):
-        ws = Workspace(name="W", slug="s1", password_hash="tok")
-        db.add(ws); db.commit()
-        assert verify_workspace_access(ws, "tok", None) is True
-
-    def test_wrong_token_no_identity_denied(self, db):
-        ws = Workspace(name="W", slug="s2", password_hash="tok")
-        db.add(ws); db.commit()
-        assert verify_workspace_access(ws, "nope", None) is False
-
-    def test_open_workspace_grandfathered(self, db):
-        ws = Workspace(name="W", slug="s3", password_hash=None, require_login=False)
-        db.add(ws); db.commit()
-        assert verify_workspace_access(ws, None, None) is True
-
-    def test_open_workspace_require_login_denies_anonymous(self, db):
-        ws = Workspace(name="W", slug="s4", password_hash=None, require_login=True)
-        db.add(ws); db.commit()
-        assert verify_workspace_access(ws, None, None) is False
-
-    def test_member_identity_allows(self, db, monkeypatch):
-        _stub_identity(monkeypatch, {"bob": _claims("bob@x.com")})
-        ws = Workspace(name="W", slug="s5", password_hash="tok", require_login=True)
-        db.add(ws); db.flush()
-        u = User(email="bob@x.com"); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role="member"))
-        db.commit()
-        assert verify_workspace_access(ws, None, "Bearer bob") is True
-
-    def test_legacy_creator_email_fallback_allows(self, db, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("alice@x.com")})
-        ws = Workspace(name="W", slug="s6", password_hash="tok", creator_email="alice@x.com")
-        db.add(ws); db.commit()
-        # No membership row yet — legacy owner email still grants access.
-        assert verify_workspace_access(ws, None, "Bearer al") is True
-
-    def test_min_role_enforced(self, db, monkeypatch):
-        _stub_identity(monkeypatch, {"m": _claims("m@x.com")})
-        ws = Workspace(name="W", slug="s7", password_hash="tok", require_login=True)
-        db.add(ws); db.flush()
-        u = User(email="m@x.com"); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role="member"))
-        db.commit()
-        assert verify_workspace_access(ws, None, "Bearer m", min_role="member") is True
-        assert verify_workspace_access(ws, None, "Bearer m", min_role="admin") is False
-
-    def test_token_bypasses_min_role(self, db):
-        ws = Workspace(name="W", slug="s8", password_hash="tok", require_login=True)
-        db.add(ws); db.commit()
-        assert verify_workspace_access(ws, "tok", None, min_role="owner") is True
-
-
-# ---------------------------------------------------------------------------
-# Reconciliation & provisioning
-# ---------------------------------------------------------------------------
-
-class TestReconciliation:
-    def test_creator_email_becomes_owner(self, db):
-        ws = Workspace(name="W", slug="r1", password_hash="tok", creator_email="alice@x.com")
-        db.add(ws); db.commit()
-        u = get_or_create_user(db, _claims("alice@x.com"))
-        reconcile_memberships(db, u); db.commit()
-        m = db.query(WorkspaceMembership).filter_by(workspace_id=ws.id, user_id=u.id).one()
-        assert m.role == "owner"
-
-    def test_collaborator_roles_map(self, db):
-        ws1 = Workspace(name="W1", slug="r2", password_hash="t1")
-        ws2 = Workspace(name="W2", slug="r3", password_hash="t2")
-        db.add_all([ws1, ws2]); db.flush()
-        db.add(WorkspaceCollaborator(workspace_id=ws1.id, email="c@x.com", role="editor"))
-        db.add(WorkspaceCollaborator(workspace_id=ws2.id, email="c@x.com", role="viewer"))
-        db.commit()
-        u = get_or_create_user(db, _claims("c@x.com"))
-        reconcile_memberships(db, u); db.commit()
-        roles = {m.workspace_id: m.role for m in
-                 db.query(WorkspaceMembership).filter_by(user_id=u.id).all()}
-        assert roles[ws1.id] == "member"
-        assert roles[ws2.id] == "viewer"
-
-    def test_reconcile_does_not_downgrade_existing(self, db):
-        ws = Workspace(name="W", slug="r4", password_hash="tok", creator_email="a@x.com")
-        db.add(ws); db.flush()
-        u = get_or_create_user(db, _claims("a@x.com"))
-        # Pre-existing admin membership must survive an owner reconcile pass...
-        db.add(WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role="admin"))
-        db.commit()
-        reconcile_memberships(db, u); db.commit()
-        m = db.query(WorkspaceMembership).filter_by(workspace_id=ws.id, user_id=u.id).one()
-        assert m.role == "admin"
-
-    def test_get_or_create_user_idempotent(self, db):
-        u1 = get_or_create_user(db, _claims("dup@x.com", uid="a")); db.commit()
-        u2 = get_or_create_user(db, _claims("dup@x.com", uid="a")); db.commit()
-        assert u1.id == u2.id
-        assert db.query(User).filter_by(email="dup@x.com").count() == 1
-
-    def test_provision_workspace_owner(self, db):
-        u = get_or_create_user(db, _claims("new@x.com")); db.commit()
-        ws = provision_workspace(db, u); db.commit()
-        assert ws.creator_email == "new@x.com"
-        assert ws.password_hash  # token present for agent/legacy access
-        m = db.query(WorkspaceMembership).filter_by(workspace_id=ws.id, user_id=u.id).one()
-        assert m.role == "owner"
-
-
-# ---------------------------------------------------------------------------
-# GET /v1/account/workspaces — Membership Home endpoint
-# ---------------------------------------------------------------------------
-
-class TestAccountWorkspacesEndpoint:
-    def test_new_user_auto_provisioned(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"carol": _claims("carol@x.com")})
-        r = client.get("/v1/account/workspaces", headers={"Authorization": "Bearer carol"})
-        assert r.status_code == 200
-        data = r.json()["data"]
-        assert len(data) == 1
-        assert data[0]["role"] == "owner"
-        assert data[0]["name"] == "My Workspace"
-
-    def test_existing_creator_reconciled_not_provisioned(self, client, db, monkeypatch):
-        _stub_identity(monkeypatch, {"dave": _claims("dave@x.com")})
-        ws = Workspace(name="Dave WS", slug="acc1", password_hash="tok", creator_email="dave@x.com")
-        db.add(ws); db.commit()
-        r = client.get("/v1/account/workspaces", headers={"Authorization": "Bearer dave"})
-        data = r.json()["data"]
-        assert len(data) == 1  # reconciled the existing one, did NOT auto-create
-        assert data[0]["slug"] == "acc1"
-        assert data[0]["role"] == "owner"
-
-    def test_invalid_identity_unauthorized(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {})  # any bearer -> None
-        r = client.get("/v1/account/workspaces", headers={"Authorization": "Bearer bad"})
-        assert r.status_code == 401
-
-
-# ---------------------------------------------------------------------------
-# Phase 3 — require_login default/toggle + team management
-# ---------------------------------------------------------------------------
 
 def _auth(bearer):
     return {"Authorization": f"Bearer {bearer}"}
 
 
-class TestRequireLoginDefault:
-    def test_identity_created_workspace_enforces_login(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        r = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al"))
-        wid = r.json()["data"]["workspaceId"]
-        detail = client.get(f"/v1/workspaces/{wid}", headers=_auth("al")).json()["data"]
-        assert detail["requireLogin"] is True
-
-    def test_anonymous_created_workspace_enforces_login_too(self, client):
-        # Secure by default: even CLI/anonymous creation starts with
-        # require_login on. Token (machine) access still works throughout.
-        r = client.post("/v1/workspaces", json={"name": "WS", "creator_email": "a@x.com"})
-        data = r.json()["data"]
-        detail = client.get(
-            f"/v1/workspaces/{data['workspaceId']}",
-            headers={"X-Workspace-Token": data["token"]},
-        ).json()["data"]
-        assert detail["requireLogin"] is True
+def _seed_user(db, email, username):
+    """A User with `username` set, so the /v1/account/* "username setup
+    required" gate doesn't stand in for the access check being tested."""
+    user = User(email=email, username=username)
+    db.add(user)
+    db.commit()
+    return user
 
 
-class TestRequireLoginToggle:
-    def test_owner_can_toggle(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        r = client.patch(f"/v1/workspaces/{wid}", json={"require_login": False}, headers=_auth("al"))
-        assert r.status_code == 200
-        assert r.json()["data"]["requireLogin"] is False
-
-    def test_member_cannot_toggle(self, client, db, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "bob": _claims("bob@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        u = User(email="bob@x.com"); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="member"))
-        db.commit()
-        r = client.patch(f"/v1/workspaces/{wid}", json={"require_login": False}, headers=_auth("bob"))
-        assert r.status_code == 403
-
-
-class TestProfile:
-    """GET/PATCH /v1/account/profile — the signed-in user's name + avatar."""
-
-    def test_get_and_update_profile(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        p = client.get("/v1/account/profile", headers=_auth("al")).json()["data"]
-        assert p == {
-            "email": "al@x.com", "displayName": "Test User",
-            "avatarUrl": None, "welcomeSeen": False,
-        }
-
-        r = client.patch(
-            "/v1/account/profile",
-            json={"display_name": "Ada L.", "avatar_url": "data:image/jpeg;base64,abc123"},
-            headers=_auth("al"),
-        )
-        assert r.status_code == 200
-        assert r.json()["data"] == {
-            "email": "al@x.com", "displayName": "Ada L.",
-            "avatarUrl": "data:image/jpeg;base64,abc123", "welcomeSeen": False,
-        }
-
-        # Empty string clears the avatar; omitted fields stay untouched.
-        r = client.patch("/v1/account/profile", json={"avatar_url": ""}, headers=_auth("al"))
-        assert r.json()["data"] == {
-            "email": "al@x.com", "displayName": "Ada L.",
-            "avatarUrl": None, "welcomeSeen": False,
-        }
-
-        # welcomeSeen (camelCase wire name) persists; other fields untouched.
-        r = client.patch("/v1/account/profile", json={"welcomeSeen": True}, headers=_auth("al"))
-        assert r.json()["data"] == {
-            "email": "al@x.com", "displayName": "Ada L.",
-            "avatarUrl": None, "welcomeSeen": True,
-        }
-        p = client.get("/v1/account/profile", headers=_auth("al")).json()["data"]
-        assert p["welcomeSeen"] is True
-
-    def test_profile_validation(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        assert client.get("/v1/account/profile").status_code == 401
-        assert client.patch(
-            "/v1/account/profile", json={"display_name": "   "}, headers=_auth("al"),
-        ).status_code == 400
-        assert client.patch(
-            "/v1/account/profile", json={"avatar_url": "javascript:alert(1)"}, headers=_auth("al"),
-        ).status_code == 400
-        assert client.patch(
-            "/v1/account/profile",
-            json={"avatar_url": "data:image/png;base64," + "A" * 300_000},
-            headers=_auth("al"),
-        ).status_code == 400
-
-
-class TestMeEndpoint:
-    """GET /v1/workspaces/{id}/me — the caller's identity + effective role,
-    used by the settings dashboard to gate admin UI client-side."""
-
-    def test_owner_identity(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        me = client.get(f"/v1/workspaces/{wid}/me", headers=_auth("al")).json()["data"]
-        assert me["email"] == "al@x.com"
-        assert me["authenticated"] is True
-        assert me["role"] == "owner"
-        assert me["effectiveRole"] == "owner"
-        assert me["tokenAccess"] is False
-
-    def test_viewer_effective_role_is_viewer(self, client, db, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "v": _claims("v@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        u = User(email="v@x.com"); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="viewer"))
-        db.commit()
-        me = client.get(f"/v1/workspaces/{wid}/me", headers=_auth("v")).json()["data"]
-        assert me["role"] == "viewer"
-        assert me["effectiveRole"] == "viewer"
-
-    def test_token_access_is_owner_equivalent(self, client):
-        data = client.post("/v1/workspaces", json={"name": "WS"}).json()["data"]
-        me = client.get(
-            f"/v1/workspaces/{data['workspaceId']}/me",
-            headers={"X-Workspace-Token": data["token"]},
-        ).json()["data"]
-        assert me["authenticated"] is False
-        assert me["role"] is None
-        assert me["tokenAccess"] is True
-        assert me["effectiveRole"] == "owner"
-
-    def test_anonymous_denied_on_enforced_workspace(self, client, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "WS"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        assert client.get(f"/v1/workspaces/{wid}/me").status_code == 401
+def _owned_workspace(db, email, slug, token="tok"):
+    """A user plus the one workspace they own."""
+    user = User(email=email)
+    db.add(user)
+    db.flush()
+    ws = Workspace(name="W", slug=slug, password_hash=token,
+                   owner_user_id=user.id, require_login=True, status="active")
+    db.add(ws)
+    db.commit()
+    return user, ws
 
 
 # ---------------------------------------------------------------------------
-# Phase 4 — viewer read-only enforcement
+# verify_workspace_access — machine token, or the owner. Nothing else.
 # ---------------------------------------------------------------------------
 
-class TestViewerEnforcement:
-    """AuthMod (the event write path) enforces min_role=member, so viewers
-    can't post/interact. Exercised directly to avoid the DB-backed pipeline."""
+class TestAccessRules:
+    def test_machine_token_allows(self, db):
+        _, ws = _owned_workspace(db, "a@x.com", "acc1")
+        assert verify_workspace_access(ws, "tok", None, db=db) is True
 
+    def test_wrong_token_denied(self, db):
+        _, ws = _owned_workspace(db, "a@x.com", "acc2")
+        assert verify_workspace_access(ws, "nope", None, db=db) is False
+
+    def test_owner_identity_allows(self, db, monkeypatch):
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
+        _, ws = _owned_workspace(db, "a@x.com", "acc3")
+        assert verify_workspace_access(ws, None, "Bearer a", db=db) is True
+
+    def test_anonymous_denied(self, db):
+        """No token, no bearer — denied, even with require_login False."""
+        _, ws = _owned_workspace(db, "a@x.com", "acc4")
+        ws.require_login = False
+        db.commit()
+        assert verify_workspace_access(ws, None, None, db=db) is False
+
+    def test_tokenless_workspace_is_not_open(self, db):
+        """The old 'no token + no require_login = public' grandfather is gone."""
+        _, ws = _owned_workspace(db, "a@x.com", "acc5", token=None)
+        ws.require_login = False
+        db.commit()
+        assert verify_workspace_access(ws, None, None, db=db) is False
+
+    def test_invalid_bearer_denied(self, db, monkeypatch):
+        _stub_identity(monkeypatch, {})          # every bearer fails to verify
+        _, ws = _owned_workspace(db, "a@x.com", "acc6")
+        assert verify_workspace_access(ws, None, "Bearer forged", db=db) is False
+
+    def test_unowned_workspace_has_no_human(self, db, monkeypatch):
+        """A workspace with no owner is reachable only by its machine token."""
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
+        db.add(User(email="a@x.com"))
+        ws = Workspace(name="W", slug="acc7", password_hash="tok", owner_user_id=None)
+        db.add(ws)
+        db.commit()
+        assert verify_workspace_access(ws, None, "Bearer a", db=db) is False
+        assert verify_workspace_access(ws, "tok", None, db=db) is True
+
+
+# ---------------------------------------------------------------------------
+# Tenant isolation — the property the whole refactor exists to guarantee
+# ---------------------------------------------------------------------------
+
+class TestTenantIsolation:
+    def test_user_a_cannot_access_workspace_b(self, db, monkeypatch):
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com"), "b": _claims("b@x.com")})
+        _, ws_a = _owned_workspace(db, "a@x.com", "iso1", token="tok-a")
+        _, ws_b = _owned_workspace(db, "b@x.com", "iso2", token="tok-b")
+
+        assert verify_workspace_access(ws_a, None, "Bearer a", db=db) is True
+        assert verify_workspace_access(ws_b, None, "Bearer b", db=db) is True
+        # The crossed pairs are the point.
+        assert verify_workspace_access(ws_b, None, "Bearer a", db=db) is False
+        assert verify_workspace_access(ws_a, None, "Bearer b", db=db) is False
+
+    def test_other_users_token_does_not_unlock_this_workspace(self, db):
+        _, ws_a = _owned_workspace(db, "a@x.com", "iso3", token="tok-a")
+        _, _ws_b = _owned_workspace(db, "b@x.com", "iso4", token="tok-b")
+        assert verify_workspace_access(ws_a, "tok-b", None, db=db) is False
+
+    def test_a_logged_in_stranger_is_not_an_owner(self, db, monkeypatch):
+        _stub_identity(monkeypatch, {"c": _claims("c@x.com")})
+        db.add(User(email="c@x.com"))
+        _, ws = _owned_workspace(db, "a@x.com", "iso5")
+        db.commit()
+        assert is_workspace_owner(db, ws, "Bearer c") is False
+
+    def test_http_layer_denies_cross_tenant_read(self, client, db, monkeypatch):
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com"), "b": _claims("b@x.com")})
+        _seed_user(db, "a@x.com", "usera")
+        _seed_user(db, "b@x.com", "userb")
+        wid_a = client.post("/v1/workspaces", json={"name": "A"},
+                            headers=_auth("a")).json()["data"]["workspaceId"]
+        assert client.get(f"/v1/workspaces/{wid_a}", headers=_auth("a")).status_code == 200
+        assert client.get(f"/v1/workspaces/{wid_a}", headers=_auth("b")).status_code == 403
+        assert client.get(f"/v1/workspaces/{wid_a}").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Exactly one active personal workspace per user
+# ---------------------------------------------------------------------------
+
+class TestOnePersonalWorkspace:
+    def test_provision_sets_owner(self, db):
+        user = get_or_create_user(db, _claims("p@x.com"))
+        ws = provision_workspace(db, user)
+        db.commit()
+        assert ws.owner_user_id == user.id
+        assert ws.password_hash          # agents still get a machine credential
+
+    def test_get_or_create_is_idempotent(self, db):
+        user = get_or_create_user(db, _claims("p2@x.com"))
+        first = get_or_create_owned_workspace(db, user)
+        db.commit()
+        second = get_or_create_owned_workspace(db, user)
+        db.commit()
+        assert first.id == second.id
+
+    def test_two_active_workspaces_rejected_by_the_database(self, db):
+        """The guarantee is the partial unique index, not application code."""
+        user = get_or_create_user(db, _claims("p3@x.com"))
+        provision_workspace(db, user)
+        db.commit()
+
+        db.add(Workspace(name="Second", slug="dup1", password_hash="t2",
+                         owner_user_id=user.id, status="active"))
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+
+    def test_a_deleted_workspace_frees_the_slot(self, db):
+        """The index only covers active rows, so re-provisioning stays possible."""
+        user = get_or_create_user(db, _claims("p4@x.com"))
+        first = provision_workspace(db, user)
+        db.commit()
+        first.status = "deleted"
+        db.commit()
+
+        second = Workspace(name="Fresh", slug="dup2", password_hash="t3",
+                           owner_user_id=user.id, status="active")
+        db.add(second)
+        db.commit()          # must not raise
+        assert second.owner_user_id == user.id
+
+    def test_account_endpoint_returns_the_same_workspace_twice(self, client, db, monkeypatch):
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
+        _seed_user(db, "a@x.com", "usera")
+        first = client.get("/v1/account/workspace", headers=_auth("a"))
+        second = client.get("/v1/account/workspace", headers=_auth("a"))
+        assert first.status_code == second.status_code == 200
+        assert first.json()["data"]["workspaceId"] == second.json()["data"]["workspaceId"]
+
+    def test_account_endpoint_requires_identity(self, client, monkeypatch):
+        _stub_identity(monkeypatch, {})
+        assert client.get("/v1/account/workspace").status_code == 401
+        assert client.get("/v1/account/workspace", headers=_auth("forged")).status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Agents keep working — they authenticate as machines, not humans
+# ---------------------------------------------------------------------------
+
+class TestAgentMachineTokenAccess:
     def _process(self, db, ws, token=None, bearer=None):
         event = SimpleNamespace(network=None)
         ctx = SimpleNamespace(
@@ -327,45 +232,111 @@ class TestViewerEnforcement:
         )
         return asyncio.run(AuthMod().process(event, ctx))
 
-    def _ws_with_member(self, db, slug, email, role):
-        ws = Workspace(name="W", slug=slug, password_hash="tok", require_login=True)
-        db.add(ws); db.flush()
-        u = User(email=email); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=ws.id, user_id=u.id, role=role))
-        db.commit()
-        return ws
-
-    def test_viewer_cannot_post(self, db, monkeypatch):
-        _stub_identity(monkeypatch, {"v": _claims("v@x.com")})
-        ws = self._ws_with_member(db, "ve1", "v@x.com", "viewer")
-        assert self._process(db, ws, bearer="v") is None
-
-    def test_member_can_post(self, db, monkeypatch):
-        _stub_identity(monkeypatch, {"m": _claims("m@x.com")})
-        ws = self._ws_with_member(db, "ve2", "m@x.com", "member")
-        assert self._process(db, ws, bearer="m") is not None
-
-    def test_agent_token_bypasses_role(self, db):
-        ws = Workspace(name="W", slug="ve3", password_hash="tok", require_login=True)
-        db.add(ws); db.commit()
+    def test_agent_token_passes_the_event_write_path(self, db):
+        _, ws = _owned_workspace(db, "a@x.com", "agt1")
         assert self._process(db, ws, token="tok") is not None
 
-    def test_anonymous_allowed_on_open_workspace(self, db):
-        ws = Workspace(name="W", slug="ve4", password_hash=None, require_login=False)
-        db.add(ws); db.commit()
-        assert self._process(db, ws) is not None
+    def test_wrong_agent_token_rejected(self, db):
+        _, ws = _owned_workspace(db, "a@x.com", "agt2")
+        assert self._process(db, ws, token="wrong") is None
+
+    def test_anonymous_event_write_rejected(self, db):
+        _, ws = _owned_workspace(db, "a@x.com", "agt3")
+        assert self._process(db, ws) is None
+
+    def test_owner_bearer_passes_the_event_write_path(self, db, monkeypatch):
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
+        _, ws = _owned_workspace(db, "a@x.com", "agt4")
+        assert self._process(db, ws, bearer="a") is not None
+
+    def test_pai_reaches_the_workspace_api_with_the_machine_token(self, client, db, monkeypatch):
+        """PAI Counselor/Operator call the real HTTP API with password_hash."""
+        _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
+        _seed_user(db, "a@x.com", "usera")
+        data = client.get("/v1/account/workspace", headers=_auth("a")).json()["data"]
+        r = client.get(f"/v1/workspaces/{data['workspaceId']}",
+                       headers={"X-Workspace-Token": data["token"]})
+        assert r.status_code == 200
 
 
-class TestViewerToken:
-    def test_viewer_gets_null_token_owner_gets_token(self, client, db, monkeypatch):
-        _stub_identity(monkeypatch, {"al": _claims("al@x.com"), "vv": _claims("vv@x.com")})
-        wid = client.post("/v1/workspaces", json={"name": "W"}, headers=_auth("al")).json()["data"]["workspaceId"]
-        u = User(email="vv@x.com"); db.add(u); db.flush()
-        db.add(WorkspaceMembership(workspace_id=wid, user_id=u.id, role="viewer"))
+# ---------------------------------------------------------------------------
+# GET /v1/workspaces/{id}/me
+# ---------------------------------------------------------------------------
+
+class TestMeEndpoint:
+    def test_owner_identity(self, client, monkeypatch):
+        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
+        wid = client.post("/v1/workspaces", json={"name": "WS"},
+                          headers=_auth("al")).json()["data"]["workspaceId"]
+        me = client.get(f"/v1/workspaces/{wid}/me", headers=_auth("al")).json()["data"]
+        assert me["email"] == "al@x.com"
+        assert me["authenticated"] is True
+        assert me["isOwner"] is True
+        assert me["tokenAccess"] is False
+
+    def test_token_access_is_not_an_identity(self, client):
+        data = client.post("/v1/workspaces", json={"name": "WS"}).json()["data"]
+        me = client.get(
+            f"/v1/workspaces/{data['workspaceId']}/me",
+            headers={"X-Workspace-Token": data["token"]},
+        ).json()["data"]
+        assert me["authenticated"] is False
+        assert me["isOwner"] is False
+        assert me["tokenAccess"] is True
+        assert me["email"] is None
+
+    def test_anonymous_denied(self, client, monkeypatch):
+        _stub_identity(monkeypatch, {"al": _claims("al@x.com")})
+        wid = client.post("/v1/workspaces", json={"name": "WS"},
+                          headers=_auth("al")).json()["data"]["workspaceId"]
+        assert client.get(f"/v1/workspaces/{wid}/me").status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Identity comes from the verified token, never from a payload
+# ---------------------------------------------------------------------------
+
+class TestIdentityIsNeverTakenFromPayloads:
+    def test_get_or_create_user_idempotent(self, db):
+        a = get_or_create_user(db, _claims("dup@x.com"))
+        db.commit()
+        b = get_or_create_user(db, _claims("dup@x.com"))
+        db.commit()
+        assert a.id == b.id
+
+    def test_claimed_email_in_a_payload_grants_nothing(self, db, monkeypatch):
+        """A payload claiming someone's email must not become access.
+
+        The old path really did this: posting with `sender_email` upserted a
+        collaborator row, and collaborator rows were an access grant. Asserted
+        on the access decision itself rather than an HTTP status, so the test
+        cannot pass merely because the request failed validation first.
+        """
+        _stub_identity(monkeypatch, {"b": _claims("b@x.com")})
+        _, ws_a = _owned_workspace(db, "a@x.com", "forge1", token="tok-a")
+        db.add(User(email="b@x.com"))
         db.commit()
 
-        vv = [w for w in client.get("/v1/account/workspaces", headers=_auth("vv")).json()["data"] if w["workspaceId"] == wid][0]
-        assert vv["role"] == "viewer" and vv["token"] is None
+        payload = {"content": "hi", "sender_email": "a@x.com",
+                   "sender_display_name": "A", "role": "owner", "owner": True}
 
-        al = [w for w in client.get("/v1/account/workspaces", headers=_auth("al")).json()["data"] if w["workspaceId"] == wid][0]
-        assert al["role"] == "owner" and al["token"] is not None
+        from app.mods.workspace_mod import _handle_message_posted  # noqa: F401
+        # Nothing may read identity out of that payload: B is still not the
+        # owner of A's workspace, before or after anyone posts it.
+        assert is_workspace_owner(db, ws_a, "Bearer b") is False
+        assert verify_workspace_access(ws_a, None, "Bearer b", db=db) is False
+        # And the claimed email does not become a credential either.
+        assert verify_workspace_access(ws_a, payload["sender_email"], None, db=db) is False
+
+    def test_no_payload_derived_collaborator_writer_exists(self):
+        """`_upsert_human_collaborator` was the function that turned a payload
+        email into a workspace grant. It must be gone, not merely unused."""
+        import app.mods.workspace_mod as workspace_mod
+        assert not hasattr(workspace_mod, "_upsert_human_collaborator")
+
+    def test_no_human_membership_tables_remain(self):
+        import app.models as models
+        assert not hasattr(models, "WorkspaceMembership")
+        assert not hasattr(models, "WorkspaceCollaborator")
+        # Agents are a different thing entirely and must survive.
+        assert hasattr(models, "WorkspaceMember")

@@ -353,7 +353,7 @@ async def _handle_ping(event: Event, ctx: PipelineContext) -> Optional[Event]:
 
 async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional[Event]:
     """network.channel.create → create Channel + initial ChannelMember rows."""
-    from app.models import Channel, ChannelMember, ChannelHumanMember, WorkspaceCollaborator
+    from app.models import Channel, ChannelMember, ChannelHumanMember
 
     db = ctx.extra["db"]
     workspace = ctx.extra["workspace"]
@@ -378,30 +378,16 @@ async def _handle_channel_create(event: Event, ctx: PipelineContext) -> Optional
             continue
         db.add(ChannelMember(channel_id=channel.id, agent_name=agent_name))
 
-    # Add initial human participants. Each email gets both a workspace
-    # collaborator row (so the mention picker shows them everywhere) and
-    # a channel_human_members row (so push fan-out for any message in
-    # this channel reaches their devices, not just @-mentions).
+    # Add initial human participants as channel members, so push fan-out for
+    # any message in this channel reaches their devices. These emails come from
+    # the event payload and are NOT an authorization claim: channel membership
+    # only decides who gets notified. Workspace access is decided solely by
+    # owner_user_id or the machine token (see app/access.py).
     human_participants = payload.get("human_participants", []) or []
     for email_raw in human_participants:
         email = (email_raw or "").strip().lower()
         if not email or "@" not in email:
             continue
-        # Upsert collaborator — same trust model as _upsert_human_collaborator
-        existing_collab = db.execute(
-            select(WorkspaceCollaborator).where(
-                WorkspaceCollaborator.workspace_id == str(workspace.id),
-                WorkspaceCollaborator.email == email,
-            )
-        ).scalar_one_or_none()
-        if not existing_collab:
-            db.add(WorkspaceCollaborator(
-                workspace_id=str(workspace.id),
-                email=email,
-                role="editor",
-                added_by=event.source or email,
-            ))
-        # Upsert channel membership so chat-path pushes go to them.
         existing_member = db.execute(
             select(ChannelHumanMember).where(
                 ChannelHumanMember.channel_id == channel.id,
@@ -1265,41 +1251,6 @@ def _handle_task_thread_progress(event: Event, channel, content: str, db, worksp
 _DEFAULT_TITLES = {"New Thread", "Session 1", None, ""}
 
 
-def _upsert_human_collaborator(workspace, payload: dict, db) -> None:
-    """First-write registration of a signed-in human into the workspace
-    roster, used downstream by the push fan-out to resolve `@bary` →
-    bary's device tokens. Reads `sender_email` and `sender_display_name`
-    from the event payload (web/Swift clients pass them on every human
-    chat post); does nothing if the email is missing — older clients
-    that don't yet identify themselves can't be mention-pushed.
-    """
-    email = (payload.get("sender_email") or "").strip().lower()
-    if not email:
-        return
-    display_name = (payload.get("sender_display_name") or "").strip() or None
-    from app.models import WorkspaceCollaborator
-    existing = db.execute(
-        select(WorkspaceCollaborator).where(
-            WorkspaceCollaborator.workspace_id == str(workspace.id),
-            WorkspaceCollaborator.email == email,
-        )
-    ).scalar_one_or_none()
-    if existing:
-        # Keep display_name fresh in case the user renamed their Google
-        # profile since last post.
-        if display_name and existing.display_name != display_name:
-            existing.display_name = display_name
-        return
-    db.add(WorkspaceCollaborator(
-        workspace_id=str(workspace.id),
-        email=email,
-        display_name=display_name,
-        role="editor",
-        added_by=email,
-    ))
-    db.flush()
-
-
 def _join_channel_as_human(channel, payload: dict, db) -> None:
     """Slack-style implicit join: the first time a human posts in a
     channel, add them to `channel_human_members` so future chat in this
@@ -1408,9 +1359,6 @@ async def _handle_message_posted(event: Event, ctx: PipelineContext) -> Optional
     # Auto-name channel from first human message if title is default/empty
     if event.source.startswith("human:") and channel:
         _auto_title_channel(channel, content, db)
-        # First post from a human → make sure they're in the workspace
-        # roster so @-mention pushes can find their device tokens later.
-        _upsert_human_collaborator(workspace, event.payload or {}, db)
         # First post in *this* channel → auto-join so future non-mention
         # chat in the channel pushes to this human's devices.
         _join_channel_as_human(channel, event.payload or {}, db)

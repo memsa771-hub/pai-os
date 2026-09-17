@@ -13,7 +13,7 @@ test_workspace_membership.py (patching app.access.verify_identity_claims).
 
 import app.firebase_auth as firebase_auth
 from app.access import get_or_create_owned_workspace, resolve_owned_workspace
-from app.models import User, Workspace, WorkspaceMembership
+from app.models import User, Workspace
 
 
 def _claims(email, uid="uid", name="Test User"):

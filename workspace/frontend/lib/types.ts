@@ -12,19 +12,19 @@ export interface Workspace {
   agents: WorkspaceAgent[];
 }
 
-export type WorkspaceRole = 'owner' | 'admin' | 'member' | 'viewer';
-
-/** The caller's identity + effective role in this workspace (GET /me).
- * `role` is the identity-based membership role (null for token-only or
- * anonymous access); `effectiveRole` folds in owner-equivalent machine/token
- * access and is what UI gating should use. */
+/** The caller's identity in this workspace (GET /me).
+ *
+ * A workspace has exactly one human — its owner — so there is no role, only
+ * whether this caller is that owner (`isOwner`) and whether they arrived on
+ * the machine token (`tokenAccess`, used by agents). UI gating should read
+ * those two; the backend enforces every mutation independently. */
 export interface WorkspaceMe {
   email: string | null;
   displayName: string | null;
+  avatarUrl?: string | null;
   authenticated: boolean;
-  role: WorkspaceRole | null;
+  isOwner: boolean;
   tokenAccess: boolean;
-  effectiveRole: WorkspaceRole | null;
 }
 
 /** An agent the daemon reports it is hosting on a node. */
@@ -178,24 +178,6 @@ export interface OnlineUser {
   name: string;
   status: 'online';
   lastSeen: number;
-}
-
-export interface WorkspaceCollaborator {
-  email: string;
-  role: 'editor' | 'viewer';
-  addedBy: string | null;
-  addedAt: string | null;
-}
-
-export interface WorkspaceInvitation {
-  invitationId: string;
-  workspaceId: string;
-  targetAgentName: string;
-  inviteToken: string;
-  workspaceName?: string;
-  status: 'pending' | 'accepted' | 'rejected' | 'expired';
-  createdAt: string;
-  expiresAt: string;
 }
 
 export interface WorkspaceFile {

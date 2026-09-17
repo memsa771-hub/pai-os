@@ -31,6 +31,19 @@ def _create_workspace(client, name="Test WS", agent_name="agent-alpha", creator_
     return resp.json()["data"]
 
 
+def _claim(client, workspace_id, email):
+    """Claim a workspace for `email` — the product path that turns an
+    anonymously-created workspace into someone's personal one by setting
+    `owner_user_id`. Ownership, not creator_email, is what grants access."""
+    with _mock_identity_verify(email):
+        resp = client.post(
+            f"/v1/workspaces/{workspace_id}/claim",
+            headers={"Authorization": f"Bearer claim-{email}"},
+        )
+    assert resp.status_code == 200, resp.text
+    return resp
+
+
 def _mock_identity_verify(email):
     """Return a patcher that makes an identity bearer resolve to the given
     email (or reject the bearer, when email is None)."""
@@ -193,14 +206,17 @@ class TestBearerAuth:
         assert resp.json()["data"]["name"] == channel_name
 
     def test_get_channel_bearer_wrong_email(self, client, workspace):
-        """Non-owner bearer auth cannot access channels."""
+        """Non-owner bearer auth cannot access channels.
+
+        403, not 401: the credential is valid, it just isn't this workspace's
+        owner. 401 is reserved for a missing or unverifiable bearer."""
         channel_name = workspace["channel"]["name"]
         with _mock_identity_verify("other@example.com"):
             resp = client.get(
                 f"/v1/workspaces/{workspace['id']}/channels/{channel_name}",
                 headers={"Authorization": "Bearer other-user-token"},
             )
-        assert resp.status_code == 401
+        assert resp.status_code == 403
 
 
 # ===========================================================================
@@ -425,6 +441,8 @@ class TestCrossWorkspaceIsolation:
         """Bearer auth only works for workspaces where the user is creator."""
         ws_a = _create_workspace(client, name="WS A", agent_name="agent-a", creator_email="alice@example.com")
         ws_b = _create_workspace(client, name="WS B", agent_name="agent-b", creator_email="bob@example.com")
+        _claim(client, ws_a["workspaceId"], "alice@example.com")
+        _claim(client, ws_b["workspaceId"], "bob@example.com")
 
         # Alice can rotate her workspace token
         with _mock_identity_verify("alice@example.com"):
@@ -435,12 +453,14 @@ class TestCrossWorkspaceIsolation:
         assert resp.status_code == 200
 
         # Alice cannot rotate Bob's workspace token
+        # 403, not 401: Alice's credential is valid, Bob's workspace just
+        # isn't hers. This is the isolation boundary — owner_user_id.
         with _mock_identity_verify("alice@example.com"):
             resp = client.post(
                 f"/v1/workspaces/{ws_b['workspaceId']}/rotate-token",
                 headers={"Authorization": "Bearer alice-token"},
             )
-        assert resp.status_code == 401
+        assert resp.status_code == 403
 
 
 # ===========================================================================
@@ -569,16 +589,17 @@ class TestSessionLifecycle:
 # ===========================================================================
 
 class TestOpenWorkspace:
-    """Workspaces without a password_hash allow unauthenticated access."""
+    """There is no such thing as an open workspace any more."""
 
-    def test_open_workspace_allows_events_without_token(self, client, db):
-        """Workspace with no password allows events without credentials."""
+    def test_tokenless_workspace_still_denies_anonymous_events(self, client, db):
+        """The pre-v1.0 "no password + require_login False = public" rule is
+        gone. A workspace with no owner has no human who can reach it, and an
+        anonymous caller is denied regardless of how the row is configured."""
         from app.models import Workspace, Channel, ChannelMember
         import uuid
 
-        # Create workspace directly in DB with no password. require_login is
-        # set explicitly: this models a LEGACY pre-v1.0 open workspace (stored
-        # rows keep FALSE) — new workspaces default to require_login=True.
+        # A row configured the most permissive way the old model allowed:
+        # no token, require_login False, no owner.
         ws = Workspace(
             slug="open-ws",
             name="Open Workspace",
@@ -608,7 +629,7 @@ class TestOpenWorkspace:
             "payload": {"content": "no auth needed"},
             "network": str(ws.id),
         })
-        assert resp.status_code == 200
+        assert resp.status_code in (401, 403)
 
 
 # ===========================================================================

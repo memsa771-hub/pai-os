@@ -95,7 +95,14 @@ def db():
 
 @pytest.fixture
 def workspace(client):
-    """Create a workspace and return its details (id, slug, token)."""
+    """Create a workspace and return its details (id, slug, token).
+
+    Owned by test@example.com. Ownership is what grants a human access now
+    (`workspaces.owner_user_id` — see app/access.py); `creator_email` is
+    display only. The bearer-auth tests mock identity as that same address, so
+    the fixture has to model a real, owned workspace rather than the orphaned
+    one anonymous creation produces.
+    """
     resp = client.post("/v1/workspaces", json={
         "name": "Test Workspace",
         "agent_name": "agent-alpha",
@@ -103,6 +110,21 @@ def workspace(client):
     })
     assert resp.status_code == 200
     data = resp.json()["data"]
+
+    from app.models import User, Workspace as WorkspaceModel
+    session = TestingSessionLocal()
+    try:
+        owner = session.query(User).filter(User.email == "test@example.com").one_or_none()
+        if owner is None:
+            owner = User(email="test@example.com", username="testuser")
+            session.add(owner)
+            session.flush()
+        ws = session.get(WorkspaceModel, data["workspaceId"])
+        ws.owner_user_id = owner.id
+        session.commit()
+    finally:
+        session.close()
+
     return {
         "id": data["workspaceId"],
         "slug": data["slug"],

@@ -41,7 +41,7 @@ import re
 from sqlalchemy import select
 
 from app.database import SessionLocal
-from app.models import ChannelHumanMember, DeviceToken, WorkspaceCollaborator, WorkspaceMember
+from app.models import ChannelHumanMember, DeviceToken, User, Workspace, WorkspaceMember
 from app.services.fcm_client import PushAlert, send_push
 
 logger = logging.getLogger(__name__)
@@ -302,7 +302,8 @@ def _workspace_human_keys(db, workspace_id: str) -> dict[str, str]:
     """Build the mention-resolution table for humans in this workspace.
 
     Maps every plausible thing a person might type after `@` to that
-    human's email. Two keys are generated per collaborator:
+    human's email. The workspace has exactly one human — its owner — so
+    this resolves that one account. Two keys are generated:
 
       • `email-local-part` — e.g. `bary@peakmojo.com` → "bary".
       • `display_name_slug` — e.g. "Bary Huang" → "bary-huang",
@@ -314,8 +315,9 @@ def _workspace_human_keys(db, workspace_id: str) -> dict[str, str]:
     """
     keys: dict[str, str] = {}
     rows = db.execute(
-        select(WorkspaceCollaborator.email, WorkspaceCollaborator.display_name)
-        .where(WorkspaceCollaborator.workspace_id == workspace_id)
+        select(User.email, User.display_name)
+        .join(Workspace, Workspace.owner_user_id == User.id)
+        .where(Workspace.id == workspace_id)
     ).all()
     import re as _re
     for email, display_name in rows:

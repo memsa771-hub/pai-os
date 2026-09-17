@@ -137,7 +137,7 @@ def _load_workspace_for_admin(db, workspace_id, token, authorization):
     ).scalar_one_or_none()
     if not workspace or workspace.status == "deleted":
         return None, json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not verify_workspace_access(workspace, token, authorization, db=db, min_role="admin"):
+    if not verify_workspace_access(workspace, token, authorization, db=db):
         return None, json_response(
             ResponseCode.FORBIDDEN, "Only an owner or admin can manage integrations"
         )

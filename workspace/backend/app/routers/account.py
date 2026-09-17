@@ -34,7 +34,6 @@ from app.models import (
     DeviceToken,
     User,
     Workspace,
-    WorkspaceCollaborator,
 )
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _extract_bearer
@@ -252,10 +251,6 @@ def delete_account(
             ws.status = "deleted"
             owned_workspace_deleted += 1
 
-    collaborators_deleted = db.query(WorkspaceCollaborator).filter(
-        WorkspaceCollaborator.email == email_lower
-    ).delete(synchronize_session=False)
-
     channel_memberships_deleted = db.query(ChannelHumanMember).filter(
         ChannelHumanMember.user_email == email_lower
     ).delete(synchronize_session=False)
@@ -267,15 +262,14 @@ def delete_account(
     db.commit()
 
     logger.info(
-        "account: deleted account for %s (owned_workspace=%s collaborators=%s channel_members=%s devices=%s)",
-        email_lower, owned_workspace_deleted, collaborators_deleted, channel_memberships_deleted, devices_deleted,
+        "account: deleted account for %s (owned_workspace=%s channel_members=%s devices=%s)",
+        email_lower, owned_workspace_deleted, channel_memberships_deleted, devices_deleted,
     )
 
     return success_response({
         "email": email_lower,
         "deleted": {
             "ownedWorkspace": owned_workspace_deleted,
-            "collaborators": collaborators_deleted,
             "channel_memberships": channel_memberships_deleted,
             "devices": devices_deleted,
         },

@@ -1,13 +1,13 @@
 'use client';
 
 import { createContext, useContext } from 'react';
-import type { Workspace, WorkspaceMe, WorkspaceRole } from '@/lib/types';
+import type { Workspace, WorkspaceMe } from '@/lib/types';
 
 /**
  * Context for the /{workspaceId}/settings/* admin dashboard.
  *
  * Deliberately NOT the full WorkspaceProvider: the dashboard only needs the
- * workspace record and the caller's role — none of the SSE/polling/presence
+ * workspace record and who the caller is — none of the SSE/polling/presence
  * machinery — so the settings layout resolves credentials itself, configures
  * the shared workspaceApi singleton, and provides this slim context instead.
  */
@@ -26,12 +26,12 @@ export interface AdminSettingsValue {
   query: string;
 }
 
-const ROLE_RANK: Record<WorkspaceRole, number> = { viewer: 0, member: 1, admin: 2, owner: 3 };
-
-/** True when the caller may change workspace settings (admin or above). */
+/** True when the caller may change workspace settings.
+ *
+ * A workspace has one human — its owner — so this is simply "is that person",
+ * plus the machine token an agent authenticates with. No role hierarchy. */
 export function canAdminister(me: WorkspaceMe | null): boolean {
-  if (!me?.effectiveRole) return false;
-  return ROLE_RANK[me.effectiveRole] >= ROLE_RANK.admin;
+  return Boolean(me?.isOwner || me?.tokenAccess);
 }
 
 export const AdminSettingsContext = createContext<AdminSettingsValue | null>(null);

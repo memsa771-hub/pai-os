@@ -36,13 +36,11 @@ from app.models import (
     ChannelMember,
     User,
     Workspace,
-    WorkspaceCollaborator,
     WorkspaceMember,
-    WorkspaceMembership,
 )
 from app.access import (
+    is_workspace_owner,
     resolve_current_user,
-    resolve_user_role,
     verify_workspace_access,
 )
 from app.response import ResponseCode, json_response, success_response
@@ -117,11 +115,6 @@ class WorkspaceUpdateRequest(BaseModel):
     # round-trip the whole settings dict to flip one bool.
     browser_enabled: Optional[bool] = None
     browserfabric_api_key: Optional[str] = None
-
-class PresencePingRequest(BaseModel):
-    senderEmail: str
-    senderDisplayName: Optional[str] = None
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -273,13 +266,6 @@ def create_workspace(
     )
     db.add(workspace)
     db.flush()
-
-    if owner:
-        db.add(WorkspaceMembership(
-            workspace_id=workspace.id,
-            user_id=owner.id,
-            role="owner",
-        ))
 
     # Optionally add the creating agent as master member
     if body.agent_name:
@@ -456,7 +442,7 @@ def update_workspace(
         # Enforced-login is an owner/admin control (a workspace-token holder is
         # trusted and also permitted). Other members can't flip it.
         from app.access import verify_workspace_access
-        if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db, min_role="admin"):
+        if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db):
             return json_response(ResponseCode.FORBIDDEN, "Only an owner or admin can change login enforcement")
         workspace.require_login = body.require_login
 
@@ -482,31 +468,51 @@ def claim_workspace(
     authorization: Optional[str] = Header(None),
 ):
     """
-    Claim ownership of a workspace.
+    Claim ownership of an unowned workspace.
 
-    Requires a valid identity bearer token (Supabase or Apple). Sets
-    creator_email on the workspace so the user can access it without a
-    workspace token.
+    Requires a valid identity bearer. Sets `owner_user_id`, which IS the access
+    grant — `creator_email` is kept for display only and no longer authorizes
+    anything (see app/access.py). A user already owning an active workspace
+    cannot claim a second one: that is the product invariant, and
+    `uq_workspace_owner_active` enforces it in the database regardless.
     """
-    bearer = _extract_bearer(authorization)
-    if not bearer:
-        return json_response(ResponseCode.UNAUTHORIZED, "Bearer token required")
-
-    from app.firebase_auth import verify_identity_token
-    email = verify_identity_token(bearer)
-    if not email:
+    user = resolve_current_user(db, authorization)
+    if not user:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid or expired token")
+    email = user.email
 
     workspace = db.execute(
         select(Workspace).where(_workspace_filter(workspace_id))
     ).scalar_one_or_none()
 
     if not workspace:
+        db.commit()  # persist the lazily created User row
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
-    if workspace.creator_email and workspace.creator_email != email:
+    already_owned_by_other = (
+        workspace.owner_user_id is not None
+        and str(workspace.owner_user_id) != str(user.id)
+    )
+    if already_owned_by_other:
+        db.commit()
         return json_response(ResponseCode.FORBIDDEN, "Workspace already claimed by another user")
 
+    if str(workspace.owner_user_id or "") != str(user.id):
+        existing = db.execute(
+            select(Workspace).where(
+                Workspace.owner_user_id == user.id,
+                Workspace.status == "active",
+                Workspace.id != workspace.id,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            db.commit()
+            return json_response(
+                ResponseCode.FORBIDDEN,
+                "You already have a personal workspace",
+            )
+
+    workspace.owner_user_id = user.id
     workspace.creator_email = email
     db.commit()
     db.refresh(workspace)
@@ -1524,112 +1530,6 @@ def delete_workspace(
     return success_response({"workspaceId": str(workspace.id), "status": "deleted"})
 
 
-# ---------------------------------------------------------------------------
-# Collaborator management (email-based sharing)
-# ---------------------------------------------------------------------------
-
-def _user_cards(db: Session, emails) -> dict:
-    """`email -> (display_name, avatar_url)` for the accounts behind [emails].
-
-    `workspace_collaborators` is keyed by email and predates accounts: it
-    carries whatever display name the client happened to send and has never
-    had a picture. The `users` row is where the profile actually lives, so it
-    is looked up here rather than duplicated into the collaborator row, which
-    would go stale the moment someone changes their photo.
-
-    One query for the whole list — a per-row lookup would turn the member list
-    into an N+1.
-    """
-    wanted = {(e or "").strip().lower() for e in emails if e}
-    if not wanted:
-        return {}
-    rows = db.execute(
-        select(User.email, User.display_name, User.avatar_url).where(
-            func.lower(User.email).in_(wanted)
-        )
-    ).all()
-    return {email.lower(): (display_name, avatar_url) for email, display_name, avatar_url in rows}
-
-
-def _format_collaborator(c: WorkspaceCollaborator, cards: Optional[dict] = None) -> dict:
-    """Serialize a collaborator, enriched with their account profile.
-
-    [cards] comes from `_user_cards`. Omitting it still yields a valid row —
-    one with no picture — so a caller without a session at hand degrades to
-    the shape this endpoint always returned rather than failing.
-
-    The account's display name wins over the collaborator row's: the row's is
-    a snapshot from whichever client last posted, the account's is what its
-    owner set on purpose.
-    """
-    name, avatar = (cards or {}).get((c.email or "").lower(), (None, None))
-    return {
-        "email": c.email,
-        "displayName": name or c.display_name,
-        "avatarUrl": avatar,
-        "role": c.role,
-        "addedBy": c.added_by,
-        "addedAt": c.added_at.isoformat() if c.added_at else None,
-    }
-
-
-@router.post("/{workspace_id}/presence")
-async def record_presence(
-    workspace_id: str,
-    body: PresencePingRequest,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """Self-register the CALLING human's own presence (never anyone else's).
-
-    Called by the web/Swift clients on workspace open once the user is
-    signed in. The mention picker and push fan-out read from
-    `workspace_collaborators`, so this is what makes a freshly-logged-in
-    human show up without having to post a message first. There is no
-    invite/add-another-person product path — when a verified identity bearer
-    is present, the email is resolved from IT, never trusted from the request
-    body, so this endpoint can never be used to register someone else's
-    presence. `senderEmail` in the body is a fallback for the legacy
-    token-only (no bearer) case only.
-    """
-    workspace = db.execute(
-        select(Workspace).where(_workspace_filter(workspace_id))
-    ).scalar_one_or_none()
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return _workspace_access_denied(authorization)
-
-    bearer_email = None
-    bearer = _extract_bearer(authorization)
-    if bearer:
-        from app.firebase_auth import verify_identity_token
-        bearer_email = verify_identity_token(bearer)
-
-    email = (bearer_email or body.senderEmail or "").strip().lower()
-    if not email or "@" not in email:
-        return json_response(ResponseCode.BAD_REQUEST, "Invalid email address")
-
-    from app.mods.workspace_mod import _upsert_human_collaborator
-    _upsert_human_collaborator(
-        workspace,
-        {"sender_email": email, "sender_display_name": body.senderDisplayName},
-        db,
-    )
-    db.commit()
-
-    existing = db.execute(
-        select(WorkspaceCollaborator).where(
-            WorkspaceCollaborator.workspace_id == str(workspace.id),
-            WorkspaceCollaborator.email == email,
-        )
-    ).scalar_one_or_none()
-    return success_response(
-        _format_collaborator(existing, _user_cards(db, [email])) if existing else {"email": email}
-    )
-
-
 @router.get("/{workspace_id}/me")
 def get_me(
     workspace_id: str,
@@ -1637,14 +1537,12 @@ def get_me(
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
-    """Who am I in this workspace? Returns the caller's identity and effective
-    role so the frontend can gate admin UI client-side (the backend still
-    enforces every mutation independently).
+    """Who am I in this workspace?
 
-    `role` is the identity-based membership role (null for token-only or
-    anonymous callers). `effectiveRole` folds in the machine credential and the
-    open-workspace grandfather rule, both of which the access layer treats as
-    owner-equivalent."""
+    A workspace has exactly one human — its owner — so there is no role to
+    report, only whether the caller is that owner and whether they arrived on
+    the machine token. The backend enforces every mutation independently; this
+    is for display only."""
     workspace = db.execute(
         select(Workspace).where(_workspace_filter(workspace_id))
     ).scalar_one_or_none()
@@ -1656,13 +1554,12 @@ def get_me(
     token_access = bool(
         workspace.password_hash and x_workspace_token == workspace.password_hash
     )
-    role = resolve_user_role(db, workspace, authorization)
-    open_workspace = not workspace.password_hash and not workspace.require_login
+    owner = is_workspace_owner(db, workspace, authorization)
 
     email = None
     display_name = None
     avatar_url = None
-    if role is not None:
+    if owner:
         user = resolve_current_user(db, authorization)
         if user is not None:
             email = user.email
@@ -1670,18 +1567,13 @@ def get_me(
             avatar_url = user.avatar_url
             db.commit()  # persist the lazily created/refreshed User row
 
-    effective_role = role
-    if token_access or open_workspace:
-        effective_role = "owner"
-
     return success_response({
         "email": email,
         "displayName": display_name,
         "avatarUrl": avatar_url,
-        "authenticated": role is not None,
-        "role": role,
+        "authenticated": owner,
+        "isOwner": owner,
         "tokenAccess": token_access,
-        "effectiveRole": effective_role,
     })
 
 

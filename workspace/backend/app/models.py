@@ -102,11 +102,9 @@ class Workspace(Base):
     # legacy workspaces (kept for data safety, not reachable via the normal
     # product — see migration 053).
     owner_user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    # When True, human web/mobile access requires a logged-in identity that is
-    # a WorkspaceMembership of this workspace (enforced-login, v1.0). When False
-    # (the default, and every pre-v1.0 workspace), access falls back to the
-    # legacy rules: a valid workspace token, or — if no token is set — open.
-    # Agents/daemons always authenticate with the workspace token regardless.
+    # Retained for clients that read it. Human access no longer depends on it:
+    # a human is allowed iff they are the owner (see app/access.py). Agents and
+    # daemons always authenticate with the workspace token regardless.
     require_login = Column(Boolean, nullable=False, default=True, server_default=text("TRUE"))
     settings = Column(JSONB, default={})
     status = Column(Text, default="active")
@@ -116,8 +114,6 @@ class Workspace(Base):
     members = relationship("WorkspaceMember", back_populates="workspace", cascade="all, delete-orphan")
     channels = relationship("Channel", back_populates="workspace", cascade="all, delete-orphan")
     invitations = relationship("Invitation", back_populates="workspace", cascade="all, delete-orphan")
-    collaborators = relationship("WorkspaceCollaborator", back_populates="workspace", cascade="all, delete-orphan", lazy="selectin")
-    memberships = relationship("WorkspaceMembership", back_populates="workspace", cascade="all, delete-orphan")
 
     __table_args__ = (
         # The actual "one active personal workspace per user" guarantee —
@@ -263,46 +259,16 @@ class Invitation(Base):
     workspace = relationship("Workspace", back_populates="invitations")
 
 
-class WorkspaceCollaborator(Base):
-    """Email-based workspace access (human collaborators)."""
-    __tablename__ = "workspace_collaborators"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
-    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    email = Column(Text, nullable=False)                # normalized lowercase
-    role = Column(Text, default="editor")               # editor | viewer
-    added_by = Column(Text, nullable=True)              # email of who added
-    added_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
-    # Google `displayName` captured the first time the human posted in
-    # this workspace. Mention picker shows it; push.py uses it (along
-    # with the email local-part) to resolve "@bary" → device tokens.
-    display_name = Column(Text, nullable=True)
-
-    workspace = relationship("Workspace", back_populates="collaborators")
-
-    __table_args__ = (
-        UniqueConstraint("workspace_id", "email", name="uq_collaborator_workspace_email"),
-        Index("idx_collaborators_workspace", "workspace_id"),
-        Index("idx_collaborators_email", "email"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Human identity & workspace membership (enforced-login, v1.0)
-# ---------------------------------------------------------------------------
 
 class User(Base):
     """A human end-user identity, resolved from a verified login-provider
     access token (Supabase Auth — the canonical human-identity provider — or
     Sign in with Apple, used by the iOS app).
 
-    Distinct from `WorkspaceMember` (agents, keyed by agent_name) and the legacy
-    email-only `WorkspaceCollaborator` ACL. A user's access to a workspace is
-    expressed by `WorkspaceMembership` rows. Rows are created/refreshed lazily
-    on login; pre-v1.0 email-keyed access (`Workspace.creator_email` and
-    collaborator rows) is reconciled into memberships the first time the
-    matching user signs in, so existing users keep their workspaces with no
-    data migration.
+    Distinct from `WorkspaceMember`, which represents AGENTS and is keyed by
+    agent_name. A user reaches exactly one workspace: the one whose
+    `owner_user_id` is their id. There is no membership table, no role and no
+    second human — see app/access.py.
     """
     __tablename__ = "users"
 
@@ -325,7 +291,6 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 
-    memberships = relationship("WorkspaceMembership", back_populates="user", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("email", name="uq_users_email"),
@@ -334,34 +299,6 @@ class User(Base):
     )
 
 
-class WorkspaceMembership(Base):
-    """A human user's membership of a workspace, with role.
-
-    The v1.0 replacement for the "owner = `Workspace.creator_email` string" +
-    editor/viewer `WorkspaceCollaborator` split. Roles, highest to lowest:
-    `owner` | `admin` | `member` | `viewer`. `viewer` is read-only and cannot
-    interact with agents — the role is modeled now; its enforcement is deferred.
-    """
-    __tablename__ = "workspace_memberships"
-
-    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
-    role = Column(Text, nullable=False, default="member", server_default=text("'member'"))  # owner | admin | member | viewer
-    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
-
-    workspace = relationship("Workspace", back_populates="memberships")
-    user = relationship("User", back_populates="memberships")
-
-    __table_args__ = (
-        PrimaryKeyConstraint("workspace_id", "user_id"),
-        # The composite PK indexes (workspace_id, ...) for "members of a
-        # workspace"; this serves the reverse "workspaces for a user" lookup.
-        Index("idx_memberships_user", "user_id"),
-    )
-
-# ---------------------------------------------------------------------------
-# Nodes — a connected device/daemon (launcher host), independent of agents
-# ---------------------------------------------------------------------------
 
 class KnowledgeEntry(Base):
     """A knowledge base entry — workspace-global markdown document."""
@@ -540,7 +477,7 @@ class DeviceToken(Base):
     # NULL for older clients without a user identity; populated by builds
     # that started sending `userEmail` with /v1/devices/register. The push
     # fan-out filters by this column when a @-mention resolves to a human
-    # collaborator so only that specific human's devices get woken up.
+    # workspace owner so only that specific human's devices get woken up.
     user_email = Column(Text, nullable=True)
     # Notification switches as set on the device's Notifications screen —
     # {approvals, mentions, agentErrors, taskCompletions, allMessages,

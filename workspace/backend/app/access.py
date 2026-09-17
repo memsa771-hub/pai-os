@@ -1,28 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-Shared human-identity & workspace-access helpers (enforced-login, v1.0).
+Human identity and workspace access for Placement AI.
 
-Single source of truth for "may this caller touch this workspace?", replacing
-the copies of `_verify_workspace_access` that were duplicated across the REST
-routers, and adding first-class user/membership resolution on top of the
-verified identity token.
+One student, one personal workspace. There is no second human in a workspace,
+so there is no role hierarchy, no invitations, no collaborators, and nothing to
+reconcile. Authorization is two rules:
 
-Access rules (evaluated in order):
-  1. Workspace token — `X-Workspace-Token` == `workspace.password_hash`.
-     The MACHINE credential (agents, daemons, adapters, iOS, legacy share
-     links). Always accepted regardless of `require_login`.
-  2. Member identity — a logged-in user (verified Supabase/Apple bearer) who has
-     a WorkspaceMembership row, or — for backward compatibility — whose email
-     matches `creator_email` (owner) or a collaborator row (editor→member,
-     viewer→viewer).
-  3. Open workspace — no token set AND `require_login` is False → allow
-     (grandfathers every pre-v1.0 open workspace).
-Otherwise: deny.
+  1. Machine token — `X-Workspace-Token` == `workspace.password_hash`.
+     The credential agents and daemons use (PAI Counselor/Operator reach the
+     workspace API with it). Fully trusted.
+  2. Owner identity — a verified bearer whose `User.id` equals
+     `workspace.owner_user_id`.
 
-With `require_login=False` (the default and every existing workspace) this
-reduces to exactly the legacy behaviour, so wiring it in is a no-op until a
-workspace opts in. The ONM pipeline guard (app/mods/auth.py) is intentionally
-left on its own path for now; enforcement there lands with Phase 3.
+Anything else is denied, including an anonymous caller and a logged-in user
+who simply is not the owner. `workspaces.owner_user_id` is the tenant-isolation
+boundary, and `uq_workspace_owner_active` (partial unique index) is what makes
+"exactly one active personal workspace per user" a database guarantee rather
+than a convention.
+
+Human identity comes ONLY from the verified authentication token. Nothing in
+an event payload or request body — `sender_email`, `role`, `owner` — is ever
+read as an identity claim; a client could set any of them.
 """
 
 import logging
@@ -30,19 +28,15 @@ import secrets
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SqlaSession
 
 from app.firebase_auth import verify_identity_claims
-from app.models import User, Workspace, WorkspaceCollaborator, WorkspaceMembership
+from app.models import User, Workspace
 
 logger = logging.getLogger(__name__)
-
-# Role hierarchy, highest to lowest. Token/machine access is treated as
-# owner-equivalent for min-role checks (fully trusted credential).
-ROLE_RANK = {"viewer": 0, "member": 1, "admin": 2, "owner": 3}
 
 
 def _now() -> datetime:
@@ -54,13 +48,6 @@ def extract_bearer(authorization: Optional[str]) -> Optional[str]:
     if authorization and authorization.lower().startswith("bearer "):
         return authorization[7:].strip()
     return None
-
-
-def role_at_least(role: Optional[str], min_role: Optional[str]) -> bool:
-    """True if `role` meets or exceeds `min_role` (None min_role = any role)."""
-    if min_role is None:
-        return role is not None
-    return ROLE_RANK.get(role or "", -1) >= ROLE_RANK.get(min_role, 99)
 
 
 # ---------------------------------------------------------------------------
@@ -113,82 +100,15 @@ def resolve_current_user(db: Session, authorization: Optional[str]) -> Optional[
     return get_or_create_user(db, claims)
 
 
-def get_or_create_user_by_email(db: Session, email: str) -> User:
-    """Resolve (or create) a User row by email alone — for inviting a teammate
-    who hasn't logged in yet. The row starts with no provider uid; it's
-    backfilled by get_or_create_user the first time they actually sign in.
-    Does NOT commit.
-    """
-    email = email.strip().lower()
-    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-    if user is None:
-        user = User(email=email)
-        db.add(user)
-        db.flush()
-    return user
-
-
 # ---------------------------------------------------------------------------
-# Membership reconciliation (lazy migration bridge)
+# The one personal workspace
 # ---------------------------------------------------------------------------
-
-def _ensure_membership(db: Session, workspace_id: str, user_id: str, role: str) -> None:
-    """Create a membership row if the user isn't already a member.
-
-    Never downgrades or overrides an existing role — explicit role changes win.
-    """
-    existing = db.execute(
-        select(WorkspaceMembership).where(
-            WorkspaceMembership.workspace_id == workspace_id,
-            WorkspaceMembership.user_id == user_id,
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        db.add(WorkspaceMembership(workspace_id=workspace_id, user_id=user_id, role=role))
-
-
-def reconcile_memberships(db: Session, user: User) -> None:
-    """Backfill membership rows from pre-v1.0 email-keyed access.
-
-    Workspaces this user created (`creator_email`) → owner; collaborator rows
-    (editor→member, viewer→viewer). This is the migration bridge: an existing
-    user inherits their workspaces the first time they sign in, with no bulk
-    data migration. Create-if-missing only. Does NOT commit.
-    """
-    email = user.email
-
-    owned = db.execute(
-        select(Workspace).where(
-            func.lower(Workspace.creator_email) == email,
-            Workspace.status != "deleted",
-        )
-    ).scalars().all()
-    for ws in owned:
-        _ensure_membership(db, ws.id, user.id, "owner")
-
-    collabs = db.execute(
-        select(WorkspaceCollaborator).where(WorkspaceCollaborator.email == email)
-    ).scalars().all()
-    for c in collabs:
-        role = "member" if (c.role or "editor") == "editor" else "viewer"
-        _ensure_membership(db, c.workspace_id, user.id, role)
-
-    # Sessions run with autoflush disabled, so flush the new rows now — callers
-    # (e.g. the auto-provision check) must be able to see them in a subsequent
-    # query within the same transaction.
-    db.flush()
-
 
 def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> Workspace:
-    """Create a fresh empty workspace owned by `user` (Overleaf-style first-run).
+    """Create the student's personal workspace, owned by `user`.
 
-    Mirrors the agent-less path of POST /v1/workspaces: a slug + token + owner,
-    no seeded channels or agents. Keeps a workspace token so agents and legacy
-    clients can still attach. Sets `owner_user_id` — the actual canonical-
-    workspace identity — in addition to the legacy `creator_email` +
-    `WorkspaceMembership(role="owner")` pair, which stay for backward
-    compatibility with the pre-v2.0 membership-based access path. Does NOT
-    commit — the caller owns the transaction.
+    Keeps a workspace token: that is the machine credential PAI's agents use.
+    Does NOT commit — the caller owns the transaction.
     """
     ws = Workspace(
         slug=secrets.token_hex(4),
@@ -196,20 +116,15 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
         creator_email=user.email,
         owner_user_id=user.id,
         password_hash=secrets.token_urlsafe(32),
-        # Identity-created workspace → enforced login by default (v1.0). The
-        # kept token still lets agents/legacy clients attach.
         require_login=True,
         settings={},
         status="active",
     )
     db.add(ws)
     db.flush()
-    db.add(WorkspaceMembership(workspace_id=ws.id, user_id=user.id, role="owner"))
 
-    # Auto-provision the built-in PAI Counselor onboarding assistant, same as
-    # POST /v1/workspaces — a first workspace without any agent is a dead end
-    # (especially on mobile, where the launcher can't be installed). Never let
-    # this block workspace creation.
+    # A first workspace with no agent is a dead end, especially on mobile where
+    # the launcher cannot be installed. Never let this block creation.
     try:
         from app.services.pai import provision_pai, seed_welcome_thread
         if provision_pai(db, ws):
@@ -219,14 +134,8 @@ def provision_workspace(db: Session, user: User, name: str = "My Workspace") -> 
     return ws
 
 
-# ---------------------------------------------------------------------------
-# Canonical personal workspace (Placement AI v2.0 — one student, one workspace)
-# ---------------------------------------------------------------------------
-
 def resolve_owned_workspace(db: Session, user: User) -> Optional[Workspace]:
-    """The student's one canonical personal workspace, or None if not yet
-    provisioned. This is the ONLY human-facing workspace lookup the product
-    should use going forward — see `get_or_create_owned_workspace`."""
+    """The student's one personal workspace, or None if not yet provisioned."""
     return db.execute(
         select(Workspace).where(
             Workspace.owner_user_id == user.id,
@@ -236,17 +145,15 @@ def resolve_owned_workspace(db: Session, user: User) -> Optional[Workspace]:
 
 
 def get_or_create_owned_workspace(db: Session, user: User) -> Workspace:
-    """The student's one canonical personal workspace — provisioning it (with
-    PAI Counselor + welcome thread) on first call. Idempotent and
-    concurrency-safe: `uq_workspace_owner_active` (a partial unique index on
-    `workspaces.owner_user_id`) is the actual guarantee, enforced by the
-    database, so two concurrent first-logins (two browser tabs, web + desktop)
-    can never both insert an owned workspace for the same user. The loser of
-    that race simply re-reads the winner's row.
+    """The student's one personal workspace, provisioning it on first call.
 
-    Does NOT commit — the caller owns the transaction. Safe to call inside an
-    existing transaction: the provisioning attempt runs in its own SAVEPOINT
-    so a conflict rolls back only the failed insert, not the whole request.
+    Idempotent and concurrency-safe: `uq_workspace_owner_active` is the actual
+    guarantee, enforced by the database, so two concurrent first-logins (two
+    tabs, web + desktop) can never both insert an owned workspace for the same
+    user. The loser of that race re-reads the winner's row.
+
+    Does NOT commit. Safe inside an existing transaction: the insert runs in its
+    own SAVEPOINT so a conflict rolls back only the failed insert.
     """
     existing = resolve_owned_workspace(db, user)
     if existing is not None:
@@ -263,8 +170,8 @@ def get_or_create_owned_workspace(db: Session, user: User) -> Workspace:
         )
         ws = resolve_owned_workspace(db, user)
         if ws is None:
-            # Only possible if the conflict wasn't actually the ownership
-            # index (e.g. a transient DB error) — surface it rather than loop.
+            # Only possible if the conflict wasn't the ownership index (e.g. a
+            # transient DB error) — surface it rather than loop.
             raise
     return ws
 
@@ -273,63 +180,12 @@ def get_or_create_owned_workspace(db: Session, user: User) -> Workspace:
 # Access verification
 # ---------------------------------------------------------------------------
 
-def resolve_user_role(db: Session, workspace: Workspace, authorization: Optional[str]) -> Optional[str]:
-    """Return the caller's role in this workspace from their identity bearer.
-
-    Placement AI v2.0: the primary check is direct ownership
-    (`workspace.owner_user_id == user.id`) — no role hierarchy, since a
-    student's personal workspace has exactly one human. Falls back to the
-    legacy WorkspaceMembership row, then legacy email-based access
-    (creator_email → owner, collaborator → member/viewer), which still matter
-    for workspaces with no owner_user_id (machine-only, self-hosted, or a
-    user's non-canonical extra legacy workspace). Returns None if the caller
-    has no identity or no access.
-    """
-    bearer = extract_bearer(authorization)
-    if not bearer:
-        return None
-    claims = verify_identity_claims(bearer)
-    if not claims:
-        return None
-    email = (claims.get("email") or "").strip().lower()
-    if not email:
-        return None
-
-    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
-    if user is not None:
-        if workspace.owner_user_id is not None and str(workspace.owner_user_id) == str(user.id):
-            return "owner"
-        membership = db.execute(
-            select(WorkspaceMembership).where(
-                WorkspaceMembership.workspace_id == workspace.id,
-                WorkspaceMembership.user_id == user.id,
-            )
-        ).scalar_one_or_none()
-        if membership is not None:
-            return membership.role
-
-    # Legacy email fallbacks (pre-reconciliation access).
-    if workspace.creator_email and workspace.creator_email.strip().lower() == email:
-        return "owner"
-    for c in (workspace.collaborators or []):
-        if c.email == email:
-            return "member" if (c.role or "editor") == "editor" else "viewer"
-    return None
-
-
 def resolve_machine_token(db: Session, token: str):
     """Map a machine token to (workspace, node) — the single source of truth.
 
-    Two credential classes exist: the shared workspace token
-    (workspaces.password_hash, legacy + manual connections) and per-node
-    workspace bearer tokens. This helper is used by
-    BOTH the access check and /v1/token/resolve so the two can never disagree
-    about what a token means (the failure mode behind "agn connect says
-    invalid token while the same token heartbeats fine").
-
-    Returns (workspace, node|None), or (None, None) when the token matches
-    nothing. `node` is set only for node tokens — callers use it to attribute
-    joins to a device.
+    Used by BOTH the access check and /v1/token/resolve so the two can never
+    disagree about what a token means. `node` is always None now that per-node
+    tokens are gone; the tuple shape is kept for the callers that unpack it.
     """
     if not token:
         return None, None
@@ -344,38 +200,50 @@ def resolve_machine_token(db: Session, token: str):
     return None, None
 
 
+def is_workspace_owner(db: Session, workspace: Workspace, authorization: Optional[str]) -> bool:
+    """True if the verified bearer belongs to this workspace's owner.
+
+    The identity is taken from the token's claims and matched against
+    `workspace.owner_user_id`. A workspace with no owner has no human who can
+    reach it — only its machine token.
+    """
+    if workspace.owner_user_id is None:
+        return False
+    bearer = extract_bearer(authorization)
+    if not bearer:
+        return False
+    claims = verify_identity_claims(bearer)
+    if not claims:
+        return False
+    email = (claims.get("email") or "").strip().lower()
+    if not email:
+        return False
+    user = db.execute(select(User).where(User.email == email)).scalar_one_or_none()
+    if user is None:
+        return False
+    return str(workspace.owner_user_id) == str(user.id)
+
+
 def verify_workspace_access(
     workspace: Workspace,
     token: Optional[str],
     authorization: Optional[str],
     db: Optional[Session] = None,
-    min_role: Optional[str] = None,
 ) -> bool:
-    """The single access check. See module docstring for the rule order.
+    """The single access check: machine token, or the owner. Nothing else.
 
     `db` is optional — when omitted it is derived from the workspace's own
-    session (`object_session`), so the thin router wrappers keep their existing
-    3-arg signature and no call site has to change. `min_role`
-    (owner|admin|member|viewer) gates identity-based access; token (machine)
-    access is fully trusted and bypasses the role check.
+    session, so the thin router wrappers keep their 3-arg signature.
     """
-    # 1. Machine / legacy workspace token — fully trusted.
+    # 1. Machine token — agents, daemons, adapters.
     if workspace.password_hash and token and token == workspace.password_hash:
         return True
 
     if db is None:
         db = SqlaSession.object_session(workspace)
 
-    # 1b. Per-node token belonging to THIS workspace — the machine credential
-    # scoped: another workspace's node token does not pass.
-    # 2. Member identity (membership row or legacy email match).
-    if db is not None:
-        role = resolve_user_role(db, workspace, authorization)
-        if role is not None:
-            return role_at_least(role, min_role)
-
-    # 3. Open, non-enforced workspace — grandfathered.
-    if not workspace.password_hash and not workspace.require_login:
+    # 2. The owner, by verified identity.
+    if db is not None and is_workspace_owner(db, workspace, authorization):
         return True
 
     return False

@@ -57,7 +57,7 @@ class AuthMod(GuardMod):
         # holders (agents) bypass the role check, and anonymous access to an
         # open, non-enforced workspace is still allowed (both handled inside
         # verify_workspace_access).
-        if verify_workspace_access(workspace, token, authorization, db=db, min_role="member"):
+        if verify_workspace_access(workspace, token, authorization, db=db):
             event.network = str(workspace.id)
             return event
 

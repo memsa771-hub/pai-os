@@ -28,12 +28,10 @@ import type {
   TrashEntry,
   Workspace,
   WorkspaceAgent,
-  WorkspaceCollaborator,
   WorkspaceCustomSkill,
   WorkspaceFile,
-  WorkspaceInvitation,
   WorkspaceMe,
-  WorkspaceRole,
+
   WorkspaceSession,
 } from './types';
 import { eventToMessage } from './types';
@@ -1195,44 +1193,6 @@ class WorkspaceApi {
         agent_name: agentName,
         model,
       }),
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Invitations (stubs — not yet event-native)
-  // ---------------------------------------------------------------------------
-
-  async createInvitation(_targetAgentName: string, _expiresInHours = 168): Promise<WorkspaceInvitation> {
-    throw new Error('Invitations are not yet available in event-native mode');
-  }
-
-  async listInvitations(_status?: string): Promise<WorkspaceInvitation[]> {
-    return []; // Return empty list — invitations not yet migrated
-  }
-
-  // ---------------------------------------------------------------------------
-  // Collaborators (email-based sharing)
-  // ---------------------------------------------------------------------------
-
-  /** List email-based collaborators for this workspace. */
-  async listCollaborators(): Promise<{ collaborators: WorkspaceCollaborator[]; owner: string | null }> {
-    return this.request<{ collaborators: WorkspaceCollaborator[]; owner: string | null }>(
-      `/v1/workspaces/${this.workspaceId}/collaborators`
-    );
-  }
-
-  /** Add an email-based collaborator. */
-  async addCollaborator(email: string, role: string = 'editor'): Promise<WorkspaceCollaborator> {
-    return this.request<WorkspaceCollaborator>(`/v1/workspaces/${this.workspaceId}/collaborators`, {
-      method: 'POST',
-      body: JSON.stringify({ email, role }),
-    });
-  }
-
-  /** Remove an email-based collaborator. */
-  async removeCollaborator(email: string): Promise<void> {
-    await this.request<unknown>(`/v1/workspaces/${this.workspaceId}/collaborators/${encodeURIComponent(email)}`, {
-      method: 'DELETE',
     });
   }
 
