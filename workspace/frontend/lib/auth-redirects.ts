@@ -1,39 +1,53 @@
 import { desktopHost } from './desktop-host';
 
-// Central auth redirects for the workspace app.
+// Sign-in / sign-out entry points for the workspace app.
 //
-// Login lives on openagents.org (not inline Firebase on the workspace origin),
-// and logout must also end that central session — otherwise the login redirect
-// immediately re-authenticates. These helpers keep every "sign in" / "sign out"
-// entry point consistent. On localhost there's no central site, so we fall back
-// to the app's own Firebase flow / a plain sign-out for local development.
+// Placement AI serves its own login at /sign-in on this origin (email or
+// username + password, plus Google/GitHub OAuth — see app/sign-in/page.tsx).
+// These helpers used to bounce to a central openagents.org/login instead, a
+// leftover from the OpenAgents product: on localhost that path fell through to
+// a `fallbackSignIn` that is a no-op outside the desktop app, so the "Log in"
+// button on the workspace gate did nothing at all, and signing out left no way
+// back in. Everything now routes to the one login page that exists.
+//
+// The desktop app is the exception: the launcher owns the session and has its
+// own native sign-in UI, so the embedded view asks the host instead of
+// navigating itself.
 
-const CENTRAL = 'https://openagents.org';
-
-function isLocalhost(): boolean {
-  return typeof window !== 'undefined' && window.location.hostname === 'localhost';
-}
+const SIGN_IN_PATH = '/sign-in';
 
 /**
- * Send the user to the central login view. After they authenticate, it hands the
- * session back to this workspace and returns to where they started.
- * @param fallbackSignIn used only on localhost (inline Firebase Google popup).
+ * Send the user to the sign-in page.
+ *
+ * After a successful sign-in, /sign-in lands on `/`, which resolves the
+ * student's one workspace and redirects to it — so there is nothing to
+ * preserve in a returnTo.
+ *
+ * @param fallbackSignIn legacy parameter, kept so existing call sites compile;
+ *   the desktop host is consulted directly and the web path needs no callback.
  */
 export function goToCentralLogin(fallbackSignIn?: () => void): void {
   if (typeof window === 'undefined') return;
   const host = desktopHost();
   if (host) { host.signIn(); return; }
-  if (isLocalhost()) {
-    fallbackSignIn?.();
-    return;
+  void fallbackSignIn;
+  window.location.href = SIGN_IN_PATH;
+}
+
+/** Forget which workspace this browser last opened (see setWorkspaceCookie in
+ * app/[workspaceId]/page.tsx). Signing out should not leave "this browser has
+ * a workspace" behind for another 30 days. */
+function clearWorkspaceCookies(): void {
+  const expire = 'path=/;max-age=0;secure;samesite=lax;domain=.openagents.org';
+  for (const name of ['oa_workspace', 'oa_has_workspace']) {
+    document.cookie = `${name}=;${expire}`;
+    document.cookie = `${name}=;path=/;max-age=0`;   // host-only copy
   }
-  const returnTo = encodeURIComponent(window.location.href);
-  window.location.href = `${CENTRAL}/login?returnTo=${returnTo}`;
 }
 
 /**
- * Sign out on this origin, then end the central openagents.org session too and
- * land on the stable signed-out page (no auto re-login bounce).
+ * Sign out on this origin and land on the sign-in page, so signing back in is
+ * one click rather than a dead end.
  */
 export async function goToCentralLogout(signOut: () => Promise<void>): Promise<void> {
   try {
@@ -41,6 +55,9 @@ export async function goToCentralLogout(signOut: () => Promise<void>): Promise<v
   } catch {
     /* already signed out */
   }
-  if (typeof window === 'undefined' || isLocalhost() || desktopHost()) return;
-  window.location.href = `${CENTRAL}/logout`;
+  if (typeof document !== 'undefined') clearWorkspaceCookies();
+  // The launcher owns the desktop session: it clears its own and decides what
+  // the embedded view shows next.
+  if (typeof window === 'undefined' || desktopHost()) return;
+  window.location.href = SIGN_IN_PATH;
 }
