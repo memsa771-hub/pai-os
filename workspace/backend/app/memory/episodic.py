@@ -10,7 +10,7 @@ retrieval strategy onto both.
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -95,12 +95,15 @@ class EpisodicMemoryService:
         limit: int = 10,
         event_type: Optional[str] = None,
         since: Optional[datetime] = None,
+        event_types: Optional[Sequence[str]] = None,
     ) -> list[PaiEpisode]:
         stmt = select(PaiEpisode).where(
             PaiEpisode.workspace_id == workspace_id,
             PaiEpisode.status == "active",
         )
-        if event_type:
+        if event_types:
+            stmt = stmt.where(PaiEpisode.event_type.in_(list(event_types)))
+        elif event_type:
             stmt = stmt.where(PaiEpisode.event_type == event_type)
         if since is not None:
             stmt = stmt.where(PaiEpisode.occurred_at >= since)
@@ -108,11 +111,21 @@ class EpisodicMemoryService:
             stmt.order_by(PaiEpisode.occurred_at.desc()).limit(limit)
         ).scalars().all())
 
-    def search(self, workspace_id: str, query: str, limit: int = 10) -> list[PaiEpisode]:
+    def search(
+        self, workspace_id: str, query: str, limit: int = 10,
+        event_types: Optional[Sequence[str]] = None,
+    ) -> list[PaiEpisode]:
+        """Lexical search, optionally restricted to event types.
+
+        `event_types` uses an IN via SQLAlchemy's `in_()` — bound parameters,
+        never interpolated SQL.
+        """
         stmt = select(PaiEpisode).where(
             PaiEpisode.workspace_id == workspace_id,
             PaiEpisode.status == "active",
         )
+        if event_types:
+            stmt = stmt.where(PaiEpisode.event_type.in_(list(event_types)))
         term = (query or "").strip()
         if term:
             stmt = stmt.where(PaiEpisode.summary.ilike(f"%{term}%"))

@@ -31,6 +31,11 @@ from .index import MemoryIndex, MemoryRecord, SearchHit
 
 logger = logging.getLogger(__name__)
 
+# Canonical kind labels, matching MemoryRecord.kind. Defined here rather than
+# imported from retriever.py to keep the index layer free of that dependency.
+KIND_SEMANTIC = "semantic_memory"
+KIND_EPISODE = "episode"
+
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
 
@@ -185,22 +190,63 @@ class QdrantMemoryIndex(MemoryIndex):
     def _workspace_filter(workspace_id: str, kinds=None, filters=None, extra=None):
         """Mandatory pre-ranking filter. Workspace is never optional.
 
-        `filters` with a list value becomes MatchAny, so per-kind type filters
-        (`memory_type` for memories, `event_type` for episodes) must be OR'd
-        across kinds by the caller rather than AND'd here — an episode has no
-        `memory_type` and would be excluded by a bare AND.
+        Type filters are PER KIND, not global. `memory_type` exists only on
+        semantic points and `event_type` only on episodes, so AND-ing both
+        matched nothing — every point is missing one of them. The shape is:
+
+            workspace_id AND <version conditions> AND (
+                (kind=semantic_memory AND memory_type IN ...)
+                OR
+                (kind=episode         AND event_type  IN ...)
+            )
+
+        With one kind requested the OR collapses to that branch alone.
         """
         from qdrant_client import models
+
+        filters = filters or {}
+        kinds = tuple(kinds) if kinds else (KIND_SEMANTIC, KIND_EPISODE)
 
         must = [models.FieldCondition(
             key="workspace_id", match=models.MatchValue(value=workspace_id),
         )]
-        if kinds:
-            must.append(models.FieldCondition(
-                key="kind", match=models.MatchAny(any=list(kinds)),
+        for condition in (extra or []):
+            must.append(condition)
+
+        def branch(kind: str, type_field: str, values) -> models.Filter:
+            conditions = [models.FieldCondition(
+                key="kind", match=models.MatchValue(value=kind),
+            )]
+            if values:
+                conditions.append(models.FieldCondition(
+                    key=type_field, match=models.MatchAny(any=list(values)),
+                ))
+            return models.Filter(must=conditions)
+
+        branches = []
+        if KIND_SEMANTIC in kinds:
+            branches.append(branch(
+                KIND_SEMANTIC, "memory_type", filters.get("memory_type"),
             ))
-        for key, value in (filters or {}).items():
-            if value is None:
+        if KIND_EPISODE in kinds:
+            branches.append(branch(
+                KIND_EPISODE, "event_type", filters.get("event_type"),
+            ))
+
+        if len(branches) == 1:
+            # Single kind: inline its conditions rather than wrapping one
+            # branch in a should[], which Qdrant would treat as optional.
+            must.extend(branches[0].must)
+        elif branches:
+            # `should` alone means "at least one must match" in Qdrant, which
+            # is exactly the per-kind OR. Nested inside `must`, so the OR is
+            # required rather than merely preferred.
+            must.append(models.Filter(should=branches))
+
+        # Any remaining filter keys are kind-agnostic (e.g. status) and AND
+        # normally.
+        for key, value in filters.items():
+            if key in ("memory_type", "event_type") or value is None:
                 continue
             match = (
                 models.MatchAny(any=list(value))
@@ -208,8 +254,7 @@ class QdrantMemoryIndex(MemoryIndex):
                 else models.MatchValue(value=value)
             )
             must.append(models.FieldCondition(key=key, match=match))
-        for condition in (extra or []):
-            must.append(condition)
+
         return models.Filter(must=must)
 
     def _dense_version_conditions(self):

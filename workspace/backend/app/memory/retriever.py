@@ -87,7 +87,7 @@ class MemoryRetriever:
         kinds = kinds or (KIND_SEMANTIC, KIND_EPISODE)
 
         if not (query or "").strip():
-            return self._fallback(workspace_id, "", kinds, memory_types, limit)
+            return self._fallback(workspace_id, "", kinds, memory_types, limit, event_types)
 
         started = time.monotonic()
         # Separate fields per kind: an episode's `event_type` is not a
@@ -111,10 +111,10 @@ class MemoryRetriever:
                 "retrieval: index unavailable for workspace=%s — lexical fallback",
                 workspace_id, exc_info=True,
             )
-            return self._fallback(workspace_id, query, kinds, memory_types, limit)
+            return self._fallback(workspace_id, query, kinds, memory_types, limit, event_types)
 
         if not hits:
-            return self._fallback(workspace_id, query, kinds, memory_types, limit)
+            return self._fallback(workspace_id, query, kinds, memory_types, limit, event_types)
 
         # VALIDATE FIRST, then rerank. Three reasons the order matters:
         #
@@ -166,7 +166,7 @@ class MemoryRetriever:
         if result.is_empty():
             # Every hit was stale — the index is behind, so answer from
             # canonical data rather than returning nothing.
-            return self._fallback(workspace_id, query, kinds, memory_types, limit)
+            return self._fallback(workspace_id, query, kinds, memory_types, limit, event_types)
         return result
 
     # -- helpers -----------------------------------------------------------
@@ -183,22 +183,37 @@ class MemoryRetriever:
 
     def _fallback(
         self, workspace_id: str, query: str, kinds, memory_types, limit: int,
+        event_types=None,
     ) -> RetrievalResult:
-        """Existing lexical/structured behaviour. Always available."""
-        memory_type = memory_types[0] if memory_types and len(memory_types) == 1 else None
+        """Degraded lexical/structured retrieval. Always available.
+
+        Filters identically to the hybrid path. Previously this dropped
+        `event_types` entirely and applied only the FIRST of several
+        `memory_types`, so the same query silently meant something different
+        whenever Qdrant was down — the worst kind of fallback, because the
+        results still look plausible.
+        """
         result = RetrievalResult(mode="lexical_fallback" if query else "empty")
 
         if KIND_SEMANTIC in kinds:
             result.memories = (
-                self.memories.search(workspace_id, query, limit=limit, memory_type=memory_type)
+                self.memories.search(
+                    workspace_id, query, limit=limit, memory_types=memory_types,
+                )
                 if query else
-                self.memories.list_memories(workspace_id, memory_type=memory_type, limit=limit)
+                self.memories.list_memories(
+                    workspace_id, limit=limit, memory_types=memory_types,
+                )
             )
         if KIND_EPISODE in kinds:
             result.episodes = (
-                self.episodes.search(workspace_id, query, limit=limit)
+                self.episodes.search(
+                    workspace_id, query, limit=limit, event_types=event_types,
+                )
                 if query else
-                self.episodes.recent(workspace_id, limit=limit)
+                self.episodes.recent(
+                    workspace_id, limit=limit, event_types=event_types,
+                )
             )
 
         logger.info(

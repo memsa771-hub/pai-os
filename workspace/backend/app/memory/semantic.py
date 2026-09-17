@@ -13,7 +13,7 @@ us to stop using it, not to destroy the audit trail — and every read filters o
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -115,12 +115,15 @@ class MemoryService:
         workspace_id: str,
         memory_type: Optional[str] = None,
         limit: int = 50,
+        memory_types: Optional[Sequence[str]] = None,
     ) -> list[PaiMemory]:
         stmt = select(PaiMemory).where(
             PaiMemory.workspace_id == workspace_id,
             PaiMemory.status == "active",
         )
-        if memory_type:
+        if memory_types:
+            stmt = stmt.where(PaiMemory.memory_type.in_(list(memory_types)))
+        elif memory_type:
             stmt = stmt.where(PaiMemory.memory_type == memory_type)
         return list(self.db.execute(
             stmt.order_by(PaiMemory.importance.desc(), PaiMemory.created_at.desc())
@@ -130,18 +133,21 @@ class MemoryService:
     def search(
         self, workspace_id: str, query: str, limit: int = 10,
         memory_type: Optional[str] = None,
+        memory_types: Optional[Sequence[str]] = None,
     ) -> list[PaiMemory]:
-        """Lexical search — the sparse half of the eventual hybrid retrieval.
+        """Lexical search — the degraded-mode counterpart to hybrid retrieval.
 
-        Deliberately simple and honest about it: a LIKE scan, not a pretend
-        semantic search. The dense half arrives via MemoryIndex in Phase 2 and
-        fuses with this, rather than replacing it.
+        `memory_types` (plural) exists so fallback filters identically to the
+        hybrid path: the same query must not change meaning just because
+        Qdrant is unavailable.
         """
         stmt = select(PaiMemory).where(
             PaiMemory.workspace_id == workspace_id,
             PaiMemory.status == "active",
         )
-        if memory_type:
+        if memory_types:
+            stmt = stmt.where(PaiMemory.memory_type.in_(list(memory_types)))
+        elif memory_type:
             stmt = stmt.where(PaiMemory.memory_type == memory_type)
         term = (query or "").strip()
         if term:

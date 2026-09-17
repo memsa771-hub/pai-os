@@ -292,25 +292,119 @@ async def test_dimension_mismatch_is_detected(index):
         await index.ensure_collection()
 
 
-@pytest.mark.asyncio
-async def test_event_type_and_memory_type_filter_separately(index):
-    """An episode's event_type must not be matched by a memory_type filter."""
-    workspace = str(uuid.uuid4())
+# ---------------------------------------------------------------------------
+# Per-kind type filtering
+#
+# The rule: a type filter constrains ONLY its own kind. A semantic point has no
+# `event_type` and an episode has no `memory_type`, so AND-ing both matched
+# nothing at all. Each kind is filtered by its own field, OR'd together.
+# ---------------------------------------------------------------------------
+
+async def _seed_mixed(index, workspace):
     await index.index([
-        _record(workspace, "m1", "Wants Germany for masters",
+        _record(workspace, "m_pref", "Wants Germany for masters",
                 memory_type="preference"),
-        _record(workspace, "e1", "Removed University X tuition too high",
+        _record(workspace, "m_goal", "Goal is Germany research career",
+                memory_type="goal"),
+        _record(workspace, "e_removed", "Removed University X Germany tuition",
                 kind="episode", event_type="shortlist_removed"),
+        _record(workspace, "e_decided", "Decided Germany intake Fall 2027",
+                kind="episode", event_type="decision_made"),
     ])
 
-    by_memory_type = await index.search(
-        workspace, "Germany University", limit=10,
-        filters={"memory_type": ["preference"]},
-    )
-    assert all(h.kind == "semantic_memory" for h in by_memory_type)
 
-    by_event_type = await index.search(
-        workspace, "Germany University", limit=10,
+@pytest.mark.asyncio
+async def test_memory_types_filter_only_constrains_semantic(index):
+    """Episodes must NOT be excluded for lacking `memory_type`."""
+    workspace = str(uuid.uuid4())
+    await _seed_mixed(index, workspace)
+
+    hits = await index.search(
+        workspace, "Germany", limit=10, filters={"memory_type": ["preference"]},
+    )
+    found = {h.id for h in hits}
+
+    assert "m_pref" in found
+    assert "m_goal" not in found, "memory_type filter did not constrain semantic points"
+    # Episodes are unaffected by a memory_type filter.
+    assert {"e_removed", "e_decided"} <= found
+
+
+@pytest.mark.asyncio
+async def test_event_types_filter_only_constrains_episodes(index):
+    """Semantic points must NOT be excluded for lacking `event_type`."""
+    workspace = str(uuid.uuid4())
+    await _seed_mixed(index, workspace)
+
+    hits = await index.search(
+        workspace, "Germany", limit=10, filters={"event_type": ["decision_made"]},
+    )
+    found = {h.id for h in hits}
+
+    assert "e_decided" in found
+    assert "e_removed" not in found, "event_type filter did not constrain episodes"
+    assert {"m_pref", "m_goal"} <= found
+
+
+@pytest.mark.asyncio
+async def test_both_filters_apply_per_kind_simultaneously(index):
+    """The case that previously returned NOTHING at all."""
+    workspace = str(uuid.uuid4())
+    await _seed_mixed(index, workspace)
+
+    hits = await index.search(
+        workspace, "Germany", limit=10,
+        filters={"memory_type": ["preference"], "event_type": ["decision_made"]},
+    )
+    found = {h.id for h in hits}
+
+    assert found, "AND-ing both type filters excluded every point"
+    assert found == {"m_pref", "e_decided"}
+
+
+@pytest.mark.asyncio
+async def test_single_kind_with_its_own_filter(index):
+    """One kind requested collapses to the simple equivalent filter."""
+    workspace = str(uuid.uuid4())
+    await _seed_mixed(index, workspace)
+
+    hits = await index.search(
+        workspace, "Germany", limit=10, kinds=("episode",),
         filters={"event_type": ["shortlist_removed"]},
     )
-    assert all(h.kind == "episode" for h in by_event_type)
+    assert {h.id for h in hits} == {"e_removed"}
+
+
+@pytest.mark.asyncio
+async def test_kind_restriction_without_type_filters(index):
+    workspace = str(uuid.uuid4())
+    await _seed_mixed(index, workspace)
+
+    hits = await index.search(workspace, "Germany", limit=10, kinds=("semantic_memory",))
+    assert {h.id for h in hits} == {"m_pref", "m_goal"}
+
+
+@pytest.mark.asyncio
+async def test_workspace_isolation_holds_with_type_filters(index):
+    """Isolation must survive the more complex nested filter."""
+    ws_a, ws_b = str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_mixed(index, ws_a)
+    await _seed_mixed(index, ws_b)
+
+    hits = await index.search(
+        ws_a, "Germany", limit=20,
+        filters={"memory_type": ["preference"], "event_type": ["decision_made"]},
+    )
+    assert {h.id for h in hits} == {"m_pref", "e_decided"}
+    # Every returned point really belongs to workspace A.
+    from app.memory.index_qdrant import point_id_for
+
+    expected_points = {
+        point_id_for(ws_a, "semantic_memory", "m_pref"),
+        point_id_for(ws_a, "episode", "e_decided"),
+    }
+    points = await index._get_client().retrieve(
+        collection_name=index._collection, ids=list(expected_points),
+        with_payload=True,
+    )
+    assert all(p.payload["workspace_id"] == ws_a for p in points)
