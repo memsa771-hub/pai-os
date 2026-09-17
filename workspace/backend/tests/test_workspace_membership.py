@@ -13,6 +13,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 import app.access as access
@@ -250,12 +251,23 @@ class TestAgentMachineTokenAccess:
         assert self._process(db, ws, bearer="a") is not None
 
     def test_pai_reaches_the_workspace_api_with_the_machine_token(self, client, db, monkeypatch):
-        """PAI Counselor/Operator call the real HTTP API with password_hash."""
+        """PAI Counselor/Operator call the real HTTP API with password_hash.
+
+        The token is read from the database, not from the response: that
+        endpoint no longer hands it to any client (see test_stream_ticket.py).
+        """
         _stub_identity(monkeypatch, {"a": _claims("a@x.com")})
         _seed_user(db, "a@x.com", "usera")
-        data = client.get("/v1/account/workspace", headers=_auth("a")).json()["data"]
+        resp = client.get("/v1/account/workspace", headers=_auth("a"))
+        data = resp.json()["data"]
+        assert "token" not in data
+
+        ws = db.execute(select(Workspace).where(
+            Workspace.id == data["workspaceId"])).scalar_one()
+        assert ws.password_hash not in resp.text
+
         r = client.get(f"/v1/workspaces/{data['workspaceId']}",
-                       headers={"X-Workspace-Token": data["token"]})
+                       headers={"X-Workspace-Token": ws.password_hash})
         assert r.status_code == 200
 
 
@@ -278,7 +290,7 @@ class TestMeEndpoint:
         """An agent on the machine token is authorized but is not a person."""
         me = client.get(
             f"/v1/workspaces/{workspace['id']}/me",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         ).json()["data"]
         assert me["authenticated"] is False
         assert me["isOwner"] is False

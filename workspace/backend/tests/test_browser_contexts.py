@@ -24,6 +24,7 @@ def _create_workspace(client):
         "id": data["workspaceId"],
         "slug": data["slug"],
         "token": data["token"],
+        "session_id": data["sessionId"],
     }
 
 
@@ -43,8 +44,7 @@ def _open_tab(client, workspace, manager, url="https://example.com"):
     resp = client.post("/v1/browser/tabs", json={
         "url": url,
         "network": workspace["id"],
-        "source": "human:user",
-    }, headers={"X-Workspace-Token": workspace["token"]})
+    }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
     assert resp.status_code == 200, resp.json()
     return resp.json()["data"]
 
@@ -53,7 +53,7 @@ def _persist_tab(client, workspace, tab_id, name):
     return client.post(
         f"/v1/browser/tabs/{tab_id}/persist",
         json={"name": name},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
 
 
@@ -128,7 +128,7 @@ class TestListContexts:
         resp = client.get(
             "/v1/browser/contexts",
             params={"network": ws["id"]},
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -143,7 +143,7 @@ class TestListContexts:
         resp = client.get(
             "/v1/browser/contexts",
             params={"network": ws["id"]},
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["total"] == 0
@@ -164,7 +164,7 @@ class TestDeleteContext:
 
         resp = client.delete(
             f"/v1/browser/contexts/{ctx_id}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "deleted"
@@ -173,7 +173,7 @@ class TestDeleteContext:
         resp = client.get(
             "/v1/browser/contexts",
             params={"network": ws["id"]},
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"]["total"] == 0
 
@@ -190,20 +190,20 @@ class TestDeleteContext:
         # Tab should have context_id
         resp = client.get(
             f"/v1/browser/tabs/{tab['id']}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"]["context_id"] == ctx_id
 
         # Delete context
         client.delete(
             f"/v1/browser/contexts/{ctx_id}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
 
         # Tab should no longer have context_id
         resp = client.get(
             f"/v1/browser/tabs/{tab['id']}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"].get("context_id") is None
 
@@ -225,16 +225,15 @@ class TestOpenTabWithContext:
         # Close the original tab
         client.delete(
             f"/v1/browser/tabs/{tab['id']}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
 
         # Open a new tab with the saved context
         resp = client.post("/v1/browser/tabs", json={
             "url": "about:blank",
             "network": ws["id"],
-            "source": "human:user",
             "context_id": ctx_id,
-        }, headers={"X-Workspace-Token": ws["token"]})
+        }, headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
         new_tab = resp.json()["data"]
         assert new_tab["context_id"] == ctx_id
@@ -248,9 +247,8 @@ class TestOpenTabWithContext:
         resp = client.post("/v1/browser/tabs", json={
             "url": "about:blank",
             "network": ws["id"],
-            "source": "human:user",
             "context_id": "nonexistent-id",
-        }, headers={"X-Workspace-Token": ws["token"]})
+        }, headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 404
         assert "context not found" in resp.json()["message"].lower()
 
@@ -271,14 +269,14 @@ class TestUnpersistTab:
         # Tab should be persistent
         resp = client.get(
             f"/v1/browser/tabs/{tab['id']}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"]["context_id"] is not None
 
         # Unpersist
         resp = client.post(
             f"/v1/browser/tabs/{tab['id']}/unpersist",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"].get("context_id") is None
@@ -287,7 +285,7 @@ class TestUnpersistTab:
         resp = client.get(
             "/v1/browser/contexts",
             params={"network": ws["id"]},
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"]["total"] == 0
 
@@ -300,7 +298,7 @@ class TestUnpersistTab:
         tab = _open_tab(client, ws, manager)
         resp = client.post(
             f"/v1/browser/tabs/{tab['id']}/unpersist",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 400
         assert "not persistent" in resp.json()["message"]
@@ -322,7 +320,7 @@ class TestCloseTabWithContext:
         # Close the tab
         resp = client.delete(
             f"/v1/browser/tabs/{tab['id']}",
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["context_preserved"] is True
@@ -331,7 +329,7 @@ class TestCloseTabWithContext:
         resp = client.get(
             "/v1/browser/contexts",
             params={"network": ws["id"]},
-            headers={"X-Workspace-Token": ws["token"]},
+            headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]},
         )
         assert resp.json()["data"]["total"] == 1
         assert resp.json()["data"]["contexts"][0]["id"] == ctx_id

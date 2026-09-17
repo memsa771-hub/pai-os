@@ -3,8 +3,8 @@ async def list_tabs(ctx, _args):
 
 
 async def open_tab(ctx, args):
-    return await ctx.api.post("/v1/browser/tabs", json={
-        "network": ctx.workspace_id, "source": ctx.source,
+    return await ctx.api.post("/v1/browser/tabs", actor=ctx.source, json={
+        "network": ctx.workspace_id,
         "url": args.get("url", "about:blank"), "context_id": args.get("context_id"),
     })
 

@@ -35,7 +35,7 @@ def _remove(client, workspace, agent_name):
             "agent_name": agent_name,
             "network": workspace["id"],
         },
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
 
 
@@ -48,7 +48,7 @@ def _heartbeat(client, workspace, agent_name, session_id=None):
 
 def _discover_agents(client, workspace):
     resp = client.get(
-        "/v1/discover", params={"network": workspace["id"]}, headers={"X-Workspace-Token": workspace["token"]}
+        "/v1/discover", params={"network": workspace["id"]}, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]}
     )
     assert resp.status_code == 200
     return [a["address"] for a in resp.json()["data"]["agents"]]
@@ -146,7 +146,7 @@ class TestReaddCloudAgent:
                 "model": "gpt-4o-mini",
                 "api_key": "sk-test-435",
             },
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
 
     def test_readd_reactivates_removed_cloud_agent(self, client, workspace):

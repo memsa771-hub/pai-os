@@ -49,6 +49,9 @@ from openagents.core.onm_events import Event
 
 logger = logging.getLogger(__name__)
 
+
+from app.event_identity import request_actor_source as _request_actor_source
+
 router = APIRouter(prefix="/v1/browser", tags=["Browser"])
 
 # Browser Fabric caps ephemeral (non-persistent) sessions per API key.
@@ -173,7 +176,6 @@ def _orphan_session_tombstone(db: Session, tab: BrowserTab, error: str) -> None:
 class OpenTabRequest(BaseModel):
     url: Optional[str] = "about:blank"
     network: str
-    source: Optional[str] = "human:user"
     context_id: Optional[str] = None          # open with a persistent context (already logged in)
 
 
@@ -380,6 +382,8 @@ async def open_tab(
     body: OpenTabRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     workspace = _resolve_workspace(db, body.network)
@@ -387,6 +391,13 @@ async def open_tab(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     # Resolve persistent context if requested
     bb_context_id = None
@@ -459,7 +470,7 @@ async def open_tab(
         workspace_id=str(workspace.id),
         url=result.get("url", body.url or "about:blank"),
         title=result.get("title"),
-        created_by=body.source or "human:user",
+        created_by=actor_source,
         shared_with=[],
         context_id=body.context_id,
         session_id=session_id,
@@ -477,7 +488,7 @@ async def open_tab(
         workspace_id=str(workspace.id),
         tab_id=tab_id,
         session_id=manager.get_session_id(tab_id),
-        opened_by=body.source or "human:user",
+        opened_by=actor_source,
     )
     db.add(usage)
 
@@ -489,7 +500,7 @@ async def open_tab(
     try:
         event = Event(
             type="workspace.browser.tab.opened",
-            source=body.source or "human:user",
+            source=actor_source,
             target="core",
             payload={"tab_id": tab_id, "url": record.url},
         )

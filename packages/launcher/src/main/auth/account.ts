@@ -37,8 +37,9 @@ export interface AccountWorkspace {
   workspaceId: string
   name: string
   slug: string
-  /** Shared workspace access token; null for a viewer or a tokenless workspace. */
-  token: string | null
+  // No `token`: the backend stopped returning the workspace machine token to
+  // clients (see workspace/backend/app/stream_ticket.py). Nothing here read
+  // it — the embedded workspace view authenticates with the Supabase bearer.
   role: "owner" | "admin" | "member" | "viewer"
   lastActivityAt: string | null
 }

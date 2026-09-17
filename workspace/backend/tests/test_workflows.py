@@ -3,7 +3,7 @@
 
 
 def _headers(workspace):
-    return {"X-Workspace-Token": workspace["token"]}
+    return {"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]}
 
 
 def _steps():

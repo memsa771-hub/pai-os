@@ -36,7 +36,7 @@ class TestJoinNetwork:
         client.post("/v1/leave", json={
             "agent_name": "agent-beta",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         # Rejoin
         resp = client.post("/v1/join", json={
             "agent_name": "agent-beta",
@@ -86,7 +86,7 @@ class TestJoinNetwork:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "network.agent.join",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         assert len(events) >= 1
         join_event = events[-1]
@@ -165,7 +165,7 @@ class TestJoinTokenOnly:
 
         # Verify agent appears in discover with correct type
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = disc.json()["data"]["agents"]
         claude_agents = [a for a in agents if a["address"] == "openagents:claude-bot"]
         assert len(claude_agents) == 1
@@ -196,7 +196,7 @@ class TestLeaveNetwork:
         resp = client.post("/v1/leave", json={
             "agent_name": "agent-beta",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "offline"
 
@@ -205,7 +205,7 @@ class TestLeaveNetwork:
         resp = client.post("/v1/leave", json={
             "agent_name": "unknown-agent",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         # In event model, the event is recorded even if agent wasn't a member
         assert resp.status_code == 200
 
@@ -225,7 +225,7 @@ class TestHeartbeat:
         resp = client.post("/v1/heartbeat", json={
             "agent_name": "agent-beta",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "online"
 
@@ -234,7 +234,7 @@ class TestHeartbeat:
         resp = client.post("/v1/heartbeat", json={
             "agent_name": "unknown-agent",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         # In event model, the event is recorded even if agent wasn't a member
         assert resp.status_code == 200
 
@@ -246,7 +246,7 @@ class TestDiscover:
         """Discover shows workspace agents."""
         # The workspace fixture already has agent-alpha as master
         resp = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         agents = data["agents"]
@@ -257,7 +257,7 @@ class TestDiscover:
     def test_discover_channels(self, client, workspace):
         """Discover shows workspace channels."""
         resp = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
         channels = data["channels"]
         assert len(channels) >= 1
@@ -276,7 +276,7 @@ class TestDiscover:
         })
 
         resp = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = resp.json()["data"]["agents"]
         names = [a["address"] for a in agents]
         assert "openagents:agent-beta" in names
@@ -315,7 +315,7 @@ class TestDiscover:
         db.commit()
 
         resp = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         agents = resp.json()["data"]["agents"]
         names = [a["address"] for a in agents]
@@ -355,7 +355,7 @@ class TestNetworkProfile:
     def test_profile_returns_metadata(self, client, workspace):
         """Profile returns workspace metadata and capabilities."""
         resp = client.get("/v1/profile", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["id"] == workspace["id"]
@@ -424,7 +424,7 @@ class TestSessionEnforcement:
             "agent_name": "agent-sess3",
             "network": workspace["id"],
             "session_id": stale_session,
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert hb.status_code == 401
         assert "session_revoked" in hb.json().get("message", "").lower()
 
@@ -441,7 +441,7 @@ class TestSessionEnforcement:
             "agent_name": "agent-sess4",
             "network": workspace["id"],
             "session_id": sid,
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert hb.status_code == 200
 
     def test_heartbeat_without_session_id_legacy_ok(self, client, workspace):
@@ -456,7 +456,7 @@ class TestSessionEnforcement:
             "agent_name": "agent-sess5",
             "network": workspace["id"],
             # no session_id
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert hb.status_code == 200
 
     def test_message_post_with_stale_session_is_rejected(self, client, workspace):

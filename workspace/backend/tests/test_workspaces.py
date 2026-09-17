@@ -54,7 +54,7 @@ class TestGetWorkspace:
     def test_get_workspace_by_id(self, client, workspace):
         """Fetch workspace by ID."""
         resp = client.get(f"/v1/workspaces/{workspace['id']}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["workspaceId"] == workspace["id"]
@@ -63,14 +63,14 @@ class TestGetWorkspace:
     def test_get_workspace_by_slug(self, client, workspace):
         """Fetch workspace by slug."""
         resp = client.get(f"/v1/workspaces/{workspace['slug']}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["workspaceId"] == workspace["id"]
 
     def test_get_workspace_includes_agents(self, client, workspace):
         """Workspace detail includes agent list."""
         resp = client.get(f"/v1/workspaces/{workspace['id']}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = resp.json()["data"]["agents"]
         assert len(agents) >= 1
         assert agents[0]["agentName"] == "agent-alpha"
@@ -89,7 +89,7 @@ class TestUpdateWorkspace:
         """Update workspace name."""
         resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
             "name": "Updated Name",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["name"] == "Updated Name"
 
@@ -97,14 +97,14 @@ class TestUpdateWorkspace:
         """Update workspace settings."""
         resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
             "settings": {"theme": "dark"},
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["settings"]["theme"] == "dark"
 
     def test_browser_enabled_defaults_false(self, client, workspace):
         """A fresh workspace has browserEnabled = false."""
         resp = client.get(f"/v1/workspaces/{workspace['id']}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["browserEnabled"] is False
 
@@ -112,7 +112,7 @@ class TestUpdateWorkspace:
         """Flip browser_enabled on; response surfaces it at the top level."""
         resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
             "browser_enabled": True,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["browserEnabled"] is True
@@ -123,19 +123,19 @@ class TestUpdateWorkspace:
         """A subsequent GET reflects the persisted toggle."""
         client.patch(f"/v1/workspaces/{workspace['id']}",
                      json={"browser_enabled": True},
-                     headers={"X-Workspace-Token": workspace["token"]})
+                     headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         resp = client.get(f"/v1/workspaces/{workspace['id']}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.json()["data"]["browserEnabled"] is True
 
     def test_browser_enabled_preserves_other_settings(self, client, workspace):
         """Flipping browser_enabled doesn't trample unrelated settings keys."""
         client.patch(f"/v1/workspaces/{workspace['id']}",
                      json={"settings": {"theme": "dark"}},
-                     headers={"X-Workspace-Token": workspace["token"]})
+                     headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
             "browser_enabled": True,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
         assert data["settings"]["theme"] == "dark"
         assert data["settings"]["browser_enabled"] is True
@@ -145,10 +145,10 @@ class TestUpdateWorkspace:
         """Toggling off persists the false value."""
         client.patch(f"/v1/workspaces/{workspace['id']}",
                      json={"browser_enabled": True},
-                     headers={"X-Workspace-Token": workspace["token"]})
+                     headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         resp = client.patch(f"/v1/workspaces/{workspace['id']}", json={
             "browser_enabled": False,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.json()["data"]["browserEnabled"] is False
 
 
@@ -159,7 +159,7 @@ class TestDeleteWorkspace:
         """Soft-delete sets status to 'deleted'."""
         resp = client.delete(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "deleted"
@@ -169,7 +169,7 @@ class TestDeleteWorkspace:
         headers = _as(monkeypatch, email="test@example.com")
         client.delete(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         resp = client.get("/v1/workspaces", headers=headers)
         ids = [w["workspaceId"] for w in resp.json()["data"]]
@@ -192,7 +192,7 @@ class TestChannelOrchestrationMode:
         return client.patch(
             f"/v1/workspaces/{workspace['id']}/channels/{workspace['channel']['name']}",
             json=body,
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
 
     def test_default_mode_is_dynamic(self, client, workspace):
@@ -216,7 +216,7 @@ class TestChannelOrchestrationMode:
         # Round-trip via GET
         got = client.get(
             f"/v1/workspaces/{workspace['id']}/channels/{workspace['channel']['name']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert got.json()["data"]["orchestrationInstruction"] == plan
 
@@ -252,7 +252,7 @@ class TestGenerateMemberDescription:
         mock_client.messages.create.return_value = resp
         mock_get_client.return_value = (mock_client, "anthropic")
 
-        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"]})
+        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert r.status_code == 200
         desc = r.json()["data"]["description"]
         # Wrapping quotes and trailing period are stripped.
@@ -260,17 +260,17 @@ class TestGenerateMemberDescription:
 
     @patch("app.mods.workspace_mod._get_router_api_key", return_value="")
     def test_generate_without_key_returns_400(self, _k, client, workspace):
-        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"]})
+        r = client.post(self._url(workspace), headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert r.status_code == 400
 
     def test_generate_unknown_member_returns_404(self, client, workspace):
-        r = client.post(self._url(workspace, "nope-bot"), headers={"X-Workspace-Token": workspace["token"]})
+        r = client.post(self._url(workspace, "nope-bot"), headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert r.status_code == 404
 
         # Workspace must still exist
         get = client.get(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert get.status_code == 200
 
@@ -286,7 +286,7 @@ class TestGenerateMemberDescription:
         """Deletion by slug also works with a valid token."""
         resp = client.delete(
             f"/v1/workspaces/{workspace['slug']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "deleted"
@@ -303,11 +303,11 @@ class TestGenerateMemberDescription:
         """After deletion the workspace returns 404 on GET."""
         client.delete(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         resp = client.get(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -350,7 +350,7 @@ class TestRotateToken:
         """Rotating with current token returns a new token."""
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/rotate-token",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -398,7 +398,7 @@ class TestRotateToken:
         """After rotation, agents can join using the new token."""
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/rotate-token",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         new_token = resp.json()["data"]["token"]
 
@@ -426,14 +426,14 @@ class TestRemoveMember:
         # Remove it
         resp = client.delete(
             f"/v1/workspaces/{workspace['id']}/members/agent-to-remove",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         assert resp.json()["data"]["removed"] is True
 
         # Verify agent no longer in discover
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         names = [a["address"] for a in disc.json()["data"]["agents"]]
         assert "openagents:agent-to-remove" not in names
 
@@ -441,7 +441,7 @@ class TestRemoveMember:
         """Removing nonexistent member returns 404."""
         resp = client.delete(
             f"/v1/workspaces/{workspace['id']}/members/nonexistent-agent",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -468,7 +468,7 @@ class TestMemberDisplayName:
         return client.patch(
             f"/v1/workspaces/{workspace['id']}/members/{name}",
             json={"display_name": display_name},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
 
     def test_set_display_name_any_script(self, client, workspace):
@@ -479,7 +479,7 @@ class TestMemberDisplayName:
         assert resp.json()["data"]["displayName"] == "小明 🤖"
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = {a["address"]: a for a in disc.json()["data"]["agents"]}
         assert agents["openagents:agent-alpha"]["display_name"] == "小明 🤖"
 
@@ -582,7 +582,7 @@ class TestMemberDisplayName:
         assert resp.status_code != 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         names = [a["address"] for a in disc.json()["data"]["agents"]]
         assert "openagents:ming" not in names
 
@@ -633,7 +633,7 @@ class TestMemberDisplayName:
         assert resp.status_code != 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         names = [a["address"] for a in disc.json()["data"]["agents"]]
         assert not any("bad" in n for n in names)
 
@@ -650,7 +650,7 @@ class TestMemberDisplayName:
         assert resp.status_code == 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         by_addr = {a["address"]: a for a in disc.json()["data"]["agents"]}
         assert by_addr["openagents:evt-agent"]["role"] == "member"
 
@@ -692,7 +692,7 @@ class TestMemberDisplayName:
         assert resp.status_code == 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         by_addr = {a["address"]: a for a in disc.json()["data"]["agents"]}
         assert by_addr["openagents:evt-b"]["role"] == "member"
 
@@ -712,7 +712,7 @@ class TestMemberModel:
         return client.patch(
             f"/v1/workspaces/{workspace['id']}/members/{name}",
             json={"model": model},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
 
     def test_set_model_and_surface_in_discover(self, client, workspace):
@@ -722,7 +722,7 @@ class TestMemberModel:
         assert resp.json()["data"]["model"] == "claude-opus-5"
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = {a["address"]: a for a in disc.json()["data"]["agents"]}
         assert agents["openagents:agent-alpha"]["model"] == "claude-opus-5"
 
@@ -730,7 +730,7 @@ class TestMemberModel:
         resp = client.get("/v1/events", params={
             "network": workspace["id"], "type": "workspace.agent.control",
             "sort": "desc", "limit": 10,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         body = resp.json()["data"]
         events = body.get("events") if isinstance(body, dict) else body
         assert any(

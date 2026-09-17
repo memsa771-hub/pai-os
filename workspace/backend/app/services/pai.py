@@ -351,9 +351,16 @@ class WorkspaceApi:
     async def request(
         self, method: str, path: str, *,
         json: Optional[dict] = None, params: Optional[dict] = None,
+        actor: Optional[str] = None,
     ) -> dict:
         """Perform a request; return {"ok": True, "data": ...} or
-        {"ok": False, "error": ...}. Never raises."""
+        {"ok": False, "error": ...}. Never raises.
+
+        `actor` is the calling tool's ToolContext principal (e.g.
+        "openagents:pai-operator"). It travels in a header signed with a
+        per-process secret rather than in the request body, because a body
+        field is something any caller can write — see app/event_identity.py.
+        """
         # Imported lazily: app.main transitively imports this module.
         from app.main import app
 
@@ -364,10 +371,14 @@ class WorkspaceApi:
                 base_url="http://pai.internal",
                 timeout=30,
             ) as client:
+                headers = {"X-Workspace-Token": self.token}
+                if actor:
+                    from app.event_identity import INTERNAL_ACTOR_HEADER, mint_internal_actor
+                    headers[INTERNAL_ACTOR_HEADER] = mint_internal_actor(actor)
                 resp = await client.request(
                     method, path,
                     json=json, params=params,
-                    headers={"X-Workspace-Token": self.token},
+                    headers=headers,
                 )
         except Exception as exc:
             logger.exception("pai api: %s %s failed", method, path)
@@ -391,11 +402,12 @@ class WorkspaceApi:
         async with httpx.AsyncClient(transport=transport, base_url="http://pai.internal", timeout=30) as client:
             return await client.request(method, path, headers={"X-Workspace-Token": self.token}, **kwargs)
 
-    async def get(self, path: str, **params: Any) -> dict:
-        return await self.request("GET", path, params=params or None)
+    async def get(self, path: str, *, actor: Optional[str] = None, **params: Any) -> dict:
+        return await self.request("GET", path, params=params or None, actor=actor)
 
-    async def post(self, path: str, json: Optional[dict] = None) -> dict:
-        return await self.request("POST", path, json=json)
+    async def post(self, path: str, json: Optional[dict] = None, *,
+                   actor: Optional[str] = None) -> dict:
+        return await self.request("POST", path, json=json, actor=actor)
 
     async def delete(self, path: str) -> dict:
         return await self.request("DELETE", path)

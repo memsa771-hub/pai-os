@@ -11,8 +11,19 @@ export interface AccountWorkspace {
   workspaceId: string;
   slug: string;
   name: string;
-  token: string | null;
   lastActivityAt: string | null;
+  /**
+   * A short-lived, READ-ONLY credential for the two places a browser cannot
+   * send an Authorization header: the SSE stream and file URLs handed to
+   * <img src>/<a href>. Everything else authenticates with the bearer.
+   *
+   * This replaces the workspace machine token, which this endpoint used to
+   * return and the app used to keep in a 30-day cookie. That token is what
+   * PAI's agents WRITE with; it no longer reaches the browser at all.
+   */
+  streamTicket: string | null;
+  /** Seconds the ticket is good for, so the client can re-mint before it dies. */
+  streamTicketTtl: number;
 }
 
 async function bearerFetch<T>(path: string, idToken: string, options: RequestInit = {}): Promise<T> {
@@ -36,6 +47,14 @@ async function bearerFetch<T>(path: string, idToken: string, options: RequestIni
  * first call, the same one returned on every call after that. */
 export function getAccountWorkspace(idToken: string): Promise<AccountWorkspace> {
   return bearerFetch<AccountWorkspace>('/v1/account/workspace', idToken);
+}
+
+/** A fresh read-only ticket. Called on a timer, and after a 401 on a
+ * ticketed URL, since tickets expire in minutes by design. */
+export function refreshStreamTicket(
+  idToken: string,
+): Promise<{ streamTicket: string | null; streamTicketTtl: number }> {
+  return bearerFetch('/v1/account/stream-ticket', idToken, { method: 'POST' });
 }
 
 /** The signed-in user's cross-workspace profile (name + avatar). */

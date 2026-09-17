@@ -208,7 +208,7 @@ class TestNotificationEndpoints:
             "title": "Deploy finished",
             "message": "staging is live",
             "channel": "ops",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200, resp.text
         assert len(captured_push) == 1
@@ -221,7 +221,7 @@ class TestNotificationEndpoints:
             "title": "quiet",
             "message": "m",
             "push": False,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         assert captured_push == []
@@ -233,11 +233,11 @@ class TestNotificationEndpoints:
             "source": "openagents:alpha",
             "title": "Deploy finished",
             "message": "staging is live",
-        }, headers={"X-Workspace-Token": workspace["token"]}).json()["data"]
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]}).json()["data"]
 
         resp = client.get(
             f"/v1/notifications/{created['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["data"]["message"] == "staging is live"
@@ -248,7 +248,7 @@ class TestNotificationEndpoints:
             "source": "openagents:alpha",
             "title": "t",
             "message": "m",
-        }, headers={"X-Workspace-Token": workspace["token"]}).json()["data"]
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]}).json()["data"]
 
         assert client.get(f"/v1/notifications/{created['id']}").status_code == 401
         assert client.get(
@@ -259,7 +259,7 @@ class TestNotificationEndpoints:
     def test_get_one_unknown_id(self, client, workspace):
         resp = client.get(
             "/v1/notifications/does-not-exist",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 

@@ -26,6 +26,8 @@ from app.models import Workflow, Workspace
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
+from app.event_identity import request_actor_source
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Workflows"])
@@ -44,7 +46,8 @@ class CreateWorkflowRequest(BaseModel):
     description: str = ""
     steps: List[Dict[str, Any]] = []
     max_iterations: int = MAX_ITERATIONS_DEFAULT
-    source: Optional[str] = None
+    # No `source`: who created this is derived from credentials, not
+    # claimed in the body. See app/event_identity.request_actor_source.
 
 
 class UpdateWorkflowRequest(BaseModel):
@@ -198,12 +201,21 @@ def create_workflow(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     workspace = _resolve_workspace(db, body.network)
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    actor_source = request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     name = (body.name or "").strip()
     if not name:
@@ -218,7 +230,7 @@ def create_workflow(
         description=(body.description or "").strip(),
         steps=steps,
         max_iterations=_clamp_iterations(body.max_iterations),
-        created_by=body.source or "human:user",
+        created_by=actor_source,
     )
     db.add(workflow)
     db.commit()

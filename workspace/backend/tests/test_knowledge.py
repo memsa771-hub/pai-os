@@ -5,7 +5,13 @@ Tests for the knowledge base endpoints.
 
 
 def _headers(workspace):
-    return {"X-Workspace-Token": workspace["token"]}
+    """Agent credentials: the machine token plus the session that says WHICH
+    agent. The token alone is shared and identifies nobody, so writes that
+    record an author need both — see app/event_identity.py."""
+    return {
+        "X-Workspace-Token": workspace["token"],
+        "X-Session-Id": workspace["session_id"],
+    }
 
 
 class TestCreateKnowledge:

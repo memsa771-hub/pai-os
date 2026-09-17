@@ -33,6 +33,9 @@ from openagents.core.onm_events import Event
 
 logger = logging.getLogger(__name__)
 
+
+from app.event_identity import request_actor_source as _request_actor_source
+
 router = APIRouter(prefix="/v1", tags=["Tasks"])
 
 
@@ -98,7 +101,6 @@ class CreateTaskRequest(BaseModel):
     knowledge_ids: Optional[List[str]] = None  # knowledge entries attached as context
     file_ids: Optional[List[str]] = None  # workspace files attached (screenshots, docs)
     network: str
-    source: Optional[str] = None  # "human:..." who created the card
 
 
 class UpdateTaskRequest(BaseModel):
@@ -121,7 +123,6 @@ class UpdateTaskRequest(BaseModel):
 class AssignTaskRequest(BaseModel):
     network: str
     agent: Optional[str] = None      # bare agent to run; falls back to task.assignee
-    source: Optional[str] = None     # human who ran it (for the kickoff message)
 
 
 # ---------------------------------------------------------------------------
@@ -372,6 +373,8 @@ def create_task(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """Create a task card (defaults to the Backlog column)."""
     workspace = _resolve_workspace(db, body.network)
@@ -379,6 +382,13 @@ def create_task(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     # Description is the primary field; the title is optional and, when
     # omitted, previews the description's first few words.
@@ -401,7 +411,7 @@ def create_task(
         workflow_id=(body.workflow_id or None),
         knowledge_ids=_clean_knowledge_ids(db, str(workspace.id), body.knowledge_ids),
         file_ids=_clean_file_ids(db, str(workspace.id), body.file_ids),
-        created_by=body.source or "human:user",
+        created_by=actor_source,
         position=_next_position(db, str(workspace.id), status),
     )
     db.add(task)
@@ -559,6 +569,8 @@ def assign_task(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """Run a task on an agent — creates the hidden thread and kicks it off.
 
@@ -574,6 +586,13 @@ def assign_task(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
 
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     task = db.execute(
         select(KanbanTask).where(
             KanbanTask.id == task_id,
@@ -585,7 +604,7 @@ def assign_task(
 
     # ── Workflow task: start a WorkflowRun instead of a single-agent kickoff ──
     if task.workflow_id:
-        return _run_workflow_task(db, workspace, task, body.source or "human:user", x_workspace_token)
+        return _run_workflow_task(db, workspace, task, actor_source, x_workspace_token)
 
     # Agent to run: explicit in the request, else the task's pre-set assignee.
     agent = _bare_agent(body.agent) or _bare_agent(task.assignee)
@@ -605,7 +624,7 @@ def assign_task(
             f"agent '{agent}' is not a member of this workspace",
         )
 
-    human_source = body.source or "human:user"
+    human_source = actor_source
     channel_name = task.channel_name or _task_channel_name(task.id)
 
     # 1. Create the hidden task channel (idempotent — reuse if it exists).

@@ -24,7 +24,8 @@ def _create_workspace(client):
     data = make_owned_workspace()
     channel = data["channel"]
     channel_name = channel["name"] if isinstance(channel, dict) else channel
-    return {"id": data["workspaceId"], "token": data["token"], "channel": channel_name}
+    return {"id": data["workspaceId"], "token": data["token"],
+            "session_id": data["sessionId"], "channel": channel_name}
 
 
 BRAVE_RESULTS = [
@@ -64,7 +65,7 @@ class TestImageSearch:
         resp = client.post("/v1/search/images", json={
             "query": "golden gate",
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["total"] == 1
@@ -78,7 +79,7 @@ class TestImageSearch:
             resp = client.post("/v1/search/images", json={
                 "query": "anything",
                 "network": workspace["id"],
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         body = resp.json()
         assert body["data"]["error_code"] == "SEARCH_NOT_CONFIGURED"
@@ -131,7 +132,7 @@ class TestFromUrl:
                 "network": workspace["id"],
                 "source": "openagents:agent-image",
                 "channel_name": workspace["channel"],
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.json()
         data = resp.json()["data"]
         assert data["content_type"] == "image/png"
@@ -152,7 +153,7 @@ class TestFromUrl:
                 "channel_name": workspace["channel"],
                 "post_to_channel": True,
                 "caption": "剧照来了",
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.json()
         data = resp.json()["data"]
         assert data["posted_to_channel"] is True
@@ -176,7 +177,7 @@ class TestFromUrl:
             resp = client.post("/v1/files/from_url", json={
                 "url": "https://example.com/page",
                 "network": workspace["id"],
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] == "NOT_A_FILE"
 
@@ -187,7 +188,7 @@ class TestFromUrl:
         resp = client.post("/v1/files/from_url", json={
             "url": "http://169.254.169.254/latest/meta-data/",
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] == "BLOCKED_PRIVATE_ADDRESS"
 
@@ -196,7 +197,7 @@ class TestFromUrl:
         resp = client.post("/v1/files/from_url", json={
             "url": "ftp://example.com/file.png",
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] == "UNSUPPORTED_SCHEME"
 
@@ -214,7 +215,7 @@ class TestBase64PostToChannel:
             "channel_name": workspace["channel"],
             "source": "openagents:agent-image",
             "post_to_channel": True,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.json()
         assert resp.json()["data"]["posted_to_channel"] is True
 
@@ -233,13 +234,13 @@ class TestDownloadDisposition:
             "content_type": content_type,
             "network": workspace["id"],
             "source": "openagents:agent-image",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.json()
         return resp.json()["data"]["id"]
 
     def _download(self, client, workspace, file_id):
         return client.get(f"/v1/files/{file_id}",
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
     def test_png_served_inline_with_nosniff(self, client):
         workspace = _create_workspace(client)

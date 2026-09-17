@@ -54,7 +54,7 @@ def _seed_state(workspace, agent_name="gemini-oauth"):
 
 def _discover_names(client, workspace):
     disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                      headers={"X-Workspace-Token": workspace["token"]})
+                      headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
     return [a["address"] for a in disc.json()["data"]["agents"]]
 
 
@@ -76,7 +76,7 @@ class TestGoogleOAuthCallback:
         r = client.patch(
             f"/v1/workspaces/{workspace['id']}/members/agent-alpha",
             json={"display_name": "Gemini-OAuth"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
         assert r.status_code == 200
 
@@ -107,7 +107,7 @@ class TestGoogleOAuthStart:
         resp = client.get("/v1/cloud-agents/google/auth", params={
             "network": workspace["id"],
             "agent_name": "safe\n- forged",
-        }, headers={"X-Workspace-Token": workspace["token"]},
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
             follow_redirects=False)
         assert resp.status_code == 400
         assert not any(
@@ -128,7 +128,7 @@ class TestGoogleOAuthStart:
         resp = client.get("/v1/cloud-agents/google/auth", params={
             "network": workspace["id"],
             "agent_name": "gemini",
-        }, headers={"X-Workspace-Token": workspace["token"]},
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
             follow_redirects=False)
         assert resp.status_code == 307
         assert "accounts.google.com" in resp.headers["location"]
@@ -145,7 +145,7 @@ class TestGoogleOAuthStart:
             "network": workspace["id"],
             "agent_name": "gemini",
             "model": "gemini-3.5-flash",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert "accounts.google.com" in resp.json()["data"]["url"]
         assert all("token" not in s for s in ca._oauth_states.values())
@@ -175,7 +175,7 @@ class TestCallbackMemberTypeGuard:
         assert "already exists" in resp.text
 
         cfgs = client.get("/v1/cloud-agents", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         names = [c["agentName"] for c in cfgs.json()["data"]["cloud_agents"]]
         assert "alpha" not in names
 
@@ -192,7 +192,7 @@ class TestCallbackMemberTypeGuard:
         removed = client.post("/v1/remove", json={
             "agent_name": "beta",
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert removed.status_code == 200
 
         state = _seed_state(workspace, agent_name="beta")

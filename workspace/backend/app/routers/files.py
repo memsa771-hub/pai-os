@@ -32,6 +32,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import config
+from app import stream_ticket
 from app.database import get_db
 from app.file_types import FILTER_GROUPS, KIND_GROUPS, kind_for
 from app.net_security import OUTBOUND_USER_AGENT, UnsafeURLError, safe_fetch
@@ -46,6 +47,9 @@ from app.storage import get_file_store
 from openagents.core.onm_events import Event
 
 logger = logging.getLogger(__name__)
+
+
+from app.event_identity import request_actor_source as _request_actor_source
 
 router = APIRouter(prefix="/v1", tags=["Files"])
 
@@ -96,7 +100,6 @@ class Base64UploadRequest(BaseModel):
     content_type: Optional[str] = "application/octet-stream"
     channel_name: Optional[str] = None
     network: str
-    source: Optional[str] = "human:user"
     post_to_channel: bool = False       # also post a chat message with the file attached
     caption: Optional[str] = None       # message text when post_to_channel is set
 
@@ -112,7 +115,6 @@ class FromUrlUploadRequest(BaseModel):
     network: str
     filename: Optional[str] = None
     channel_name: Optional[str] = None
-    source: Optional[str] = "human:user"
     post_to_channel: bool = False
     caption: Optional[str] = None
 
@@ -121,7 +123,6 @@ class FolderCreateRequest(BaseModel):
     """Create an (empty) folder."""
     network: str
     path: str
-    source: Optional[str] = "human:user"
 
 
 class FolderRenameRequest(BaseModel):
@@ -129,7 +130,6 @@ class FolderRenameRequest(BaseModel):
     network: str
     path: str
     new_path: str
-    source: Optional[str] = "human:user"
 
 
 # ---------------------------------------------------------------------------
@@ -183,6 +183,8 @@ async def create_folder(
     request: FolderCreateRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Create an empty folder, materialised as a zero-byte `.keep` record."""
@@ -196,6 +198,13 @@ async def create_folder(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     if _folder_records(db, str(workspace.id), path):
         return json_response(ResponseCode.BAD_REQUEST, f'Folder "{path}" already exists')
@@ -217,7 +226,7 @@ async def create_folder(
         content_type="text/plain",
         size=0,
         storage_key=storage_key,
-        uploaded_by=request.source or "human:user",
+        uploaded_by=actor_source,
     ))
 
     # Commit the mutation before emitting: _emit_event only commits on the
@@ -228,7 +237,7 @@ async def create_folder(
     await _emit_event(
         Event(
             type="workspace.folder.created",
-            source=request.source or "human:user",
+            source=actor_source,
             target="core",
             payload={"path": path},
         ),
@@ -245,6 +254,8 @@ async def rename_folder(
     request: FolderRenameRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Rename or move a folder by rewriting the path prefix of its contents."""
@@ -265,6 +276,13 @@ async def rename_folder(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     records = _folder_records(db, str(workspace.id), path)
     if not records:
         return json_response(ResponseCode.NOT_FOUND, f'Folder "{path}" not found')
@@ -282,7 +300,7 @@ async def rename_folder(
     await _emit_event(
         Event(
             type="workspace.folder.renamed",
-            source=request.source or "human:user",
+            source=actor_source,
             target="core",
             payload={"path": path, "new_path": new_path, "count": len(records)},
         ),
@@ -298,9 +316,10 @@ async def rename_folder(
 async def delete_folder(
     network: str = Query(..., description="Network (workspace) ID or slug"),
     path: str = Query(..., description="Folder path to delete"),
-    source: Optional[str] = Query("human:user"),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Soft-delete a folder and everything inside it."""
@@ -314,6 +333,13 @@ async def delete_folder(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     records = _folder_records(db, str(workspace.id), folder)
     if not records:
@@ -329,7 +355,7 @@ async def delete_folder(
     await _emit_event(
         Event(
             type="workspace.folder.deleted",
-            source=source or "human:user",
+            source=actor_source,
             target="core",
             payload={"path": folder, "count": len(records)},
         ),
@@ -351,10 +377,11 @@ async def upload_file(
     file: Optional[UploadFile] = File(None),
     network: Optional[str] = Form(None),
     channel_name: Optional[str] = Form(None),
-    source: Optional[str] = Form(None),
     # Auth headers
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -368,7 +395,6 @@ async def upload_file(
         data = await file.read()
         content_type = file.content_type or "application/octet-stream"
         filename = _organize_filename(file.filename, content_type)
-        uploaded_by = source or "human:user"
         network_id = network
     else:
         return json_response(ResponseCode.BAD_REQUEST, "Missing required fields: file and network")
@@ -387,6 +413,14 @@ async def upload_file(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+    uploaded_by = actor_source
 
     # Save to storage backend (use basename for physical storage, full path for DB)
     file_id = str(uuid.uuid4())
@@ -480,6 +514,8 @@ async def upload_file_base64(
     body: Base64UploadRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Upload a file via JSON with base64-encoded content (for agent uploads)."""
@@ -501,6 +537,13 @@ async def upload_file_base64(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     organized_filename = _organize_filename(body.filename, body.content_type)
 
     file_id = str(uuid.uuid4())
@@ -521,14 +564,14 @@ async def upload_file_base64(
         content_type=body.content_type,
         size=len(data),
         storage_key=storage_key,
-        uploaded_by=body.source or "human:user",
+        uploaded_by=actor_source,
         channel_name=body.channel_name,
     )
     db.add(record)
 
     event = Event(
         type="workspace.file.uploaded",
-        source=body.source or "human:user",
+        source=actor_source,
         target=f"channel/{body.channel_name}" if body.channel_name else "core",
         payload={
             "file_id": file_id,
@@ -548,7 +591,7 @@ async def upload_file_base64(
         "filename": organized_filename,
         "content_type": body.content_type,
         "size": len(data),
-        "uploaded_by": body.source or "human:user",
+        "uploaded_by": actor_source,
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "posted_to_channel": posted,
     })
@@ -568,6 +611,8 @@ async def upload_file_from_url(
     body: FromUrlUploadRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Download a file (typically an image search result) into workspace
@@ -578,6 +623,13 @@ async def upload_file_from_url(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     parsed = urlparse(body.url)
 
@@ -646,14 +698,14 @@ async def upload_file_from_url(
         content_type=content_type,
         size=len(data),
         storage_key=storage_key,
-        uploaded_by=body.source or "human:user",
+        uploaded_by=actor_source,
         channel_name=body.channel_name,
     )
     db.add(record)
 
     event = Event(
         type="workspace.file.uploaded",
-        source=body.source or "human:user",
+        source=actor_source,
         target=f"channel/{body.channel_name}" if body.channel_name else "core",
         payload={
             "file_id": file_id,
@@ -674,7 +726,7 @@ async def upload_file_from_url(
         "filename": organized_filename,
         "content_type": content_type,
         "size": len(data),
-        "uploaded_by": body.source or "human:user",
+        "uploaded_by": actor_source,
         "source_url": body.url,
         "posted_to_channel": posted,
     })
@@ -736,11 +788,12 @@ async def upload_files_to_folder(
     files: list[UploadFile] = File(..., description="One or more files"),
     network: str = Form(...),
     path: str = Form("", description="Destination folder; empty is the root"),
-    source: Optional[str] = Form(None),
     channel_name: Optional[str] = Form(None),
     on_conflict: str = Form("rename", description="rename | replace | error"),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -771,10 +824,17 @@ async def upload_files_to_folder(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     if not files:
         return json_response(ResponseCode.BAD_REQUEST, "No files in the request")
 
-    uploaded_by = source or "human:user"
+    uploaded_by = actor_source
     store = get_file_store()
     loop = asyncio.get_event_loop()
 
@@ -909,7 +969,6 @@ class TrashRequest(BaseModel):
     network: str
     file_ids: Optional[list[str]] = None
     paths: Optional[list[str]] = None
-    source: Optional[str] = "human:user"
 
 
 class TrashActionRequest(BaseModel):
@@ -917,7 +976,6 @@ class TrashActionRequest(BaseModel):
     network: str
     trash_ids: Optional[list[str]] = None
     all: bool = False
-    source: Optional[str] = "human:user"
 
 
 #: Files listed inline on a trash entry before it just reports a count.
@@ -985,6 +1043,8 @@ async def move_to_trash(
     request: TrashRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -1005,7 +1065,14 @@ async def move_to_trash(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
-    source = request.source or "human:user"
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
+    source = actor_source
     now = datetime.now(timezone.utc)
     entries: list[dict] = []
     not_found: list[str] = []
@@ -1117,6 +1184,8 @@ async def restore_from_trash(
     request: TrashActionRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -1132,6 +1201,13 @@ async def restore_from_trash(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     if not request.all and not request.trash_ids:
         return json_response(ResponseCode.BAD_REQUEST, "Pass trash_ids or all=true")
@@ -1184,7 +1260,7 @@ async def restore_from_trash(
         await _emit_event(
             Event(
                 type="workspace.file.restored",
-                source=request.source or "human:user",
+                source=actor_source,
                 target="core",
                 payload={"trash_id": entry["trash_id"], "count": entry["file_count"]},
             ),
@@ -1205,6 +1281,8 @@ async def purge_trash(
     request: TrashActionRequest,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """
@@ -1221,6 +1299,13 @@ async def purge_trash(
 
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     if not request.all and not request.trash_ids:
         return json_response(ResponseCode.BAD_REQUEST, "Pass trash_ids or all=true")
@@ -1251,7 +1336,7 @@ async def purge_trash(
         await _emit_event(
             Event(
                 type="workspace.trash.purged",
-                source=request.source or "human:user",
+                source=actor_source,
                 target="core",
                 payload={"count": len(records)},
             ),
@@ -1577,7 +1662,7 @@ def file_info(
 @router.get("/files/{file_id}")
 async def download_file(
     file_id: str,
-    token: Optional[str] = Query(None),
+    ticket: Optional[str] = Query(None, description="Short-lived read-only ticket from POST /v1/account/stream-ticket, for <img src>/<a href> URLs that cannot carry a header."),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
     db: Session = Depends(get_db),
@@ -1602,8 +1687,13 @@ async def download_file(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
 
-    effective_token = x_workspace_token or token
-    if not _verify_workspace_access(workspace, effective_token, authorization):
+    # `?token=` (the workspace MACHINE token) used to be accepted here so that
+    # <img src> could load a thumbnail. It is replaced by a read-only ticket
+    # that expires in minutes — see app/stream_ticket.py.
+    if not (
+        _verify_workspace_access(workspace, x_workspace_token, authorization)
+        or stream_ticket.verify(workspace, ticket)
+    ):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
     store = get_file_store()
@@ -1658,6 +1748,8 @@ async def delete_file(
     file_id: str,
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
     db: Session = Depends(get_db),
 ):
     """Soft-delete a file."""
@@ -1675,11 +1767,18 @@ async def delete_file(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     record.status = "deleted"
 
     event = Event(
         type="workspace.file.deleted",
-        source="human:user",
+        source=actor_source,
         target="core",
         payload={
             "file_id": file_id,

@@ -32,7 +32,7 @@ def _make_workspace(client, name="WS2", agent="beta"):
     """A second, separately-owned workspace — used to prove cross-workspace
     isolation. Built directly; see conftest.make_owned_workspace."""
     d = make_owned_workspace(name=name, agent_name=agent, email="other@example.com")
-    return {"id": d["workspaceId"], "token": d["token"]}
+    return {"id": d["workspaceId"], "token": d["token"], "session_id": d["sessionId"]}
 
 
 def _upload_file(client, workspace, filename, data, content_type="application/octet-stream"):
@@ -42,7 +42,8 @@ def _upload_file(client, workspace, filename, data, content_type="application/oc
         "/v1/files",
         files={"file": (filename, data, content_type)},
         data={"network": workspace["id"]},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["id"]
@@ -73,7 +74,8 @@ def _control_events(client, workspace, agent_name):
         "network": workspace["id"],
         "type": "workspace.agent.control",
         "target": f"openagents:{agent_name}",
-    }, headers={"X-Workspace-Token": workspace["token"]})
+    }, headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["events"]
 
@@ -95,7 +97,8 @@ class TestSkillInstallRequest:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -110,7 +113,8 @@ class TestSkillInstallRequest:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         events = _control_events(client, workspace, "claude")
         skill_events = [e for e in events if e["payload"].get("action") == "skill.install"]
@@ -126,7 +130,8 @@ class TestSkillInstallRequest:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "does-not-exist"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -134,7 +139,8 @@ class TestSkillInstallRequest:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/ghost/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -154,13 +160,15 @@ class TestSkillStatusCallback:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "installed",
                   "path": "/work/.claude/skills/claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -175,13 +183,15 @@ class TestSkillStatusCallback:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "failed",
                   "error": "could not fetch skill from anthropics/skills"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -196,7 +206,8 @@ class TestSkillStatusCallback:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "bogus"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 400
 
@@ -206,7 +217,8 @@ class TestSkillStatusCallback:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/codex/skills/install",
             json={"skill_id": "mcp-builder"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         events = _control_events(client, workspace, "codex")
         assert any(e["payload"].get("action") == "skill.install" for e in events)
@@ -215,7 +227,8 @@ class TestSkillStatusCallback:
             f"/v1/workspaces/{workspace['id']}/members/codex/skills/status",
             json={"skill_id": "mcp-builder", "state": "installed",
                   "path": "/work/.codex/skills/mcp-builder"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         assert "mcp-builder" in resp.json()["data"]["installedSkills"]
@@ -231,12 +244,14 @@ class TestPerAgentIsolation:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "installed"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
 
         claude_skills = _member_skills(db, workspace, "claude")
@@ -256,10 +271,12 @@ class TestPerAgentIsolation:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         agents = {a["address"]: a for a in disc.json()["data"]["agents"]}
         claude_status = (agents["openagents:claude"]["enabled_skills"] or {}).get("skill_status", {})
         codex_skills = agents["openagents:codex"]["enabled_skills"] or {}
@@ -274,12 +291,14 @@ class TestPartialInstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "installed", "partial": True},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200
         skills = _member_skills(db, workspace, "claude")
@@ -310,7 +329,8 @@ class TestStatusAuth:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/ghost/skills/status",
             json={"skill_id": "claude-api", "state": "installed"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -322,18 +342,21 @@ class TestSkillUninstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "claude-api", "state": "installed"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         # Uninstall
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/uninstall",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         assert "claude-api" not in resp.json()["data"]["installedSkills"]
@@ -350,10 +373,12 @@ class TestSkillUninstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "claude-api"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         agents = disc.json()["data"]["agents"]
         claude = next(a for a in agents if a["address"] == "openagents:claude")
         assert claude["enabled_skills"]["skill_status"]["claude-api"]["state"] == "installing"
@@ -394,7 +419,8 @@ class TestCustomSkillRegister:
         assert "persisted" in (ws.settings or {}).get("custom_skills", {})
 
         listed = client.get(f"/v1/workspaces/{workspace['id']}/skills/custom",
-                            headers={"X-Workspace-Token": workspace["token"]})
+                            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         assert listed.status_code == 200
         ids = [s["id"] for s in listed.json()["data"]["skills"]]
         assert "persisted" in ids
@@ -405,7 +431,8 @@ class TestCustomSkillRegister:
         _register_custom(client, workspace, f1, id="skill-a", filename="a.md")
         _register_custom(client, workspace, f2, id="skill-b", filename="b.md")
         listed = client.get(f"/v1/workspaces/{workspace['id']}/skills/custom",
-                            headers={"X-Workspace-Token": workspace["token"]})
+                            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         ids = {s["id"] for s in listed.json()["data"]["skills"]}
         assert {"skill-a", "skill-b"} <= ids
 
@@ -472,7 +499,8 @@ class TestCustomSkillInstall:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -486,7 +514,8 @@ class TestCustomSkillInstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         events = _control_events(client, workspace, "claude")
         skill_events = [e for e in events if e["payload"].get("action") == "skill.install"]
@@ -506,7 +535,8 @@ class TestCustomSkillInstall:
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "nope-not-real"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 404
 
@@ -517,7 +547,8 @@ class TestCustomSkillInstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         claude_skills = _member_skills(db, workspace, "claude")
         codex_skills = _member_skills(db, workspace, "codex")
@@ -533,13 +564,15 @@ class TestCustomSkillInstall:
 
         # Delete the underlying file (as the Files UI would).
         delr = client.delete(f"/v1/files/{file_id}",
-                             headers={"X-Workspace-Token": workspace["token"]})
+                             headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         assert delr.status_code == 200, delr.text
 
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 409, resp.text
         assert "re-upload" in resp.json()["message"].lower()
@@ -558,22 +591,26 @@ class TestCustomSkillInstall:
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/install",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/status",
             json={"skill_id": "my-custom", "state": "installed"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         resp = client.post(
             f"/v1/workspaces/{workspace['id']}/members/claude/skills/uninstall",
             json={"skill_id": "my-custom"},
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]},
         )
         assert resp.status_code == 200, resp.text
         events = _control_events(client, workspace, "claude")
         assert any(e["payload"].get("action") == "skill.uninstall" for e in events)
         # The custom skill metadata itself survives an agent-level uninstall.
         listed = client.get(f"/v1/workspaces/{workspace['id']}/skills/custom",
-                            headers={"X-Workspace-Token": workspace["token"]})
+                            headers={"X-Workspace-Token": workspace["token"],
+                 "X-Session-Id": workspace["session_id"]})
         assert "my-custom" in [s["id"] for s in listed.json()["data"]["skills"]]

@@ -195,7 +195,7 @@ class TestAgentSessionBinding:
             "payload": {"content": "via metadata"},
             "metadata": {"session_id": workspace["session_id"]},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["source"] == "openagents:agent-alpha"
 
@@ -333,7 +333,7 @@ class TestPersistenceUnchanged:
             "network": workspace["id"],
             "channel": workspace["channel"]["name"],
             "type": "workspace.message.posted",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert read.status_code == 200
         ids = [e["id"] for e in read.json()["data"]["events"]]
         assert event_id in ids

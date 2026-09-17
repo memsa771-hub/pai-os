@@ -15,9 +15,9 @@ async def read_file(ctx, args):
 
 async def write_file(ctx, args):
     content = args["content"].encode("utf-8")
-    return await ctx.api.post("/v1/files/base64", json={
+    return await ctx.api.post("/v1/files/base64", actor=ctx.source, json={
         "network": ctx.workspace_id, "filename": args["filename"],
         "content_base64": base64.b64encode(content).decode("ascii"),
         "content_type": args.get("content_type", "text/plain; charset=utf-8"),
-        "channel_name": ctx.conversation, "source": ctx.source,
+        "channel_name": ctx.conversation,
     })

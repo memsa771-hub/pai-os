@@ -12,11 +12,11 @@ async def create_task(ctx, args):
     payload = {
         "network": ctx.workspace_id, "title": args["title"].strip(),
         "description": args.get("description", "").strip(),
-        "priority": args.get("priority", "normal"), "source": ctx.source,
+        "priority": args.get("priority", "normal"),
     }
     if args.get("assignee"):
         payload["assignee"] = args["assignee"]
-    res = await ctx.api.post("/v1/tasks", json=payload)
+    res = await ctx.api.post("/v1/tasks", json=payload, actor=ctx.source)
     if not res["ok"]:
         return res
     item = res.get("data") or {}

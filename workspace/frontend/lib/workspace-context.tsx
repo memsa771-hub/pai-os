@@ -258,13 +258,19 @@ export function WorkspaceProvider({
   workspaceId,
   token,
   bearerToken,
+  streamTicket: initialStreamTicket,
   children,
 }: {
   workspaceId: string;
   token: string;
   bearerToken?: string;
+  /** Short-lived read-only credential for SSE and file URLs. Placement AI
+   * passes this instead of a workspace token; self-hosted passes neither. */
+  streamTicket?: string;
   children: React.ReactNode;
 }) {
+  const [streamTicket, setStreamTicket] = useState(initialStreamTicket || '');
+  useEffect(() => { setStreamTicket(initialStreamTicket || ''); }, [initialStreamTicket]);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [agents, setAgents] = useState<WorkspaceAgent[]>([]);
   const { currentUser, setUserName } = useWorkspaceIdentity();
@@ -579,14 +585,32 @@ export function WorkspaceProvider({
 
   // Configure API client on mount
   useEffect(() => {
-    workspaceApi.configure(workspaceId, token, bearerToken || undefined);
+    workspaceApi.configure(workspaceId, token, bearerToken || undefined, streamTicket);
     // Tie all subsequent events to this workspace so they line up with the
     // website + launcher funnel stages for the same workspace ID.
     if (workspaceId) {
       group('workspace', workspaceId);
       capture('workspace_opened', { workspace_id: workspaceId });
     }
-  }, [workspaceId, token, bearerToken]);
+  }, [workspaceId, token, bearerToken, streamTicket]);
+
+  // Tickets expire in minutes by design, so re-mint on a timer well inside
+  // that window. A ticket that lapses doesn't just stop images loading — the
+  // SSE stream reconnects with a dead credential and realtime chat goes
+  // quiet, which looks like the app hanging.
+  useEffect(() => {
+    if (!bearerToken || !initialStreamTicket) return;
+    let cancelled = false;
+    const remint = async () => {
+      try {
+        const { refreshStreamTicket } = await import('@/lib/account-api');
+        const next = await refreshStreamTicket(bearerToken);
+        if (!cancelled && next.streamTicket) setStreamTicket(next.streamTicket);
+      } catch { /* keep the current ticket; the next tick retries */ }
+    };
+    const id = window.setInterval(remint, 5 * 60 * 1000);
+    return () => { cancelled = true; window.clearInterval(id); };
+  }, [bearerToken, initialStreamTicket]);
 
   const refreshWorkspace = useCallback(async () => {
     try {

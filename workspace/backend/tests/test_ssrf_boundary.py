@@ -844,7 +844,8 @@ def _create_workspace(client):
     caller's own and refuses anonymous callers, so setup builds the row
     directly — see conftest.make_owned_workspace."""
     data = make_owned_workspace()
-    return {"id": data["workspaceId"], "token": data["token"]}
+    return {"id": data["workspaceId"], "token": data["token"],
+            "session_id": data["sessionId"]}
 
 
 class TestSharedBrowserRouterRejectsInternal:
@@ -863,7 +864,7 @@ class TestSharedBrowserRouterRejectsInternal:
             "url": url,
             "network": workspace["id"],
             "source": "openagents:agent-ssrf",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] in (
             "BLOCKED_PRIVATE_ADDRESS", "UNSUPPORTED_SCHEME", "BLOCKED_PORT",
@@ -885,7 +886,7 @@ class TestSharedBrowserRouterRejectsInternal:
                 "url": "https://example.com/",
                 "network": workspace["id"],
                 "source": "openagents:agent-ssrf",
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert opened.status_code == 200
         tab_id = opened.json()["data"]["id"]
 
@@ -893,7 +894,7 @@ class TestSharedBrowserRouterRejectsInternal:
             "url": url,
             "network": workspace["id"],
             "source": "openagents:agent-ssrf",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] in (
             "BLOCKED_PRIVATE_ADDRESS", "UNSUPPORTED_SCHEME", "BLOCKED_PORT",
@@ -907,7 +908,7 @@ class TestSharedBrowserRouterRejectsInternal:
             resp = client.post("/v1/browser/tabs", json={
                 "network": workspace["id"],
                 "source": "openagents:agent-ssrf",
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
 
 
@@ -919,7 +920,7 @@ class TestFetchRenderTierRejectsInternal:
             "network": workspace["id"],
             "mode": "render",
             "source": "openagents:agent-ssrf",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 400
         assert resp.json()["data"]["error_code"] == "BLOCKED_PRIVATE_ADDRESS"
 
@@ -937,7 +938,7 @@ class TestFetchRateLimit:
                     "url": "http://169.254.169.254/",   # rejected either way
                     "network": workspace["id"],
                     "source": "openagents:agent-ssrf",
-                }, headers={"X-Workspace-Token": workspace["token"]})
+                }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
                 codes.append(resp.json()["data"]["error_code"])
         fetch_router._fetch_hits.clear()
         assert codes[-1] == "FETCH_RATE_LIMITED"

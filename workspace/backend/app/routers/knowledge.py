@@ -33,6 +33,9 @@ from openagents.core.onm_events import Event
 
 logger = logging.getLogger(__name__)
 
+
+from app.event_identity import request_actor_source as _request_actor_source
+
 router = APIRouter(prefix="/v1", tags=["Knowledge"])
 
 MAX_CONTENT_SIZE = 1 * 1024 * 1024  # 1 MB
@@ -47,7 +50,6 @@ class CreateKnowledgeRequest(BaseModel):
     title: str
     content: str
     description: Optional[str] = None
-    source: Optional[str] = "human:user"
 
 
 class UpdateKnowledgeRequest(BaseModel):
@@ -55,7 +57,6 @@ class UpdateKnowledgeRequest(BaseModel):
     title: Optional[str] = None
     content: Optional[str] = None
     description: Optional[str] = None
-    source: Optional[str] = "human:user"
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +112,8 @@ async def create_knowledge(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     workspace = _resolve_workspace(db, body.network)
     if not workspace:
@@ -127,6 +130,13 @@ async def create_knowledge(
     slug = _unique_slug(db, ws_id, base_slug)
 
     from uuid import uuid4
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
     entry_id = str(uuid4())
 
     store = get_file_store()
@@ -141,14 +151,14 @@ async def create_knowledge(
         description=body.description,
         storage_key=storage_key,
         content_size=len(content_bytes),
-        created_by=body.source or "human:user",
+        created_by=actor_source,
     )
     db.add(entry)
     db.commit()
 
     event = Event(
         type="workspace.knowledge.created",
-        source=body.source or "human:user",
+        source=actor_source,
         target="core",
         payload={"entry_id": entry_id, "slug": slug, "title": body.title},
     )
@@ -291,6 +301,8 @@ async def update_knowledge(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     entry = db.execute(
         select(KnowledgeEntry).where(
@@ -306,6 +318,13 @@ async def update_knowledge(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    actor_source = _request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     ws_id = str(workspace.id)
     now = datetime.now(timezone.utc)
@@ -334,13 +353,13 @@ async def update_knowledge(
         entry.storage_key = store.save(ws_id, entry.id, storage_filename, content_bytes)
         entry.content_size = len(content_bytes)
 
-    entry.updated_by = body.source or "human:user"
+    entry.updated_by = actor_source
     entry.updated_at = now
     db.commit()
 
     event = Event(
         type="workspace.knowledge.updated",
-        source=body.source or "human:user",
+        source=actor_source,
         target="core",
         payload={"entry_id": entry_id, "slug": entry.slug, "title": entry.title},
     )

@@ -21,6 +21,8 @@ from app.models import TimerRecord, Workspace
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
+from app.event_identity import request_actor_source
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Timers"])
@@ -36,7 +38,8 @@ class CreateTimerRequest(BaseModel):
     delay: int
     message: str
     network: str
-    source: str
+    # No `source`: who created this is derived from credentials, not
+    # claimed in the body. See app/event_identity.request_actor_source.
     channel: Optional[str] = None
     thread_id: Optional[str] = None
 
@@ -69,6 +72,8 @@ def create_timer(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """Create a timer that posts a message to the channel after a delay."""
     workspace = _resolve_workspace(db, body.network)
@@ -76,6 +81,13 @@ def create_timer(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    actor_source = request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     if body.delay < 1 or body.delay > MAX_DELAY:
         return json_response(
@@ -90,7 +102,7 @@ def create_timer(
         workspace_id=str(workspace.id),
         channel_name=channel_name,
         thread_id=body.thread_id,
-        created_by=body.source,
+        created_by=actor_source,
         message=body.message,
         delay_seconds=body.delay,
         fires_at=now + timedelta(seconds=body.delay),

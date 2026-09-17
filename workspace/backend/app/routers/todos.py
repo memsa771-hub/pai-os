@@ -24,6 +24,8 @@ from app.routers.network import (
 )
 from openagents.core.onm_events import Event
 
+from app.event_identity import request_actor_source
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Todos"])
@@ -42,7 +44,8 @@ class TodoItem(BaseModel):
 class PutTodosRequest(BaseModel):
     todos: List[TodoItem]
     network: str
-    source: str
+    # No `source`: who created this is derived from credentials, not
+    # claimed in the body. See app/event_identity.request_actor_source.
     channel: Optional[str] = None
     thread_id: Optional[str] = None
 
@@ -82,6 +85,8 @@ def put_todos(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """Replace the calling agent's entire to-do list for a channel/thread."""
     workspace = _resolve_workspace(db, body.network)
@@ -90,7 +95,14 @@ def put_todos(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
 
-    created_by = body.source
+    actor_source = request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
+    created_by = actor_source
     agent_name = _agent_name_from_source(created_by)
     channel_name = body.channel or "default"
 

@@ -432,7 +432,6 @@ def _detect_wall(text: str, title: str, url: str = "") -> Optional[tuple]:
 class FetchRequest(BaseModel):
     url: str
     network: str
-    source: Optional[str] = "human:user"
     mode: str = "auto"                 # auto | static | render
     max_chars: int = DEFAULT_MAX_CHARS
 

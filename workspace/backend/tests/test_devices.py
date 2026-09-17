@@ -9,7 +9,7 @@ class TestRegisterDevice:
             "fcm_token": "TOKEN-A",
             "device_type": "ios",
             "bundle_id": "com.openagents.go",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
         assert "id" in data
@@ -66,7 +66,7 @@ class TestRegisterDevice:
             "fcm_token": "TOKEN-PREFS",
             "device_type": "android",
             "prefs": prefs,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200, resp.text
         row = db.query(DeviceToken).filter_by(fcm_token="TOKEN-PREFS").one()
         assert row.prefs == prefs
@@ -93,7 +93,7 @@ class TestRegisterDevice:
 
         client.post("/v1/devices/register", json={
             "network": workspace["id"], "fcm_token": "TOKEN-NOPREFS",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         row = db.query(DeviceToken).filter_by(fcm_token="TOKEN-NOPREFS").one()
         assert row.prefs is None
 
@@ -101,7 +101,7 @@ class TestRegisterDevice:
         resp = client.post("/v1/devices/register", json={
             "network": "does-not-exist",
             "fcm_token": "TOKEN-A",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 404
 
 
@@ -148,7 +148,7 @@ class TestTestPush:
         }
         body.update(extra)
         return client.post("/v1/devices/register", json=body,
-                           headers={"X-Workspace-Token": workspace["token"]})
+                           headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
     def test_sends_to_the_named_device(self, client, workspace, monkeypatch):
         self._register(client, workspace)
@@ -164,7 +164,7 @@ class TestTestPush:
         resp = client.post("/v1/devices/test-push", json={
             "network": workspace["id"], "fcm_token": "TOKEN-TP",
             "reason": "mention", "channel": "general",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200, resp.text
         data = resp.json()["data"]
@@ -186,7 +186,7 @@ class TestTestPush:
         )
         resp = client.post("/v1/devices/test-push", json={
             "network": workspace["id"], "fcm_token": "SOMEONE-ELSES-TOKEN",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 404
         # The point of the refusal: an arbitrary token never reaches FCM.
         assert sent == []
@@ -210,7 +210,7 @@ class TestTestPush:
         )
         resp = client.post("/v1/devices/test-push", json={
             "network": workspace["id"], "fcm_token": "TOKEN-NOFCM",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
         assert data["configured"] is False
         assert data["sent"] is False
@@ -271,6 +271,6 @@ class TestTestPush:
         )
         data = client.post("/v1/devices/test-push", json={
             "network": workspace["id"], "fcm_token": "TOKEN-NOEMAIL",
-        }, headers={"X-Workspace-Token": workspace["token"]}).json()["data"]
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]}).json()["data"]
         assert data["sent"] is True
         assert data["user_email"] is None

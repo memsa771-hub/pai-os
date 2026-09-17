@@ -91,7 +91,7 @@ class TestSendEvent:
 
         # Verify event was persisted
         poll = client.get("/v1/events", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert poll.status_code == 200
         events = poll.json()["data"]["events"]
         assert len(events) >= 1
@@ -236,7 +236,7 @@ class TestPollEvents:
     def test_poll_empty_network(self, client, workspace):
         """Polling a new network returns empty list."""
         resp = client.get("/v1/events", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["events"] == []
@@ -256,7 +256,7 @@ class TestPollEvents:
 
         # Poll
         resp = client.get("/v1/events", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         events = resp.json()["data"]["events"]
         assert len(events) == 1
@@ -279,7 +279,7 @@ class TestPollEvents:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "workspace.session",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         assert len(events) == 1
         assert events[0]["type"] == "workspace.session.created"
@@ -299,7 +299,7 @@ class TestPollEvents:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "target": f"channel/{channel_name}",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         assert len(events) == 1
 
@@ -307,7 +307,7 @@ class TestPollEvents:
         resp2 = client.get("/v1/events", params={
             "network": workspace["id"],
             "target": "channel/nonexistent",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp2.json()["data"]["events"] == []
 
     def test_poll_cursor_pagination(self, client, workspace):
@@ -329,7 +329,7 @@ class TestPollEvents:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "limit": 2,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
         assert len(data["events"]) == 2
         assert data["has_more"] is True
@@ -338,7 +338,7 @@ class TestPollEvents:
         resp2 = client.get("/v1/events", params={
             "network": workspace["id"],
             "after": data["events"][1]["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data2 = resp2.json()["data"]
         assert len(data2["events"]) == 1
         assert data2["has_more"] is False
@@ -381,7 +381,7 @@ class TestPollExcludeMessageTypes:
             "network": workspace["id"],
             "type": "workspace.message",
             "exclude_message_types": "thinking,status,todos",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         events = resp.json()["data"]["events"]
         contents = [e["payload"].get("content") for e in events]
@@ -404,7 +404,7 @@ class TestPollExcludeMessageTypes:
             "type": "workspace.message",
             "sort": "desc",
             "limit": 5,
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         contents = [e["payload"].get("content") for e in resp.json()["data"]["events"]]
         assert "user question" not in contents
 
@@ -415,7 +415,7 @@ class TestPollExcludeMessageTypes:
             "sort": "desc",
             "limit": 5,
             "exclude_message_types": "thinking,status,todos",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         contents = [e["payload"].get("content") for e in resp.json()["data"]["events"]]
         assert "user question" in contents
 
@@ -426,7 +426,7 @@ class TestPollExcludeMessageTypes:
             "network": workspace["id"],
             "type": "workspace.message",
             "exclude_message_types": " , ",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         contents = [e["payload"].get("content") for e in resp.json()["data"]["events"]]
         assert "hello" in contents
@@ -519,7 +519,7 @@ class TestPollTargetAgents:
             "network": workspace["id"],
             "type": "workspace.message.posted",
             "target_agents": "alpha",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         ids = {e["id"] for e in resp.json()["data"]["events"]}
 
@@ -541,7 +541,7 @@ class TestPollTargetAgents:
             "network": workspace["id"],
             "type": "workspace.message.posted",
             "target_agents": "alpha",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
 
         # ev-noresp is the newest event in the stream even though it wasn't
@@ -557,7 +557,7 @@ class TestPollTargetAgents:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "workspace.message.posted",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         data = resp.json()["data"]
         ids = {e["id"] for e in data["events"]}
         assert {"ev-a", "ev-b", "ev-ab", "ev-human-none", "ev-agent-none", "ev-noresp"} <= ids

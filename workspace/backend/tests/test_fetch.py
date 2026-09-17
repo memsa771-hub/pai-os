@@ -30,7 +30,8 @@ def _create_workspace(client):
     caller's own and refuses anonymous callers, so setup builds the row
     directly — see conftest.make_owned_workspace."""
     data = make_owned_workspace()
-    return {"id": data["workspaceId"], "token": data["token"]}
+    return {"id": data["workspaceId"], "token": data["token"],
+            "session_id": data["sessionId"]}
 
 
 def _fetch(client, workspace, url, **kwargs):
@@ -39,7 +40,7 @@ def _fetch(client, workspace, url, **kwargs):
         "network": workspace["id"],
         "source": "openagents:agent-fetch",
         **kwargs,
-    }, headers={"X-Workspace-Token": workspace["token"]})
+    }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
 
 STATIC_HTML = """

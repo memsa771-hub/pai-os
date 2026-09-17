@@ -492,19 +492,39 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse as _ValidationJSONResponse
 
 
+def _redacted_validation_errors(exc: RequestValidationError) -> list[dict]:
+    """What went wrong, never what was sent.
+
+    Pydantic attaches the offending value to each error as `input` — and for a
+    missing-field error at the body root, `input` is the ENTIRE request body.
+    `POST /v1/auth/sign-in-username` carries a password, `POST /v1/model-access`
+    carries a provider API key, so a single malformed request used to put either
+    straight into the logs. `ctx` can quote values too.
+
+    Keep the location and the failure type, which is all a developer needs to
+    fix a client, and drop the payload.
+    """
+    redacted = []
+    for error in exc.errors():
+        redacted.append({
+            "loc": [str(part) for part in error.get("loc", ())],
+            "type": error.get("type"),
+            "msg": error.get("msg"),
+        })
+    return redacted
+
+
 @app.exception_handler(RequestValidationError)
 async def _log_validation_errors(request: Request, exc: RequestValidationError):
-    try:
-        body = await request.body()
-        body_preview = body.decode("utf-8", errors="replace")[:1024]
-    except Exception:
-        body_preview = "<unreadable>"
+    safe_errors = _redacted_validation_errors(exc)
     logger.warning(
-        "validation 422 path=%s errors=%s body=%s",
-        request.url.path, exc.errors(), body_preview,
+        "validation 422 path=%s errors=%s", request.url.path, safe_errors,
     )
+    # The response is for the caller, who already knows what they sent — but it
+    # is echoed into browser consoles and client logs, so it gets the same
+    # treatment rather than handing the value back out.
     return _ValidationJSONResponse(
-        status_code=422, content={"detail": exc.errors()},
+        status_code=422, content={"detail": safe_errors},
     )
 
 

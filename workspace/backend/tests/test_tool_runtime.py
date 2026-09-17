@@ -8,11 +8,15 @@ class FakeApi:
     def __init__(self):
         self.calls = []
 
-    async def get(self, path, **params):
+    async def get(self, path, actor=None, **params):
+        self.actors = getattr(self, "actors", [])
+        self.actors.append(actor)
         self.calls.append(("GET", path, params))
         return {"ok": True, "data": {"agents": [], "channels": [], "tabs": []}}
 
-    async def post(self, path, json=None):
+    async def post(self, path, json=None, actor=None):
+        self.actors = getattr(self, "actors", [])
+        self.actors.append(actor)
         self.calls.append(("POST", path, json))
         return {"ok": True, "data": {"title": "Example Domain", "content": "Example Domain"}}
 
@@ -82,6 +86,9 @@ def test_web_fetch_uses_existing_authenticated_fetch_route():
     assert result["ok"]
     assert ctx.api.calls[0][1] == "/v1/fetch"
     assert ctx.api.calls[0][2]["network"] == "workspace-1"
+    # Identity travels in the trusted header, never in the body.
+    assert "source" not in ctx.api.calls[0][2]
+    assert ctx.api.actors[0] == ctx.source
 
 
 class MockSearch(WebSearchProvider):

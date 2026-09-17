@@ -92,26 +92,51 @@ function mapTrashEntry(raw: Record<string, unknown>): TrashEntry {
 }
 
 class WorkspaceApi {
+  /**
+   * The workspace MACHINE token. On Placement AI this is always empty: the
+   * backend stopped handing it to the browser, because it is the credential
+   * PAI's agents write with and it never expires. It stays here only for the
+   * self-hosted OpenAgents flow, where the operator pastes their own token
+   * into ?token= and there is no bearer to use instead.
+   */
   private token: string = '';
   private bearerToken: string = '';
+  /** Short-lived, read-only. The only credential that goes into a URL. */
+  private streamTicket: string = '';
   private workspaceId: string = '';
 
-  configure(workspaceId: string, token: string, bearerToken?: string) {
+  configure(workspaceId: string, token: string, bearerToken?: string, streamTicket?: string) {
     this.workspaceId = workspaceId;
     this.token = token;
     if (bearerToken !== undefined) this.bearerToken = bearerToken;
+    if (streamTicket !== undefined) this.streamTicket = streamTicket;
   }
 
   setBearerToken(bearerToken: string) {
     this.bearerToken = bearerToken;
   }
 
+  setStreamTicket(streamTicket: string) {
+    this.streamTicket = streamTicket;
+  }
+
+  /**
+   * The credential for URLs that cannot carry a header (EventSource, <img
+   * src>, <a href>). Prefers the read-only ticket; falls back to the machine
+   * token only on self-hosted, where that token is the operator's own and is
+   * the only credential there is.
+   */
+  private urlCredential(params: URLSearchParams): URLSearchParams {
+    if (this.streamTicket) params.set('ticket', this.streamTicket);
+    else if (this.token) params.set('token', this.token);
+    return params;
+  }
+
   getSSEUrl(channelName: string): string {
-    const params = new URLSearchParams({
+    const params = this.urlCredential(new URLSearchParams({
       network: this.workspaceId,
       channel: channelName,
-    });
-    if (this.token) params.set('token', this.token);
+    }));
     return `${API_URL}/v1/events/stream?${params}`;
   }
 
@@ -121,11 +146,10 @@ class WorkspaceApi {
    * SSE stream so the "PAI is working…" indicator updates the instant a run
    * changes, instead of only on the next poll. */
   getOperatorEventsUrl(): string {
-    const params = new URLSearchParams({
+    const params = this.urlCredential(new URLSearchParams({
       network: this.workspaceId,
       target: 'core',
-    });
-    if (this.token) params.set('token', this.token);
+    }));
     return `${API_URL}/v1/events/stream?${params}`;
   }
 
@@ -664,9 +688,7 @@ class WorkspaceApi {
 
   /** Get the download URL for a file. */
   getFileUrl(fileId: string): string {
-    const params = new URLSearchParams();
-    if (this.token) params.set('token', this.token);
-    const qs = params.toString();
+    const qs = this.urlCredential(new URLSearchParams()).toString();
     return `${API_URL}/v1/files/${fileId}${qs ? `?${qs}` : ''}`;
   }
 

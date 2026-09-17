@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, cast, func, or_, select, Text
 from sqlalchemy.orm import Session
 
-from app import cache
+from app import cache, stream_ticket
 from app.database import SessionLocal, get_db
 from app.models import Channel, ChannelMember, EventRecord, Workspace
 from app.pipeline_factory import pipeline
@@ -39,12 +39,12 @@ router = APIRouter(prefix="/v1", tags=["Events"])
 
 class SendEventRequest(BaseModel):
     type: str
-    # DEPRECATED and IGNORED. The server derives the event's identity from the
-    # caller's credentials (see app/event_identity.py); whatever arrives here is
-    # discarded before the event is built. Kept only so already-shipped clients
-    # that still send it do not fail schema validation — delete once the
-    # agent-connector and web client releases that omit it are the floor.
-    source: Optional[str] = None
+    # No `source`. The server derives the event's identity from the caller's
+    # credentials (see app/event_identity.py). Declaring an ignored field kept
+    # advertising it as input in the OpenAPI schema, which is how a client ends
+    # up believing it chooses its own identity. Already-shipped clients that
+    # still send it are unaffected: Pydantic ignores unknown fields, so it is
+    # dropped exactly as before, just without being documented.
     target: str
     payload: Optional[dict] = None
     metadata: Optional[dict] = None
@@ -916,7 +916,7 @@ async def stream_events(
     network: str = Query(...),
     channel: Optional[str] = Query(None),
     target: Optional[str] = Query(None, description="Filter to an exact event target, e.g. 'core' for workspace-level events like PAI Operator run updates"),
-    token: Optional[str] = Query(None),
+    ticket: Optional[str] = Query(None, description="Short-lived read-only ticket from POST /v1/account/stream-ticket. EventSource cannot send headers; this is what browsers authenticate with."),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
 ):
@@ -932,8 +932,6 @@ async def stream_events(
     ``workspace.operator.run_updated``, published with target "core" — see
     ``app/services/operator.py``). Neither set means unfiltered.
     """
-    effective_token = x_workspace_token or token
-
     # Verify access with a SHORT-LIVED session that is closed BEFORE we start
     # streaming. SSE streams live for minutes/hours; a Depends(get_db) session
     # would stay checked out — and idle-in-transaction, from the verify query
@@ -947,7 +945,15 @@ async def stream_events(
         ).scalar_one_or_none()
         if not workspace:
             return json_response(ResponseCode.NOT_FOUND, "Network not found")
-        if not _verify_workspace_access(workspace, effective_token, authorization):
+        # Header credentials first (agents, desktop), then the browser ticket.
+        # `?token=` used to be accepted here and was how the workspace MACHINE
+        # token ended up in browser history, proxy logs and a JS-readable
+        # cookie. It is gone: a URL credential on this route is now read-only
+        # and expires in minutes (see app/stream_ticket.py).
+        if not (
+            _verify_workspace_access(workspace, x_workspace_token, authorization)
+            or stream_ticket.verify(workspace, ticket)
+        ):
             return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
         workspace_id = str(workspace.id)
     finally:

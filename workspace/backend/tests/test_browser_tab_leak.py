@@ -48,7 +48,8 @@ def _create_workspace(client):
     caller's own and refuses anonymous callers, so setup builds the row
     directly — see conftest.make_owned_workspace."""
     data = make_owned_workspace()
-    return {"id": data["workspaceId"], "slug": data["slug"], "token": data["token"]}
+    return {"id": data["workspaceId"], "slug": data["slug"],
+            "token": data["token"], "session_id": data["sessionId"]}
 
 
 def _set_workspace_key(db, ws_id, key=WS_KEY):
@@ -86,8 +87,7 @@ def _open_tab(client, ws, url="https://example.com"):
     return client.post("/v1/browser/tabs", json={
         "url": url,
         "network": ws["id"],
-        "source": "human:user",
-    }, headers={"X-Workspace-Token": ws["token"]})
+    }, headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
 
 
 def _http_status_error(status_code):
@@ -322,7 +322,7 @@ class TestCredentialReference:
         _set_workspace_key(db, ws["id"], key="rotated-new-key")  # rotate
 
         resp = client.delete(f"/v1/browser/tabs/{tab['id']}",
-                             headers={"X-Workspace-Token": ws["token"]})
+                             headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
 
         manager.close_tab.assert_not_awaited()  # never called BF with the new key
@@ -350,7 +350,7 @@ class TestCredentialReference:
 
         resp = client.post(f"/v1/browser/tabs/{tab['id']}/navigate",
                            json={"url": "https://other.com"},
-                           headers={"X-Workspace-Token": ws["token"]})
+                           headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 400
         assert "credential_missing" in resp.json()["message"]
 
@@ -405,8 +405,8 @@ class TestRouterOpenClose:
 
         resp = client.post("/v1/browser/tabs", json={
             "url": "https://reddit.com", "network": ws["id"],
-            "source": "human:user", "context_id": ctx.id,
-        }, headers={"X-Workspace-Token": ws["token"]})
+            "context_id": ctx.id,
+        }, headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200, resp.json()
 
     @patch("app.routers.browser.BrowserManager")
@@ -453,7 +453,7 @@ class TestRouterOpenClose:
 
         tab = _open_tab(client, ws).json()["data"]
         resp = client.delete(f"/v1/browser/tabs/{tab['id']}",
-                             headers={"X-Workspace-Token": ws["token"]})
+                             headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
 
         row = db.query(BrowserTab).filter_by(id=tab["id"]).one()
@@ -471,7 +471,7 @@ class TestRouterOpenClose:
 
         tab = _open_tab(client, ws).json()["data"]
         resp = client.delete(f"/v1/browser/tabs/{tab['id']}",
-                             headers={"X-Workspace-Token": ws["token"]})
+                             headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
 
         row = db.query(BrowserTab).filter_by(id=tab["id"]).one()
@@ -700,7 +700,7 @@ class TestOrphanTombstones:
         manager.close_tab = AsyncMock(return_value=(False, "HTTP 502 closing session"))
 
         resp = client.post(f"/v1/browser/tabs/{tab['id']}/reconnect",
-                           headers={"X-Workspace-Token": ws["token"]})
+                           headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["session_id"] == "sess-new"
 
@@ -719,7 +719,7 @@ class TestOrphanTombstones:
         manager.get_session_id.return_value = "sess-new"
 
         resp = client.post(f"/v1/browser/tabs/{tab['id']}/reconnect",
-                           headers={"X-Workspace-Token": ws["token"]})
+                           headers={"X-Workspace-Token": ws["token"], "X-Session-Id": ws["session_id"]})
         assert resp.status_code == 200
 
         assert db.query(BrowserTab).filter_by(session_id="sess-old").count() == 0

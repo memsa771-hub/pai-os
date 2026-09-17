@@ -38,6 +38,7 @@ through the public door.
 """
 
 import logging
+import secrets as _secrets
 from dataclasses import dataclass
 from typing import Optional
 
@@ -149,6 +150,90 @@ def resolve_actor(
     if human is not None:
         return human
     return resolve_agent(db, workspace, token, session_id)
+
+
+# ---------------------------------------------------------------------------
+# The in-process trusted principal
+# ---------------------------------------------------------------------------
+
+# Regenerated every boot and never written down, logged or sent over a socket.
+# `pai.WorkspaceApi` talks to this same FastAPI app through
+# `httpx.ASGITransport`, so PAI's tools are literally in this process and can
+# read it; nothing outside the process can. That is what lets a tool carry its
+# ToolContext principal across the in-process HTTP boundary without the
+# workspace token — which is shared and identifies nobody — becoming an
+# identity claim again.
+_INTERNAL_SECRET = _secrets.token_urlsafe(32)
+
+INTERNAL_ACTOR_HEADER = "X-Internal-Actor"
+
+
+def mint_internal_actor(source: str) -> str:
+    """Header value asserting a server-side principal. In-process callers only."""
+    return f"{_INTERNAL_SECRET}.{source}"
+
+
+def resolve_internal_actor(header_value: Optional[str]) -> Optional[Actor]:
+    """The principal a trusted in-process caller asserted, if the secret matches.
+
+    A forged header fails `compare_digest` and resolves to nothing, so an
+    external caller gains exactly what they had before: no identity.
+    """
+    if not header_value:
+        return None
+    presented, _, source = header_value.partition(".")
+    if not source or not _secrets.compare_digest(presented, _INTERNAL_SECRET):
+        return None
+    if source.startswith(AGENT_PREFIX):
+        return Actor(source=source, kind="agent",
+                     agent_name=source[len(AGENT_PREFIX):])
+    return Actor(source=source, kind="internal")
+
+
+def resolve_request_actor(
+    db: Session,
+    workspace: Workspace,
+    *,
+    token: Optional[str] = None,
+    authorization: Optional[str] = None,
+    session_id: Optional[str] = None,
+    internal_actor: Optional[str] = None,
+) -> Optional[Actor]:
+    """The actor for any mutating request, public or internal.
+
+    One resolution order for every router, so `source` never has to be accepted
+    from a request body again:
+
+      1. a trusted in-process principal (PAI's own tools)
+      2. the workspace owner, by verified bearer
+      3. an agent, by machine token + live session
+    """
+    internal = resolve_internal_actor(internal_actor)
+    if internal is not None:
+        return internal
+    return resolve_actor(
+        db, workspace, token=token, authorization=authorization, session_id=session_id,
+    )
+
+
+def request_actor_source(db, workspace, token, authorization, internal_actor,
+                         session_id=None) -> Optional[str]:
+    """Who is acting on a mutating request, decided by the server.
+
+    The router-facing shape of `resolve_request_actor`: positional in the
+    order a handler already has these values, returning just the source string
+    (or None, which the caller turns into a 401).
+
+    `source` used to be a request-body field, typically defaulting to
+    "human:user", so any authenticated caller could attribute a write to PAI,
+    to another agent, or to `system:*`. Every router that writes an attributed
+    row goes through here instead.
+    """
+    actor = resolve_request_actor(
+        db, workspace, token=token, authorization=authorization,
+        session_id=session_id, internal_actor=internal_actor,
+    )
+    return actor.source if actor else None
 
 
 def session_id_from(body_metadata: Optional[dict], header_value: Optional[str]) -> Optional[str]:

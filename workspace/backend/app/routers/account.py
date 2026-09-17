@@ -26,7 +26,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import get_or_create_owned_workspace, resolve_current_user
+from app.access import (
+    get_or_create_owned_workspace,
+    resolve_current_user,
+    resolve_owned_workspace,
+)
 from app.database import get_db
 from app.firebase_auth import verify_identity_token
 from app.models import (
@@ -36,6 +40,8 @@ from app.models import (
     Workspace,
 )
 from app.response import ResponseCode, json_response, success_response
+from app.stream_ticket import TICKET_TTL_SECONDS
+from app.stream_ticket import mint as mint_stream_ticket
 from app.routers.network import _extract_bearer
 
 logger = logging.getLogger(__name__)
@@ -53,20 +59,26 @@ def _authed_email(authorization: Optional[str]) -> Optional[str]:
     return email.strip().lower() if email else None
 
 
-def _canonical_workspace_row(ws: Workspace) -> dict:
-    return {
+def _canonical_workspace_row(ws: Workspace, user: Optional[User] = None) -> dict:
+    """The workspace as the browser sees it. Deliberately WITHOUT its token.
+
+    This used to return `ws.password_hash` — the workspace machine token, the
+    credential PAI's agents write with — because EventSource cannot send a
+    header and needed something in the URL. The browser then kept it in a
+    30-day JS-readable cookie. A read-only, minutes-long `streamTicket` now
+    covers that need instead (see app/stream_ticket.py); the machine token
+    never leaves the server.
+    """
+    row = {
         "workspaceId": str(ws.id),
         "name": ws.name,
         "slug": ws.slug,
-        # The workspace's machine/access token. Exposed here — but ONLY here,
-        # to the verified owner of this exact workspace — because the
-        # realtime event stream (EventSource can't send custom headers) still
-        # authenticates by this token in the URL; see app/routers/events.py.
-        # There is no invite/share/add-collaborator path in the Placement AI
-        # product, so this token can never reach anyone but its own owner.
-        "token": ws.password_hash,
         "lastActivityAt": ws.last_activity_at.isoformat() if ws.last_activity_at else None,
     }
+    if user is not None:
+        row["streamTicket"] = mint_stream_ticket(ws, str(user.id))
+        row["streamTicketTtl"] = TICKET_TTL_SECONDS
+    return row
 
 
 @router.get("/account/workspace")
@@ -96,7 +108,33 @@ def get_account_workspace(
     db.commit()
     db.refresh(workspace)
 
-    return success_response(_canonical_workspace_row(workspace))
+    return success_response(_canonical_workspace_row(workspace, user))
+
+
+@router.post("/account/stream-ticket")
+def refresh_stream_ticket(
+    db: Session = Depends(get_db),
+    authorization: Optional[str] = Header(None),
+):
+    """A fresh read-only ticket for SSE and file URLs.
+
+    Tickets expire in minutes, so the browser re-mints as it goes. Only the
+    verified owner of the workspace can mint one, and the ticket it gets back
+    grants strictly less than the bearer it was minted with.
+    """
+    user = resolve_current_user(db, authorization)
+    if not user:
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
+
+    workspace = resolve_owned_workspace(db, user)
+    db.commit()
+    if not workspace:
+        return json_response(ResponseCode.NOT_FOUND, "No workspace")
+
+    return success_response({
+        "streamTicket": mint_stream_ticket(workspace, str(user.id)),
+        "streamTicketTtl": TICKET_TTL_SECONDS,
+    })
 
 
 @router.get("/account/workspaces")
@@ -126,7 +164,7 @@ def list_account_workspaces(
     db.commit()
     db.refresh(workspace)
 
-    return success_response([{**_canonical_workspace_row(workspace), "role": "owner"}])
+    return success_response([{**_canonical_workspace_row(workspace, user), "role": "owner"}])
 
 
 # ---------------------------------------------------------------------------

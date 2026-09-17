@@ -14,8 +14,12 @@ import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { goToCentralLogin } from '@/lib/auth-redirects';
 import { useT } from '@/lib/i18n';
 
-/** Read the workspace token persisted by the main workspace view (see
- * setWorkspaceCookie in app/[workspaceId]/page.tsx). */
+/** Read a self-hosted workspace token persisted by the main workspace view
+ * (see setWorkspaceCookie in app/[workspaceId]/page.tsx).
+ *
+ * On Placement AI this always returns null: the cookie no longer carries a
+ * token, because the backend no longer gives the browser one. Only a
+ * self-hosted operator who pasted their own ?token= has one here. */
 function readCookieToken(workspaceId: string): string | null {
   if (typeof document === 'undefined') return null;
   const raw = document.cookie.split('; ').find((c) => c.startsWith('oa_workspace='));
@@ -45,26 +49,16 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
   const urlToken = searchParams.get('token');
   const query = urlToken ? `?token=${encodeURIComponent(urlToken)}` : '';
 
-  // ── Credential resolution: ?token= → oa_workspace cookie → account lookup ──
-  // null = still resolving; '' = no workspace token (bearer-only or anonymous).
+  // ── Credential resolution: ?token= → oa_workspace cookie → bearer ──
+  // null = still resolving; '' = no workspace token, which is the normal
+  // Placement AI case: the bearer alone authorizes every call this page makes.
   const [token, setToken] = useState<string | null>(null);
   useEffect(() => {
     if (urlToken) { setToken(urlToken); return; }
     const fromCookie = readCookieToken(workspaceId);
     if (fromCookie) { setToken(fromCookie); return; }
     if (authLoading) return;
-    if (idToken) {
-      let cancelled = false;
-      import('@/lib/account-api')
-        .then(({ getAccountWorkspace }) => getAccountWorkspace(idToken))
-        .then((ws) => {
-          if (cancelled) return;
-          const match = ws.slug === workspaceId || ws.workspaceId === workspaceId;
-          setToken(match ? (ws.token || '') : '');
-        })
-        .catch(() => { if (!cancelled) setToken(''); });
-      return () => { cancelled = true; };
-    }
+    // A signed-in student authenticates with the bearer, not a machine token.
     setToken('');
   }, [urlToken, workspaceId, idToken, authLoading]);
 

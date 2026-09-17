@@ -202,6 +202,10 @@ def make_owned_workspace(name="Test Workspace", agent_name="agent-alpha",
             "name": ws.name,
             "token": ws.password_hash,
             "sessionId": agent_session_id if agent_name else None,
+            # Same value under the snake_case key too: some suites keep the API
+            # shape this helper returns, others re-key it, and the agent session
+            # is now needed by both.
+            "session_id": agent_session_id if agent_name else None,
             "agentName": agent_name,
             "channel": channel_payload,
         }

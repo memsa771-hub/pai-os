@@ -27,6 +27,8 @@ from app.services.notify import notify
 
 logger = logging.getLogger(__name__)
 
+from app.event_identity import request_actor_source
+
 router = APIRouter(prefix="/v1", tags=["Notifications"])
 
 VALID_PRIORITIES = {"low", "normal", "high"}
@@ -38,7 +40,8 @@ VALID_PRIORITIES = {"low", "normal", "high"}
 
 class CreateNotificationRequest(BaseModel):
     network: str
-    source: str
+    # No `source`: who filed a notification is derived from credentials, not
+    # claimed in the body. See app/event_identity.request_actor_source.
     title: str
     message: str
     priority: Optional[str] = "normal"
@@ -87,6 +90,8 @@ async def create_notification(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """Create a notification in the workspace inbox."""
     workspace = _resolve_workspace(db, body.network)
@@ -94,6 +99,13 @@ async def create_notification(
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
+
+    actor_source = request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     priority = body.priority or "normal"
     if priority not in VALID_PRIORITIES:
@@ -105,7 +117,7 @@ async def create_notification(
     notification = notify(
         db,
         str(workspace.id),
-        source=body.source,
+        source=actor_source,
         title=body.title,
         message=body.message,
         priority=priority,

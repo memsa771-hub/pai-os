@@ -403,14 +403,14 @@ class TestSessionLifecycle:
         # 3. Heartbeat
         resp = client.post("/v1/heartbeat", json={
             "agent_name": agent, "network": network,
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "online"
 
         # 4. Leave
         resp = client.post("/v1/leave", json={
             "agent_name": agent, "network": network,
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
         assert resp.status_code == 200
         assert resp.json()["data"]["status"] == "offline"
 
@@ -433,7 +433,7 @@ class TestSessionLifecycle:
 
         # All agents visible in discover
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
-                          headers={"X-Workspace-Token": workspace["token"]})
+                          headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         agents = disc.json()["data"]["agents"]
         # 5 new agents + 1 master (agent-alpha)
         assert len(agents) == 6
@@ -449,7 +449,7 @@ class TestSessionLifecycle:
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "network.agent.join",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         sources = [e["source"] for e in events]
         assert "openagents:agent-evented" in sources
@@ -464,12 +464,12 @@ class TestSessionLifecycle:
         client.post("/v1/leave", json={
             "agent_name": "agent-leaver",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
 
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "network.agent.leave",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         sources = [e["source"] for e in events]
         assert "openagents:agent-leaver" in sources
@@ -484,12 +484,12 @@ class TestSessionLifecycle:
         client.post("/v1/heartbeat", json={
             "agent_name": "agent-pinger",
             "network": workspace["id"],
-        })
+        }, headers={"X-Workspace-Token": workspace["token"]})
 
         resp = client.get("/v1/events", params={
             "network": workspace["id"],
             "type": "network.ping",
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         events = resp.json()["data"]["events"]
         sources = [e["source"] for e in events]
         assert "openagents:agent-pinger" in sources
@@ -622,7 +622,7 @@ class TestTokenResolveEdgeCases:
         # Delete the workspace (auth required)
         client.delete(
             f"/v1/workspaces/{workspace['id']}",
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
 
         # Token should no longer resolve

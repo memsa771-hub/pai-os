@@ -38,7 +38,7 @@ def telegram_binding(client, workspace, monkeypatch):
     resp = client.post(
         f"/v1/workspaces/{workspace['id']}/integrations",
         json={"platform": "telegram", "bot_token": "123:ABCDEF", "default_agent": "agent-alpha"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200, resp.text
     binding = resp.json()["data"]["integration"]
@@ -80,7 +80,7 @@ def test_slack_requires_signing_secret(client, workspace):
     resp = client.post(
         f"/v1/workspaces/{workspace['id']}/integrations",
         json={"platform": "slack", "bot_token": "xoxb-123"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 400
 
@@ -89,7 +89,7 @@ def test_list_and_delete(client, workspace, telegram_binding, monkeypatch):
     monkeypatch.setattr(svc, "telegram_delete_webhook", lambda token: None)
     resp = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     listed = resp.json()["data"]["integrations"]
     assert len(listed) == 1
@@ -98,12 +98,12 @@ def test_list_and_delete(client, workspace, telegram_binding, monkeypatch):
 
     resp = client.delete(
         f"/v1/workspaces/{workspace['id']}/integrations/{telegram_binding['id']}",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200
     resp = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.json()["data"]["integrations"] == []
 
@@ -147,7 +147,7 @@ def test_telegram_message_bridges_into_channel(client, workspace, telegram_bindi
         "/v1/events",
         params={"network": workspace["id"], "channel": channel_name,
                 "type": "workspace.message.posted"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     events = resp.json()["data"]["events"]
     assert len(events) == 1
@@ -157,7 +157,7 @@ def test_telegram_message_bridges_into_channel(client, workspace, telegram_bindi
     # default_agent routing: the auto-created channel is led by agent-alpha
     resp = client.get(
         f"/v1/workspaces/{workspace['id']}/channels/{channel_name}",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     ch = resp.json()["data"]
     assert ch.get("masterAgent") == "agent-alpha" or ch.get("master_agent") == "agent-alpha"
@@ -199,7 +199,7 @@ def slack_binding(client, workspace, monkeypatch):
         f"/v1/workspaces/{workspace['id']}/integrations",
         json={"platform": "slack", "bot_token": "xoxb-secret-token",
               "signing_secret": SLACK_SIGNING_SECRET, "default_agent": "agent-alpha"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["integration"]
@@ -260,7 +260,7 @@ def test_slack_message_bridges_into_channel(client, workspace, slack_binding, mo
         "/v1/events",
         params={"network": workspace["id"], "channel": channel_name,
                 "type": "workspace.message.posted"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     events = resp.json()["data"]["events"]
     assert len(events) == 1
@@ -306,7 +306,7 @@ def official_binding(client, workspace, official_app, monkeypatch):
     })
     url_resp = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations/slack/install-url",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert url_resp.status_code == 200, url_resp.text
     install_url = url_resp.json()["data"]["url"]
@@ -323,7 +323,7 @@ def official_binding(client, workspace, official_app, monkeypatch):
     assert "slack=connected" in resp.headers["location"]
     listing = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]
     assert listing["slackAppConfigured"] is True
     return listing["integrations"][0]
@@ -332,7 +332,7 @@ def official_binding(client, workspace, official_app, monkeypatch):
 def test_install_url_requires_configured_app(client, workspace):
     resp = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations/slack/install-url",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 400
 
@@ -366,7 +366,7 @@ def test_oauth_reinstall_updates_binding_in_place(
     })
     url = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations/slack/install-url",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]["url"]
     from urllib.parse import unquote
     state = unquote(dict(p.split("=", 1) for p in url.split("?", 1)[1].split("&"))["state"])
@@ -377,7 +377,7 @@ def test_oauth_reinstall_updates_binding_in_place(
     )
     listing = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]["integrations"]
     assert len(listing) == 1  # updated, not duplicated
 
@@ -425,7 +425,7 @@ def test_shared_events_routes_by_team_id(client, workspace, official_binding, mo
         "/v1/events",
         params={"network": workspace["id"], "channel": channel_name,
                 "type": "workspace.message.posted"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]["events"]
     assert len(events) == 1
     assert events[0]["payload"]["content"] == "ping from official app"
@@ -462,7 +462,7 @@ def test_app_uninstalled_disables_binding(client, workspace, official_binding):
     assert resp.json()["data"]["disabled"] == 1
     listing = client.get(
         f"/v1/workspaces/{workspace['id']}/integrations",
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]["integrations"]
     assert listing[0]["status"] == "disabled"
     assert "uninstalled" in (listing[0]["lastError"] or "")
@@ -492,7 +492,7 @@ def _make_lark_binding(client, workspace, monkeypatch, encrypt_key=None):
     resp = client.post(
         f"/v1/workspaces/{workspace['id']}/integrations",
         json=body,
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200, resp.text
     return resp.json()["data"]["integration"]
@@ -537,7 +537,7 @@ def test_lark_requires_app_id_and_token(client, workspace):
     resp = client.post(
         f"/v1/workspaces/{workspace['id']}/integrations",
         json={"platform": "lark", "bot_token": "app-secret-value"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 400
 
@@ -576,7 +576,7 @@ def test_lark_message_bridges_into_channel(client, workspace, lark_binding, monk
         "/v1/events",
         params={"network": workspace["id"], "channel": channel_name,
                 "type": "workspace.message.posted"},
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     ).json()["data"]["events"]
     assert len(events) == 1
     # Bot's own mention stripped; other user's mention readable.

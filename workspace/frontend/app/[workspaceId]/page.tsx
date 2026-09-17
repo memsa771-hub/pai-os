@@ -44,10 +44,20 @@ function WorkspaceLoadingSplash() {
   );
 }
 
-function setWorkspaceCookie(slug: string, token: string) {
+/**
+ * Remember which workspace this browser last opened.
+ *
+ * `token` is the SELF-HOSTED case only — an operator who pasted their own
+ * ?token=. On Placement AI it is omitted, because the backend no longer hands
+ * the browser a workspace machine token: a 30-day JS-readable cookie holding
+ * a never-expiring, full-write, workspace-wide credential was the single
+ * worst place that token could live.
+ */
+function setWorkspaceCookie(slug: string, token?: string) {
   const maxAge = 30 * 24 * 60 * 60;
   const shared = `path=/;max-age=${maxAge};secure;samesite=lax;domain=.openagents.org`;
-  document.cookie = `oa_workspace=${encodeURIComponent(JSON.stringify({ slug, token }))};${shared}`;
+  const payload = token ? { slug, token } : { slug };
+  document.cookie = `oa_workspace=${encodeURIComponent(JSON.stringify(payload))};${shared}`;
   document.cookie = `oa_has_workspace=1;${shared}`;
 }
 
@@ -74,7 +84,7 @@ function IdentityGate({ children }: { children: React.ReactNode }) {
  */
 type BearerState =
   | { kind: 'loading' }
-  | { kind: 'ok'; token: string }
+  | { kind: 'ok'; streamTicket: string }
   | { kind: 'not_found' }
   | { kind: 'no_access' }
   | { kind: 'error' };
@@ -92,9 +102,9 @@ function BearerWorkspace({ workspaceId, idToken }: { workspaceId: string; idToke
         const { getAccountWorkspace } = await import('@/lib/account-api');
         const ws = await getAccountWorkspace(idToken);
         if (cancelled) return;
-        if ((ws.slug === workspaceId || ws.workspaceId === workspaceId) && ws.token) {
-          setWorkspaceCookie(ws.slug || workspaceId, ws.token);
-          setState({ kind: 'ok', token: ws.token });
+        if (ws.slug === workspaceId || ws.workspaceId === workspaceId) {
+          setWorkspaceCookie(ws.slug || workspaceId);
+          setState({ kind: 'ok', streamTicket: ws.streamTicket || '' });
           return;
         }
         // The URL doesn't point at this student's own canonical workspace.
@@ -118,7 +128,12 @@ function BearerWorkspace({ workspaceId, idToken }: { workspaceId: string; idToke
 
   if (state.kind === 'ok') {
     return (
-      <WorkspaceProvider workspaceId={workspaceId} token={state.token} bearerToken={idToken}>
+      <WorkspaceProvider
+        workspaceId={workspaceId}
+        token=""
+        bearerToken={idToken}
+        streamTicket={state.streamTicket}
+      >
         <IdentityGate>
           <LayoutProvider>
             <Wrapper />

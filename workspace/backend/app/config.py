@@ -69,10 +69,13 @@ class Config:
     # Agent offline timeout in seconds
     AGENT_TIMEOUT_SECONDS: int = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "60"))
 
-    # Reject /v1/leave and /v1/heartbeat calls that lack valid workspace
-    # credentials. Off by default for one release (warn-and-accept) so any
-    # client that never sent a token keeps working while offenders are logged.
-    ENFORCE_AGENT_LIFECYCLE_AUTH: bool = os.environ.get("ENFORCE_AGENT_LIFECYCLE_AUTH", "false").lower() in ("true", "1", "yes")
+    # Reject uncredentialed /v1/leave and /v1/heartbeat. Parsed the other way
+    # round from the usual flag: anything that isn't an explicit "false"/"0"/"no"
+    # enforces, so an unset, empty or misspelled env var fails CLOSED. Setting
+    # it falsey is the deliberate, temporary escape hatch for a legacy fleet.
+    ENFORCE_AGENT_LIFECYCLE_AUTH: bool = os.environ.get(
+        "ENFORCE_AGENT_LIFECYCLE_AUTH", "true"
+    ).strip().lower() not in ("false", "0", "no")
 
     # CORS origins (comma-separated)
     CORS_ORIGINS: str = os.environ.get("CORS_ORIGINS", "*")
