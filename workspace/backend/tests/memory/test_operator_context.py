@@ -29,7 +29,7 @@ def _populate(db, workspace_id):
     db.commit()
 
 
-def test_refs_resolve_to_a_prompt_block(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_refs_resolve_to_a_prompt_block(db_session, workspace, seed_fields):
     _populate(db_session, workspace.id)
     block = _resolve_memory_context(workspace.id, ["vault", "memory", "episodes"])
 
@@ -38,14 +38,14 @@ def test_refs_resolve_to_a_prompt_block(db_session, workspace, seed_fields, use_
     assert "University X" in block
 
 
-def test_no_refs_yields_no_block(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_no_refs_yields_no_block(db_session, workspace, seed_fields):
     """A run with no context_refs must not get a stray empty section."""
     _populate(db_session, workspace.id)
     assert _resolve_memory_context(workspace.id, None) == ""
     assert _resolve_memory_context(workspace.id, []) == ""
 
 
-def test_refs_narrow_what_is_resolved(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_refs_narrow_what_is_resolved(db_session, workspace, seed_fields):
     _populate(db_session, workspace.id)
     block = _resolve_memory_context(workspace.id, ["vault"])
 
@@ -53,7 +53,7 @@ def test_refs_narrow_what_is_resolved(db_session, workspace, seed_fields, use_te
     assert "research-focused" not in block
 
 
-def test_resolution_reflects_current_state_not_a_snapshot(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_resolution_reflects_current_state_not_a_snapshot(db_session, workspace, seed_fields):
     """The whole point of storing refs rather than payloads."""
     vault = VaultService(db_session)
     vault.apply_fact(
@@ -72,7 +72,7 @@ def test_resolution_reflects_current_state_not_a_snapshot(db_session, workspace,
     assert "education.cgpa: 8.5" in _resolve_memory_context(workspace.id, ["vault"])
 
 
-def test_resolution_is_capability_gated_as_operator(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_resolution_is_capability_gated_as_operator(db_session, workspace, seed_fields):
     """Operator resolves with ITS grant, so sensitive fields stay withheld."""
     VaultService(db_session).apply_fact(
         workspace_id=workspace.id, field_key="finance.budget",
@@ -98,7 +98,7 @@ def test_resolution_failure_is_not_fatal(db_session, workspace, monkeypatch):
     assert _resolve_memory_context(workspace.id, ["vault"]) == ""
 
 
-def test_empty_memory_yields_no_block(db_session, workspace, seed_fields, use_test_sessionlocal):
+def test_empty_memory_yields_no_block(db_session, workspace, seed_fields):
     """A brand-new student produces no headings, not empty ones."""
     assert _resolve_memory_context(workspace.id, ["vault", "memory"]) == ""
 

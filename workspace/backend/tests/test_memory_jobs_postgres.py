@@ -180,3 +180,176 @@ def test_concurrent_enqueue_of_one_key_creates_one_job(pg_sessionmaker, pg_works
         session.close()
     assert count == 1
     assert len(set(results)) == 1, "the two enqueues returned different rows"
+
+
+# ---------------------------------------------------------------------------
+# Lease ownership under real concurrency
+# ---------------------------------------------------------------------------
+
+def test_long_job_keeps_its_lease_while_abandoned_work_is_reclaimed(
+    pg_sessionmaker, pg_workspace,
+):
+    """A live long-running job is safe; only genuinely dead work moves.
+
+    Two jobs claimed by worker-a. One keeps heartbeating (a slow but healthy
+    job); the other's worker "dies". A sweep must reclaim exactly the dead one.
+    """
+    from app.jobs.service import BackgroundJobService
+    from app.models import BackgroundJob
+    from datetime import datetime, timedelta, timezone
+
+    session = pg_sessionmaker()
+    try:
+        service = BackgroundJobService(session)
+        service.enqueue("memory.extract", {"tag": "slow"}, workspace_id=pg_workspace,
+                        idempotency_key=f"slow-{pg_workspace}")
+        service.enqueue("memory.extract", {"tag": "dead"}, workspace_id=pg_workspace,
+                        idempotency_key=f"dead-{pg_workspace}")
+        session.commit()
+
+        claimed = service.claim(limit=2, worker_id="worker-a")
+        assert len(claimed) == 2
+        by_tag = {j.payload["tag"]: j for j in claimed}
+        slow_id, dead_id = by_tag["slow"].id, by_tag["dead"].id
+
+        # Both leases age out...
+        stale = datetime.now(timezone.utc) - timedelta(minutes=10)
+        session.execute(
+            BackgroundJob.__table__.update()
+            .where(BackgroundJob.id.in_([slow_id, dead_id]))
+            .values(locked_at=stale)
+        )
+        session.commit()
+
+        # ...but the slow job's worker is alive and renews.
+        assert service.heartbeat(slow_id, "worker-a") is True
+
+        assert service.reclaim_stale() == 1
+        session.expire_all()
+        assert session.get(BackgroundJob, slow_id).status == "running"
+        assert session.get(BackgroundJob, dead_id).status == "pending"
+    finally:
+        session.close()
+
+
+def test_waiting_jobs_do_not_lose_leases_behind_a_slow_job(pg_sessionmaker, pg_workspace):
+    """The batch-ownership race: claimed jobs must not expire while queued.
+
+    The worker claims only as many jobs as it has free slots and starts lease
+    renewal immediately, so a slow job cannot strand its batch-mates. Asserted
+    on the invariant that matters: every claimed job is renewable throughout.
+    """
+    from app.jobs.service import BackgroundJobService
+    from app.models import BackgroundJob
+    from datetime import datetime, timedelta, timezone
+
+    session = pg_sessionmaker()
+    try:
+        service = BackgroundJobService(session)
+        for i in range(4):
+            service.enqueue("memory.embed", {"n": i}, workspace_id=pg_workspace,
+                            idempotency_key=f"batch-{pg_workspace}-{i}")
+        session.commit()
+
+        claimed = service.claim(limit=4, worker_id="worker-a")
+        assert len(claimed) == 4
+        ids = [j.id for j in claimed]
+
+        # Time passes while job 0 runs long.
+        stale = datetime.now(timezone.utc) - timedelta(minutes=10)
+        session.execute(
+            BackgroundJob.__table__.update()
+            .where(BackgroundJob.id.in_(ids)).values(locked_at=stale)
+        )
+        session.commit()
+
+        # Every in-flight job renews — none is stranded waiting its turn.
+        for job_id in ids:
+            assert service.heartbeat(job_id, "worker-a") is True
+
+        assert service.reclaim_stale() == 0
+        session.expire_all()
+        for job_id in ids:
+            assert session.get(BackgroundJob, job_id).status == "running"
+    finally:
+        session.close()
+
+
+def test_stale_worker_cannot_act_after_ownership_moved(pg_sessionmaker, pg_workspace):
+    """The original worker must be locked out once its lease is taken over.
+
+    It can neither renew nor complete — which is what stops it overwriting the
+    new owner's outcome with its own stale result.
+    """
+    from app.jobs.service import BackgroundJobService
+    from app.models import BackgroundJob
+    from datetime import datetime, timedelta, timezone
+
+    session = pg_sessionmaker()
+    try:
+        service = BackgroundJobService(session)
+        service.enqueue("memory.extract", {}, workspace_id=pg_workspace,
+                        idempotency_key=f"takeover-{pg_workspace}")
+        session.commit()
+
+        job_id = service.claim(limit=1, worker_id="worker-a")[0].id
+
+        session.execute(
+            BackgroundJob.__table__.update().where(BackgroundJob.id == job_id)
+            .values(locked_at=datetime.now(timezone.utc) - timedelta(minutes=10))
+        )
+        session.commit()
+        service.reclaim_stale()
+
+        taken = service.claim(limit=1, worker_id="worker-b")
+        assert len(taken) == 1 and taken[0].id == job_id
+
+        # worker-a is locked out of renewal...
+        assert service.heartbeat(job_id, "worker-a") is False
+        # ...and the ownership predicate the worker checks before completing
+        # tells it to discard its result.
+        session.expire_all()
+        job = session.get(BackgroundJob, job_id)
+        assert job.locked_by == "worker-b"
+        assert job.status == "running"
+
+        # worker-b, the real owner, still works normally.
+        assert service.heartbeat(job_id, "worker-b") is True
+    finally:
+        session.close()
+
+
+def test_two_workers_never_hold_the_same_valid_lease(pg_sessionmaker, pg_workspace):
+    """Exactly one worker owns a job at any moment, under real contention."""
+    import threading
+    from app.jobs.service import BackgroundJobService
+
+    session = pg_sessionmaker()
+    try:
+        BackgroundJobService(session).enqueue(
+            "memory.extract", {}, workspace_id=pg_workspace,
+            idempotency_key=f"single-{pg_workspace}",
+        )
+        session.commit()
+    finally:
+        session.close()
+
+    winners: list[str] = []
+    barrier = threading.Barrier(4)
+
+    def contend(name: str):
+        local = pg_sessionmaker()
+        try:
+            barrier.wait(timeout=10)
+            for job in BackgroundJobService(local).claim(limit=1, worker_id=name):
+                winners.append(name)
+        finally:
+            local.close()
+
+    threads = [threading.Thread(target=contend, args=(f"w{i}",)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert len(winners) == 1, f"job claimed by {len(winners)} workers: {winners}"

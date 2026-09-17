@@ -18,7 +18,7 @@ to skip the *queue*, not the *gate*.
 
 import logging
 
-from app.database import SessionLocal
+from app.database import new_session
 from app.memory.candidates import MemoryCandidateService
 from app.memory.context import MemoryContextService
 from app.memory.reconciler import MemoryReconciler
@@ -33,7 +33,7 @@ def _session():
     Tool handlers are async and run inside a threadpool request; borrowing the
     request's Session would hold a pooled connection across an await.
     """
-    return SessionLocal()
+    return new_session()
 
 
 # -- reads (Counselor + Operator) -----------------------------------------

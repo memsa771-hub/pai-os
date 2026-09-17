@@ -91,6 +91,34 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()
 
+# The session factory for code that runs OUTSIDE a request: the durable job
+# worker, Operator's background task, memory tool handlers. Those cannot use
+# the `get_db` dependency, and `from app.database import SessionLocal` binds
+# the name at import time — so a test overriding `get_db` silently leaves them
+# pointed at the production engine (or, in tests, a second empty database).
+#
+# Call `session_factory()` instead of importing SessionLocal directly, and one
+# `set_session_factory()` redirects every such path at once.
+_session_factory = SessionLocal
+
+
+def session_factory():
+    """The session factory background/tool code should use."""
+    return _session_factory
+
+
+def set_session_factory(factory):
+    """Swap the factory (tests). Returns the previous one so it can be restored."""
+    global _session_factory
+    previous = _session_factory
+    _session_factory = factory
+    return previous
+
+
+def new_session():
+    """A session from the current factory. The one call background code makes."""
+    return _session_factory()
+
 
 def get_db():
     """FastAPI dependency that provides a database session."""

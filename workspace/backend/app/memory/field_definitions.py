@@ -22,10 +22,12 @@ from sqlalchemy import select
 from app.models import VaultFieldDefinition
 from app.tools.executor import _validate
 
+from .errors import MemoryDataError
+
 logger = logging.getLogger(__name__)
 
 
-class VaultFieldError(ValueError):
+class VaultFieldError(MemoryDataError):
     """A proposed value does not satisfy its field definition."""
 
 

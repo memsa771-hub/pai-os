@@ -64,7 +64,7 @@ services:
     environment:
       <<: *backend-env
       JOB_WORKER_POLL_SECONDS: ${JOB_WORKER_POLL_SECONDS:-2}
-      JOB_WORKER_BATCH: ${JOB_WORKER_BATCH:-5}
+      JOB_WORKER_CONCURRENCY: ${JOB_WORKER_CONCURRENCY:-5}
     depends_on:
       db:
         condition: service_healthy

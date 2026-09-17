@@ -53,7 +53,7 @@ from typing import Any, Optional
 from sqlalchemy import select
 
 from app.config import config
-from app.database import SessionLocal
+from app.database import new_session
 from app.models import ExecutionRun
 from app.services import pai
 from app.services.cloud_providers import chat_completion, chat_completion_tools
@@ -194,7 +194,7 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> 
     """
     if not context_refs:
         return ""
-    db = SessionLocal()
+    db = new_session()
     try:
         from app.memory.context import MemoryContextService
 
@@ -236,7 +236,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
     if not is_available():
         return {"ok": False, "error": {"code": "operator_unavailable", "message": "PAI Operator is not configured on the server"}}
 
-    db = SessionLocal()
+    db = new_session()
     try:
         run = ExecutionRun(
             workspace_id=ctx.workspace_id,
@@ -268,7 +268,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
 async def get_status(ctx, run_id: Optional[str]) -> dict:
     """Read an ExecutionRun back — how PAI Counselor answers "what's the
     status of X?" without re-running anything."""
-    db = SessionLocal()
+    db = new_session()
     try:
         query = select(ExecutionRun).where(ExecutionRun.workspace_id == ctx.workspace_id)
         if run_id:
@@ -291,7 +291,7 @@ async def _execute(
     run_id: str, workspace_id: str, api: Any,
     objective: str, constraints: dict, context_refs: list,
 ) -> None:
-    db = SessionLocal()
+    db = new_session()
     try:
         run = db.get(ExecutionRun, run_id)
         if not run:

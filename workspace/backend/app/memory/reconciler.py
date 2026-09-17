@@ -20,7 +20,7 @@ from typing import Optional
 from app.models import MemoryCandidate
 from .candidates import MemoryCandidateService
 from .episodic import EpisodicMemoryService
-from .field_definitions import VaultFieldError
+from .errors import MemoryDataError
 from .semantic import MemoryService
 from .vault import VaultOutcome, VaultService
 
@@ -56,7 +56,17 @@ class MemoryReconciler:
     # -- entry points ------------------------------------------------------
 
     def reconcile(self, candidate: MemoryCandidate) -> ReconcileResult:
-        """Decide one candidate. Never raises for a bad candidate."""
+        """Decide one candidate.
+
+        Rejects bad *data*. Propagates bad *code* and broken infrastructure.
+
+        Only `MemoryDataError` (currently `VaultFieldError`) becomes a
+        rejection: those are statements about the candidate, decided
+        deterministically. A NameError or an OperationalError says nothing
+        about the candidate — swallowing it records a permanent "rejected"
+        verdict caused by a bug or an outage, loses the data, and hides the
+        failure from the durable job that should have retried it.
+        """
         if candidate.status != "pending":
             return ReconcileResult(False, candidate.id, reason="not_pending")
 
@@ -68,12 +78,9 @@ class MemoryReconciler:
             if candidate.candidate_type == "episode":
                 return self._reconcile_episode(candidate)
             return self._reject(candidate, f"unknown candidate_type: {candidate.candidate_type}")
-        except VaultFieldError as exc:
-            # Schema violation — the expected rejection, not an error.
+        except MemoryDataError as exc:
+            # A statement about the candidate — the expected rejection path.
             return self._reject(candidate, str(exc))
-        except Exception as exc:
-            logger.exception("reconcile failed candidate=%s", candidate.id)
-            return self._reject(candidate, f"{type(exc).__name__}: {exc}")
 
     def reconcile_pending(self, workspace_id: str, limit: int = 100) -> list[ReconcileResult]:
         return [self.reconcile(c) for c in self.candidates.pending(workspace_id, limit)]

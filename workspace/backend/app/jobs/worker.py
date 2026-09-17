@@ -11,12 +11,21 @@ there would compete with request latency, which requirement #3 forbids.
 
 Each iteration:
   1. reclaim jobs whose worker died
-  2. claim a batch (FOR UPDATE SKIP LOCKED)
-  3. run each handler, commit or fail+backoff per job
+  2. claim only as many jobs as there are FREE execution slots
+  3. start each claimed job immediately, concurrently, bounded by those slots
   4. sleep only when there was nothing to do
 
-One job's failure never touches its neighbours — each gets its own
-try/except and its own transaction outcome.
+**Why bounded concurrency rather than a sequential batch.** A claimed job's
+lease starts ticking the moment it is claimed. If a batch of five were run
+one after another, jobs 2-5 would sit unrenewed behind a slow job 1, lose
+their leases, be reclaimed by another worker — and then still execute here
+when their turn came, because nothing rechecked ownership before the handler
+ran. That is a duplicate external side effect (a duplicate LLM call, a
+duplicate outbound request) which discarding the final commit does not undo.
+
+So: never claim more than can start now, and start lease renewal before the
+handler. `JOB_WORKER_CONCURRENCY` slots are the only jobs in flight, and
+`claim(limit=free_slots)` means a job is never claimed with nowhere to run.
 """
 
 import asyncio
@@ -24,7 +33,7 @@ import logging
 import os
 import signal
 
-from app.database import SessionLocal
+from app.database import new_session
 from app.jobs.service import (
     LEASE_RENEW_SECONDS,
     BackgroundJobService,
@@ -36,7 +45,9 @@ from app.jobs.service import (
 logger = logging.getLogger(__name__)
 
 POLL_INTERVAL_SECONDS = float(os.environ.get("JOB_WORKER_POLL_SECONDS", "2"))
-BATCH_SIZE = int(os.environ.get("JOB_WORKER_BATCH", "5"))
+# Jobs this worker may execute at once. Also the claim ceiling: we never take
+# a job we cannot start immediately.
+CONCURRENCY = int(os.environ.get("JOB_WORKER_CONCURRENCY", "5"))
 # Reclaim sweeps are cheap but pointless every tick.
 RECLAIM_EVERY_TICKS = 30
 
@@ -52,7 +63,7 @@ async def _renew_lease(job_id: str, worker: str) -> None:
     """
     while True:
         await asyncio.sleep(LEASE_RENEW_SECONDS)
-        db = SessionLocal()
+        db = new_session()
         try:
             if not BackgroundJobService(db).heartbeat(job_id, worker):
                 # Lease lost: someone else owns this job now. Stop renewing;
@@ -70,14 +81,24 @@ async def _process_one(job_id: str, worker: str) -> bool:
     """Run a single claimed job in its own session and transaction.
 
     A fresh session per job means a handler that poisons its transaction
-    cannot take down the rest of the batch.
+    cannot take down the rest of the batch. Lease renewal starts before the
+    handler, and ownership is checked both before running and before
+    committing.
     """
-    db = SessionLocal()
+    db = new_session()
     lease = asyncio.create_task(_renew_lease(job_id, worker))
     try:
         service = BackgroundJobService(db)
         job = service.get(job_id)
-        if job is None or job.status != "running":
+        # Ownership gate BEFORE the handler runs. Between claim and here the
+        # lease may have been reclaimed; running anyway would duplicate the
+        # job's external side effects, which no later rollback can undo.
+        if job is None or job.status != "running" or job.locked_by != worker:
+            logger.warning(
+                "skipping id=%s — not owned by %s (status=%s locked_by=%s)",
+                job_id, worker, getattr(job, "status", None),
+                getattr(job, "locked_by", None),
+            )
             return False
         try:
             result = await run_job(job, db)
@@ -116,44 +137,73 @@ async def _process_one(job_id: str, worker: str) -> bool:
 
 async def run_worker_loop(
     poll_interval: float = POLL_INTERVAL_SECONDS,
-    batch_size: int = BATCH_SIZE,
+    concurrency: int = CONCURRENCY,
     max_iterations: int | None = None,
 ) -> None:
     """The worker loop. `max_iterations` bounds it for tests."""
     worker = _worker_id()
     logger.info(
-        "job worker starting id=%s handlers=%s", worker, list(job_handlers.registered())
+        "job worker starting id=%s concurrency=%d handlers=%s",
+        worker, concurrency, list(job_handlers.registered()),
     )
     tick = 0
-    while not _shutdown.is_set():
-        if max_iterations is not None and tick >= max_iterations:
-            break
-        tick += 1
+    in_flight: set[asyncio.Task] = set()
 
-        claimed: list[str] = []
-        db = SessionLocal()
-        try:
-            service = BackgroundJobService(db)
-            if tick % RECLAIM_EVERY_TICKS == 1:
-                reclaimed = service.reclaim_stale()
-                if reclaimed:
-                    logger.warning("reclaimed %d stale job(s)", reclaimed)
-            claimed = [j.id for j in service.claim(limit=batch_size, worker_id=worker)]
-        except Exception:
-            logger.exception("job claim failed")
-        finally:
-            db.close()
-
-        for job_id in claimed:
-            if _shutdown.is_set():
+    try:
+        while not _shutdown.is_set():
+            if max_iterations is not None and tick >= max_iterations:
                 break
-            await _process_one(job_id, worker)
+            tick += 1
 
-        if not claimed:
-            try:
-                await asyncio.wait_for(_shutdown.wait(), timeout=poll_interval)
-            except asyncio.TimeoutError:
-                pass
+            # Drop finished tasks so their slots are free again.
+            in_flight = {t for t in in_flight if not t.done()}
+            free_slots = concurrency - len(in_flight)
+
+            claimed: list[str] = []
+            if free_slots > 0:
+                db = new_session()
+                try:
+                    service = BackgroundJobService(db)
+                    if tick % RECLAIM_EVERY_TICKS == 1:
+                        reclaimed = service.reclaim_stale()
+                        if reclaimed:
+                            logger.warning("reclaimed %d stale job(s)", reclaimed)
+                    # Claim AT MOST the number we can start right now, so no
+                    # job's lease starts ticking while it waits for a slot.
+                    claimed = [
+                        j.id for j in service.claim(limit=free_slots, worker_id=worker)
+                    ]
+                except Exception:
+                    logger.exception("job claim failed")
+                finally:
+                    db.close()
+
+            # Start every claimed job immediately — lease renewal begins inside
+            # `_process_one`, so nothing sits claimed-but-unrenewed.
+            for job_id in claimed:
+                in_flight.add(asyncio.create_task(_process_one(job_id, worker)))
+
+            if not claimed:
+                # Nothing new. Wake on shutdown, or when a running job frees a
+                # slot, whichever comes first — a full worker should not sleep
+                # the whole interval before noticing capacity.
+                waiters = [asyncio.create_task(_shutdown.wait())]
+                waiters.extend(in_flight)
+                done, pending = await asyncio.wait(
+                    waiters, timeout=poll_interval,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for task in pending:
+                    if task not in in_flight:
+                        task.cancel()
+                for task in done:
+                    if task not in in_flight:
+                        task.cancel()
+    finally:
+        # Let in-flight jobs finish rather than abandoning leases mid-run.
+        if in_flight:
+            logger.info("waiting for %d in-flight job(s)", len(in_flight))
+            await asyncio.gather(*in_flight, return_exceptions=True)
 
     logger.info("job worker stopped id=%s", worker)
 

@@ -55,31 +55,26 @@ def other_workspace(db):
     return _make_workspace(db, "Other Student")
 
 
-@pytest.fixture
-def use_test_sessionlocal(monkeypatch):
-    """Point `app.database.SessionLocal` at the test engine.
+@pytest.fixture(autouse=True)
+def _bind_session_factory():
+    """Point the background/tool session factory at the test database.
 
-    Production code that runs outside a request — the job worker, Operator's
-    background task, memory tool handlers — opens its own session via
-    `SessionLocal()` rather than the injected request session. The suite
-    overrides `get_db` but not `SessionLocal`, so without this those paths
-    silently talk to a *different* (empty) database and every assertion about
-    their data fails for the wrong reason.
+    Out-of-request code (worker, Operator's background task, memory tools)
+    calls `app.database.new_session()` rather than the injected request
+    session. Without this it would open sessions against the *production*
+    engine — a different database — and every assertion about what it wrote
+    would fail for the wrong reason.
+
+    One override, applied automatically, because `new_session()` reads the
+    factory at call time. Nothing imports the factory at module scope, so
+    there is nothing else to patch.
     """
     from tests.conftest import TestingSessionLocal
-    import app.database as database_module
+    from app.database import set_session_factory
 
-    monkeypatch.setattr(database_module, "SessionLocal", TestingSessionLocal)
-    # Modules that did `from app.database import SessionLocal` hold their own
-    # reference, so patch those bindings too.
-    for module_path in ("app.services.operator", "app.jobs.worker"):
-        try:
-            module = __import__(module_path, fromlist=["SessionLocal"])
-        except ImportError:
-            continue
-        if hasattr(module, "SessionLocal"):
-            monkeypatch.setattr(module, "SessionLocal", TestingSessionLocal)
-    return TestingSessionLocal
+    previous = set_session_factory(TestingSessionLocal)
+    yield TestingSessionLocal
+    set_session_factory(previous)
 
 
 @pytest.fixture

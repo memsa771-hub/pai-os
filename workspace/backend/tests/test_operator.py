@@ -21,10 +21,25 @@ import asyncio
 import pytest
 from sqlalchemy import select
 
+from app import database
 from app.config import config
 from app.models import CloudAgentConfig, ExecutionRun, WorkspaceMember
 from app.services import operator, pai
 from app.tools import ToolContext, ToolDefinition, ToolExecutor, ToolRegistry, ToolRisk, get_tool_registry
+
+
+@pytest.fixture(autouse=True)
+def _restore_session_factory():
+    """Undo any `set_session_factory` a test in this module performs.
+
+    The factory is process-global, so leaving it pointed at a closed test
+    session would break unrelated modules later in the run.
+    """
+    from app.database import set_session_factory
+
+    previous = set_session_factory(database.session_factory())
+    yield
+    set_session_factory(previous)
 
 
 @pytest.fixture
@@ -103,7 +118,7 @@ class FakeApi:
 class TestDelegate:
     def test_delegate_creates_a_run_and_returns_immediately(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_ENABLED", True)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
 
@@ -127,7 +142,7 @@ class TestDelegate:
 
     def test_delegate_rejects_empty_objective(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         ctx = ToolContext(workspace_id=ws_id, agent_name="pai", api=FakeApi())
         result = asyncio.run(operator.delegate(ctx, "   ", None, None))
         assert result["ok"] is False
@@ -135,7 +150,7 @@ class TestDelegate:
 
     def test_delegate_unavailable_without_server_config(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_ENABLED", False)
         ctx = ToolContext(workspace_id=ws_id, agent_name="pai", api=FakeApi())
         result = asyncio.run(operator.delegate(ctx, "do something", None, None))
@@ -146,14 +161,14 @@ class TestDelegate:
 class TestStatus:
     def test_status_with_no_runs(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         ctx = ToolContext(workspace_id=ws_id, agent_name="pai", api=FakeApi())
         result = asyncio.run(operator.get_status(ctx, None))
         assert result == {"ok": True, "data": {"status": "none"}}
 
     def test_status_reads_the_latest_run(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         run = ExecutionRun(workspace_id=ws_id, requested_by="openagents:pai", objective="X", status="executing")
         db.add(run)
         db.commit()
@@ -167,7 +182,7 @@ class TestStatus:
 class TestExecutionLoop:
     def test_full_loop_reaches_a_terminal_status(self, client, db, monkeypatch):
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
         monkeypatch.setattr(config, "PAI_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(config, "PAI_BASE_URL", "https://api.openai.com/v1")
