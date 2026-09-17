@@ -185,9 +185,14 @@ def test_episode_gate_matches_the_other_types(db_session, workspace, seed_fields
 def _turn(db, workspace_id, student_text, assistant_text="Noted."):
     import uuid
 
+    from app.models import Workspace
+
+    # Only the owner's own messages are extracted from — `human:` is a
+    # namespace, not a person (see app/memory/extraction_context).
+    owner_source = f"human:{db.get(Workspace, workspace_id).owner_user_id}"
     user = EventRecord(
         id=str(uuid.uuid4()), network_id=workspace_id,
-        type="workspace.message.posted", source="human:student@example.com",
+        type="workspace.message.posted", source=owner_source,
         target=CHANNEL, payload={"content": student_text, "message_type": "chat"},
         metadata_={}, timestamp=1000, visibility="channel",
     )

@@ -5,25 +5,44 @@ Tests for the event-native API (POST/GET /v1/events).
 
 import pytest
 
+import app.access as access
+import app.event_identity as event_identity
+
+
+def _as_owner(monkeypatch, email="test@example.com"):
+    """Headers for the workspace owner — the only human who can post.
+
+    Identity is verified server-side, so the bearer has to actually resolve;
+    the body cannot declare who the human is any more. Two modules verify it:
+    event_identity (who is speaking) and access (may they write here at all),
+    and the pipeline's AuthMod goes through the latter.
+    """
+    claims = {"provider": "supabase", "email": email, "supabase_uid": "uid",
+              "apple_sub": None, "display_name": "Student"}
+    resolve = lambda tok: claims if tok == "owner-tok" else None
+    monkeypatch.setattr(event_identity, "verify_identity_claims", resolve)
+    monkeypatch.setattr(access, "verify_identity_claims", resolve)
+    return {"Authorization": "Bearer owner-tok"}
+
 
 class TestSendEvent:
     """POST /v1/events — send events through the pipeline."""
 
     def test_send_message_event(self, client, workspace):
-        """Send a workspace.message.posted event through the pipeline."""
+        """An agent posts with its session; the server names it."""
         channel_name = workspace["channel"]["name"]
         resp = client.post("/v1/events", json={
             "type": "workspace.message.posted",
-            "source": "human:user1",
+            "source": "human:user1",          # ignored — see event_identity
             "target": f"channel/{channel_name}",
             "payload": {"content": "Hello, world!"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["type"] == "workspace.message.posted"
-        assert data["source"] == "human:user1"
+        assert data["source"] == "openagents:agent-alpha"
         assert data["target"] == f"channel/{channel_name}"
         assert "id" in data
         assert "timestamp" in data
@@ -66,7 +85,7 @@ class TestSendEvent:
             "target": f"channel/{channel_name}",
             "payload": {"content": "test"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
 
@@ -89,22 +108,25 @@ class TestSendEvent:
             "payload": {"content": "test"},
             "metadata": {"custom_key": "custom_value"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["metadata"]["custom_key"] == "custom_value"
 
-    def test_human_message_routes_to_master(self, client, workspace):
-        """Human messages are routed to the channel master agent."""
+    def test_human_message_routes_to_master(self, client, workspace, monkeypatch):
+        """Human messages are routed to the channel master agent.
+
+        Posted as the workspace OWNER: a human source is only reachable with a
+        verified bearer now, not by writing "human:..." in the body."""
+        headers = _as_owner(monkeypatch)
         channel_name = workspace["channel"]["name"]
         resp = client.post("/v1/events", json={
             "type": "workspace.message.posted",
-            "source": "human:user1",
             "target": f"channel/{channel_name}",
             "payload": {"content": "Hello agent!"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers=headers)
 
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -134,7 +156,7 @@ class TestSendEvent:
                 "message_type": "chat",
             },
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -151,7 +173,7 @@ class TestSendEvent:
             "target": f"channel/{channel_name}",
             "payload": {"content": "Just a status update"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -161,21 +183,22 @@ class TestSendEvent:
 
     def test_member_message_without_mentions_routes_to_master(self, client, workspace):
         """Member agent messages without mentions route back to channel master."""
-        # Add a member agent
-        client.post("/v1/join", json={
+        # Add a member agent, and keep ITS session: a test can no longer claim
+        # to be agent-beta while holding agent-alpha's session.
+        join = client.post("/v1/join", json={
             "agent_name": "agent-beta",
             "token": workspace["token"],
             "network": workspace["id"],
-        })
+        }).json()["data"]
+        beta_session = join["session_id"]
 
         channel_name = workspace["channel"]["name"]
         resp = client.post("/v1/events", json={
             "type": "workspace.message.posted",
-            "source": "openagents:agent-beta",  # member, not master
             "target": f"channel/{channel_name}",
             "payload": {"content": "I finished the task."},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": beta_session})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -199,7 +222,7 @@ class TestSendEvent:
             "target": f"channel/{channel_name}",
             "payload": {"content": "@agent-gamma can you review this?"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         assert resp.status_code == 200
         data = resp.json()["data"]
@@ -229,7 +252,7 @@ class TestPollEvents:
             "target": f"channel/{channel_name}",
             "payload": {"content": "msg1"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         # Poll
         resp = client.get("/v1/events", params={"network": workspace["id"]},
@@ -250,7 +273,7 @@ class TestPollEvents:
                 "target": f"channel/{channel_name}",
                 "payload": {},
                 "network": workspace["id"],
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         # Filter by workspace.session
         resp = client.get("/v1/events", params={
@@ -270,7 +293,7 @@ class TestPollEvents:
             "target": f"channel/{channel_name}",
             "payload": {},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
 
         # Filter by exact target
         resp = client.get("/v1/events", params={
@@ -299,7 +322,7 @@ class TestPollEvents:
                 "target": f"channel/{channel_name}",
                 "payload": {"content": f"msg{i}"},
                 "network": workspace["id"],
-            }, headers={"X-Workspace-Token": workspace["token"]})
+            }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
             event_ids.append(resp.json()["data"]["id"])
 
         # Get first page (limit 2)
@@ -342,7 +365,7 @@ class TestPollExcludeMessageTypes:
             "target": f"channel/{channel_name}",
             "payload": payload,
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
         return resp.json()["data"]["id"]
 

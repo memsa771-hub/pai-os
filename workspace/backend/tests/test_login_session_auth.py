@@ -87,7 +87,7 @@ class TestTokenLogin:
             "target": f"channel/{channel_name}",
             "payload": {"content": "hello"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
 
     def test_send_event_with_wrong_token_rejected(self, client, workspace):
@@ -562,7 +562,7 @@ class TestRemoveAgentAuth:
         resp = client.post("/v1/remove", json={
             "agent_name": "agent-target",
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
 
     def test_remove_without_credentials_rejected(self, client, workspace):

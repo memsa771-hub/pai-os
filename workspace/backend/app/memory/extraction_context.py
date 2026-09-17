@@ -61,6 +61,18 @@ def _is_chat(event: EventRecord) -> bool:
     return ((event.payload or {}).get("message_type") or "chat") == "chat"
 
 
+def _is_workspace_owner_source(db, workspace_id: str, source: Optional[str]) -> bool:
+    """True only for the one human who owns this workspace."""
+    from app.models import Workspace
+
+    if not source or not source.startswith("human:"):
+        return False
+    workspace = db.get(Workspace, workspace_id)
+    if workspace is None or workspace.owner_user_id is None:
+        return False
+    return source == f"human:{workspace.owner_user_id}"
+
+
 def build_turn_context(
     db,
     workspace_id: str,
@@ -82,6 +94,21 @@ def build_turn_context(
     if user_event is None:
         logger.warning(
             "memory: user event %s not found in workspace %s", user_event_id, workspace_id
+        )
+        return None
+
+    # Only the workspace OWNER's own words become the student's remembered
+    # truth. Event sources are server-derived now (app/event_identity.py), so
+    # the owner is exactly `human:<owner_user_id>` and this is a real check
+    # rather than a naming convention. It matters because `human:` is a
+    # namespace, not a person: an external Slack/Telegram sender arrives as
+    # `human:<platform>-<name>` (app/services/integrations.py), and if a
+    # binding's default_agent is PAI Counselor, that outsider's messages would
+    # otherwise be extracted as things the student said about themselves.
+    if not _is_workspace_owner_source(db, workspace_id, user_event.source):
+        logger.info(
+            "memory: skipping extraction for non-owner source %s in workspace %s",
+            user_event.source, workspace_id,
         )
         return None
 

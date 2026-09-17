@@ -22,6 +22,7 @@ from app import cache
 from app.database import SessionLocal, get_db
 from app.models import Channel, ChannelMember, EventRecord, Workspace
 from app.pipeline_factory import pipeline
+from app.event_identity import resolve_actor, session_id_from
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _verify_workspace_access, _workspace_filter
 from openagents.core.onm_events import Event
@@ -38,7 +39,12 @@ router = APIRouter(prefix="/v1", tags=["Events"])
 
 class SendEventRequest(BaseModel):
     type: str
-    source: str
+    # DEPRECATED and IGNORED. The server derives the event's identity from the
+    # caller's credentials (see app/event_identity.py); whatever arrives here is
+    # discarded before the event is built. Kept only so already-shipped clients
+    # that still send it do not fail schema validation — delete once the
+    # agent-connector and web client releases that omit it are the floor.
+    source: Optional[str] = None
     target: str
     payload: Optional[dict] = None
     metadata: Optional[dict] = None
@@ -216,6 +222,7 @@ def send_event(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     """
     Send an event into the network pipeline.
@@ -238,13 +245,51 @@ def send_event(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
 
+    # WHO is speaking is decided here, from credentials, and never read from
+    # the body. `body.source` is ignored entirely — see app/event_identity.py.
+    session_id = session_id_from(body.metadata, x_session_id)
+    actor = resolve_actor(
+        db, workspace,
+        token=x_workspace_token,
+        authorization=authorization,
+        session_id=session_id,
+    )
+    if actor is None:
+        db.rollback()
+        logger.info(
+            "events: rejected unidentified event for workspace %s (bearer=%s token=%s session=%s)",
+            workspace.id, bool(_extract_bearer(authorization)),
+            bool(x_workspace_token), bool(session_id),
+        )
+        # A session was offered and did not resolve: it belongs to a previous
+        # join (a newer one rotated it) or to another workspace. Say so
+        # specifically, so a ghost adapter stops instead of retrying — the same
+        # signal the heartbeat path returns.
+        if session_id:
+            return json_response(
+                ResponseCode.UNAUTHORIZED,
+                "session_revoked: this agent session is no longer current",
+            )
+        return json_response(
+            ResponseCode.UNAUTHORIZED,
+            "Unidentified sender: post with the workspace owner's bearer token, "
+            "or with the workspace token plus a current agent session id",
+        )
+
+    metadata = dict(body.metadata or {})
+    # The session id travelled as a credential; it stays on the event because
+    # the pipeline's own staleness check reads it, but it is no longer what
+    # decides identity.
+    if actor.kind == "agent" and actor.session_id:
+        metadata["session_id"] = actor.session_id
+
     # Build ONM Event
     event = Event(
         type=body.type,
-        source=body.source,
+        source=actor.source,
         target=body.target,
         payload=body.payload,
-        metadata=body.metadata or {},
+        metadata=metadata,
         visibility=body.visibility or "channel",
         network=str(workspace.id),
     )
@@ -252,7 +297,7 @@ def send_event(
     # Build pipeline context — extra kwargs become context.extra dict
     context = PipelineContext(
         network_id=str(workspace.id),
-        agent_address=body.source,
+        agent_address=actor.source,
         db=db,
         workspace=workspace,
         token=x_workspace_token,

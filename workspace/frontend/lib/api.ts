@@ -408,7 +408,6 @@ class WorkspaceApi {
   } = {}): Promise<WorkspaceSession> {
     const event = await this.sendEvent({
       type: 'network.channel.create',
-      source: 'human:user',
       target: 'core',
       payload: {
         ...(opts.title && { title: opts.title }),
@@ -443,7 +442,6 @@ class WorkspaceApi {
   async addChannelParticipant(channelName: string, agentName: string): Promise<void> {
     await this.sendEvent({
       type: 'network.channel.join',
-      source: 'human:user',
       target: `channel/${channelName}`,
       payload: { channel: channelName, agent_name: agentName },
     });
@@ -453,7 +451,6 @@ class WorkspaceApi {
   async removeChannelParticipant(channelName: string, agentName: string): Promise<void> {
     await this.sendEvent({
       type: 'network.channel.leave',
-      source: 'human:user',
       target: `channel/${channelName}`,
       payload: { channel: channelName, agent_name: agentName },
     });
@@ -474,7 +471,6 @@ class WorkspaceApi {
   ): Promise<ONMEvent> {
     return this.sendEvent({
       type: 'workspace.message.posted',
-      source: `human:${senderId || senderName}`,
       target: `channel/${channelName}`,
       payload: {
         content,
@@ -509,7 +505,6 @@ class WorkspaceApi {
     const isAgent = counterpart.startsWith('openagents:');
     return this.sendEvent({
       type: 'workspace.message.posted',
-      source: 'human:user',
       target: counterpart,
       payload: {
         content,
@@ -571,7 +566,6 @@ class WorkspaceApi {
   ): Promise<ONMEvent> {
     return this.sendEvent({
       type: 'workspace.agent.control',
-      source: 'human:user',
       target: `openagents:${agentName}`,
       payload: { action, ...params },
       visibility: 'direct',
@@ -846,8 +840,7 @@ class WorkspaceApi {
         title: params.title,
         content: params.content,
         description: params.description || null,
-        source: 'human:user',
-      }),
+        }),
     });
     return {
       id: raw.id as string,
@@ -871,8 +864,7 @@ class WorkspaceApi {
         ...params.title !== undefined && { title: params.title },
         ...params.content !== undefined && { content: params.content },
         ...params.description !== undefined && { description: params.description },
-        source: 'human:user',
-      }),
+        }),
     });
     return {
       id: raw.id as string,
@@ -940,7 +932,7 @@ class WorkspaceApi {
 
   /** Open a new browser tab. Optionally open with a persistent context (already logged in). */
   async openBrowserTab(url = 'about:blank', contextId?: string): Promise<BrowserTab> {
-    const body: Record<string, unknown> = { url, network: this.workspaceId, source: 'human:user' };
+    const body: Record<string, unknown> = { url, network: this.workspaceId };
     if (contextId) body.context_id = contextId;
     const result = await this.request<Record<string, unknown>>('/v1/browser/tabs', {
       method: 'POST',
@@ -1201,9 +1193,13 @@ class WorkspaceApi {
   // ---------------------------------------------------------------------------
 
   /** Send an event through the mod pipeline. */
+  /**
+   * Post an event. The server derives WHO sent it from the caller's
+   * credentials — there is no `source` to supply, and one sent anyway would be
+   * discarded. See workspace/backend/app/event_identity.py.
+   */
   async sendEvent(event: {
     type: string;
-    source: string;
     target: string;
     payload?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
@@ -1406,8 +1402,7 @@ class WorkspaceApi {
       method: 'POST',
       body: JSON.stringify({
         network: this.workspaceId,
-        source: 'human:user',
-        title: input.title,
+          title: input.title,
         description: input.description ?? '',
         status: input.status ?? 'backlog',
         ...(input.assignee ? { assignee: input.assignee } : {}),
@@ -1452,8 +1447,7 @@ class WorkspaceApi {
       method: 'POST',
       body: JSON.stringify({
         network: this.workspaceId,
-        source: 'human:user',
-        ...(agent ? { agent } : {}),
+          ...(agent ? { agent } : {}),
       }),
     });
     return this.mapTask(raw);
@@ -1492,8 +1486,7 @@ class WorkspaceApi {
       method: 'POST',
       body: JSON.stringify({
         network: this.workspaceId,
-        source: 'human:user',
-        name: input.name,
+          name: input.name,
         description: input.description ?? '',
         steps: input.steps,
         max_iterations: input.maxIterations ?? 5,
@@ -1546,7 +1539,6 @@ class WorkspaceApi {
   async cancelQueuedMessage(channelName: string, queueId: string): Promise<void> {
     await this.sendEvent({
       type: 'workspace.message.posted',
-      source: 'human:user',
       target: `channel/${channelName}`,
       payload: {
         content: `__queue_cancel:${queueId}`,

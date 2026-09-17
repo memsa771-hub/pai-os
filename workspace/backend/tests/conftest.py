@@ -73,10 +73,23 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest.fixture(autouse=True)
 def setup_database():
-    """Create all tables before each test, drop after."""
+    """Create all tables before each test, drop after.
+
+    Also points `app.database.new_session()` at the test engine. Overriding the
+    `get_db` dependency only redirects request-scoped sessions; background and
+    tool code calls `new_session()` directly and would otherwise talk to the
+    production engine from inside a test — which is the exact failure
+    `set_session_factory` exists to prevent (see app/database.py).
+    """
+    from app.database import set_session_factory
+
     Base.metadata.create_all(bind=engine)
-    yield
-    Base.metadata.drop_all(bind=engine)
+    previous = set_session_factory(TestingSessionLocal)
+    try:
+        yield
+    finally:
+        set_session_factory(previous)
+        Base.metadata.drop_all(bind=engine)
 
 
 @pytest.fixture
@@ -114,6 +127,7 @@ def make_owned_workspace(name="Test Workspace", agent_name="agent-alpha",
     import secrets as _secrets
     from app.models import Channel, ChannelMember, User, Workspace, WorkspaceMember
 
+    agent_session_id = _secrets.token_hex(16)
     session = TestingSessionLocal()
     try:
         owner = session.query(User).filter(User.email == email).one_or_none()
@@ -139,6 +153,11 @@ def make_owned_workspace(name="Test Workspace", agent_name="agent-alpha",
             session.add(WorkspaceMember(
                 workspace_id=ws.id, agent_name=agent_name,
                 role="master", status="online",
+                # A live join session. Public event ingress identifies an agent
+                # by this, never by a name in the request body — see
+                # app/event_identity.py — so a fixture agent needs one to speak.
+                session_id=agent_session_id,
+                session_started_at=datetime.now(timezone.utc),
                 # `status` alone does not mean live: _member_is_online also
                 # wants a fresh heartbeat, and without one the workspace looks
                 # agent-less and posts "no agent online" system notices.
@@ -182,6 +201,8 @@ def make_owned_workspace(name="Test Workspace", agent_name="agent-alpha",
             "slug": ws.slug,
             "name": ws.name,
             "token": ws.password_hash,
+            "sessionId": agent_session_id if agent_name else None,
+            "agentName": agent_name,
             "channel": channel_payload,
         }
     finally:
@@ -197,5 +218,10 @@ def workspace(client):
         "slug": data["slug"],
         "name": data["name"],
         "token": data["token"],
+        # The fixture agent's live session. Event ingress needs it to know
+        # WHICH agent is posting; the workspace token alone is shared and
+        # identifies nobody.
+        "session_id": data["sessionId"],
+        "agent_name": data["agentName"],
         "channel": data["channel"],
     }

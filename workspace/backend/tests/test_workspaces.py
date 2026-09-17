@@ -578,7 +578,7 @@ class TestMemberDisplayName:
             "target": "core",
             "payload": {"agent_name": "ming"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code != 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
@@ -629,7 +629,7 @@ class TestMemberDisplayName:
             "target": "core",
             "payload": {"agent_name": "bad\nname"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code != 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
@@ -646,7 +646,7 @@ class TestMemberDisplayName:
             "target": "core",
             "payload": {"agent_name": "evt-agent", "role": "evil-injected-role"},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},
@@ -677,7 +677,7 @@ class TestMemberDisplayName:
             "target": "core",
             "payload": {"agent_name": 123},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code != 500
         assert resp.status_code != 200
 
@@ -688,7 +688,7 @@ class TestMemberDisplayName:
             "target": "core",
             "payload": {"agent_name": "evt-b", "role": ["master"]},
             "network": workspace["id"],
-        }, headers={"X-Workspace-Token": workspace["token"]})
+        }, headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]})
         assert resp.status_code == 200
 
         disc = client.get("/v1/discover", params={"network": workspace["id"]},

@@ -196,6 +196,19 @@ def join_network(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
 
+    # Joining is what issues a session, and the session is what proves which
+    # agent is speaking (see app/event_identity.py). So the reserved names have
+    # to be refused HERE — otherwise anyone holding the workspace token could
+    # join as `pai`, receive a genuine session, and post as PAI Counselor
+    # through the front door. The guard on /v1/remove was never enough.
+    from app.event_identity import reserved_agent_names
+
+    if body.agent_name.casefold() in reserved_agent_names():
+        return json_response(
+            ResponseCode.FORBIDDEN,
+            f"'{body.agent_name}' is a reserved system agent and cannot be joined as",
+        )
+
     payload = {"agent_name": body.agent_name}
     if body.agent_type:
         payload["agent_type"] = body.agent_type

@@ -412,7 +412,6 @@ export function WorkspaceProvider({
     const sendPresence = (type: string) =>
       workspaceApi.sendEvent({
         type,
-        source: `human:${currentUser.id}`,
         target: 'core',
         payload: { user_id: currentUser.id, user_name: currentUser.name, sender_type: 'human' },
         visibility: 'network',

@@ -640,7 +640,7 @@ def test_agent_chat_reply_relays_to_lark(client, workspace, lark_binding, monkey
             "payload": {"content": "你好!", "message_type": "chat"},
             "network": workspace["id"],
         },
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert sent == [("oc_relay", "agent-alpha", "你好!")]
 
@@ -672,7 +672,7 @@ def test_agent_chat_reply_relays_to_telegram(client, workspace, telegram_binding
             "payload": {"content": "42 is the answer", "message_type": "chat"},
             "network": workspace["id"],
         },
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert resp.status_code == 200, resp.text
     assert sent == [("999", "agent-alpha", "42 is the answer")]
@@ -701,7 +701,7 @@ def test_status_messages_are_not_relayed(client, workspace, telegram_binding, mo
                 "payload": {"content": "Bash › ls", "message_type": message_type},
                 "network": workspace["id"],
             },
-            headers={"X-Workspace-Token": workspace["token"]},
+            headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
         )
     assert sent == []
 
@@ -736,7 +736,7 @@ def test_relay_ignores_non_integration_channels(client, workspace, monkeypatch):
             "payload": {"content": "normal thread message", "message_type": "chat"},
             "network": workspace["id"],
         },
-        headers={"X-Workspace-Token": workspace["token"]},
+        headers={"X-Workspace-Token": workspace["token"], "X-Session-Id": workspace["session_id"]},
     )
     assert sent == []
 

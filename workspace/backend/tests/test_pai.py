@@ -519,6 +519,20 @@ class TestAssistantLoop:
         assert secret not in "".join(posted)
 
 
+def _seed_legacy_pai_member(db, workspace_id, agent_type="claude"):
+    """A pre-existing member literally named `pai`, as old installs may have.
+
+    Written directly because /v1/join refuses the reserved name; the point of
+    these tests is that provisioning must not TAKE OVER such a row, which is
+    about existing data, not about whether it can still be created.
+    """
+    db.add(WorkspaceMember(
+        workspace_id=workspace_id, agent_name="pai",
+        agent_type=agent_type, role="member", status="online",
+    ))
+    db.commit()
+
+
 class TestNamespaceGuard:
     def test_clash_skips_and_leaves_session_clean(self, client, db, monkeypatch):
         """A member displaying as "pai" blocks the backfill — and the bail-out
@@ -559,13 +573,11 @@ class TestNamespaceGuard:
         """A user's daemon agent that happens to be named "pai" keeps its
         type/description — backfill must skip, not take over (review round 4)."""
         data = _create_workspace(client)
-        resp = client.post("/v1/join", json={
-            "agent_name": "pai",
-            "agent_type": "claude",
-            "token": data["token"],
-            "network": data["workspaceId"],
-        })
-        assert resp.status_code == 200
+        # `pai` is a reserved name now — nobody can JOIN as it (that would mint
+        # a session and let a token holder speak as PAI Counselor; see
+        # tests/test_event_identity.py). A row that predates the reservation can
+        # still exist, though, so seed it the way old data would look.
+        _seed_legacy_pai_member(db, data["workspaceId"], agent_type="claude")
 
         monkeypatch.setattr(config, "PAI_ENABLED", True)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
@@ -591,12 +603,7 @@ class TestNamespaceGuard:
         """A soft-removed real agent named "pai" must stay removed/claude —
         backfill must not rewrite it to online/cloud:placement_ai (round 5)."""
         data = _create_workspace(client)
-        client.post("/v1/join", json={
-            "agent_name": "pai",
-            "agent_type": "claude",
-            "token": data["token"],
-            "network": data["workspaceId"],
-        })
+        _seed_legacy_pai_member(db, data["workspaceId"], agent_type="claude")
         member = db.execute(
             select(WorkspaceMember).where(
                 WorkspaceMember.workspace_id == data["workspaceId"],

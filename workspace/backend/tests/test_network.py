@@ -482,6 +482,8 @@ class TestSessionEnforcement:
             "source": "openagents:agent-sess6",
             "target": "channel/general",
             "payload": {"content": "ghost reply", "message_type": "chat"},
+            # The stale session is the ONLY credential offered: sending a valid
+            # one alongside would just identify that other agent instead.
             "metadata": {"session_id": stale_session},
         }, headers={"X-Workspace-Token": workspace["token"]})
         assert resp.status_code == 401

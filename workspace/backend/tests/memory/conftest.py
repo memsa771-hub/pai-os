@@ -15,26 +15,37 @@ import uuid
 import pytest
 
 from app.memory.field_definitions import SEED_FIELD_DEFINITIONS, VaultFieldDefinitionService
-from app.models import Workspace
+from app.models import User, Workspace
 
 
 class _Ref:
-    """Minimal stand-in exposing `.id`, so tests read naturally."""
+    """Minimal stand-in exposing `.id`, so tests read naturally.
 
-    def __init__(self, id: str):
+    `owner_source` is the event source the workspace's own student posts
+    under. Extraction only ingests that one (see
+    app/memory/extraction_context), because `human:` is a namespace rather
+    than a person — an external Slack sender also lands in it.
+    """
+
+    def __init__(self, id: str, owner_source: str = ""):
         self.id = id
+        self.owner_source = owner_source
 
 
 def _make_workspace(session, name: str) -> _Ref:
+    owner = User(email=f"{uuid.uuid4().hex[:10]}@example.com")
+    session.add(owner)
+    session.flush()
     workspace = Workspace(
         id=str(uuid.uuid4()),
+        owner_user_id=owner.id,
         name=name,
         slug=f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:6]}",
         password_hash=uuid.uuid4().hex,
     )
     session.add(workspace)
     session.flush()
-    return _Ref(workspace.id)
+    return _Ref(workspace.id, owner_source=f"human:{owner.id}")
 
 
 @pytest.fixture

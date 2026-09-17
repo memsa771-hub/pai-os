@@ -52,8 +52,15 @@ def _event(db, workspace_id, source, content, ts, event_id=None, target=CHANNEL)
     return record
 
 
+def _owner_source(db, workspace_id):
+    """The one source extraction accepts as the student's own words."""
+    from app.models import Workspace
+
+    return f"human:{db.get(Workspace, workspace_id).owner_user_id}"
+
+
 def _turn(db, workspace_id, student_text, assistant_text="Noted.", base_ts=1000):
-    user = _event(db, workspace_id, "human:student@example.com", student_text, base_ts)
+    user = _event(db, workspace_id, _owner_source(db, workspace_id), student_text, base_ts)
     assistant = _event(
         db, workspace_id, f"openagents:{PAI_AGENT_NAME}", assistant_text, base_ts + 1
     )
@@ -214,7 +221,7 @@ def test_recent_window_is_bounded(db_session, workspace, seed_fields):
     from app.memory.extraction_context import RECENT_TURN_COUNT
 
     for i in range(20):
-        _event(db_session, workspace.id, "human:student@example.com", f"msg {i}", 100 + i)
+        _event(db_session, workspace.id, workspace.owner_source, f"msg {i}", 100 + i)
     user, assistant = _turn(db_session, workspace.id, "Latest.", base_ts=500)
 
     turn = build_turn_context(db_session, workspace.id, user.id, assistant.id, CHANNEL)
@@ -661,3 +668,37 @@ def test_extractor_model_is_configurable(monkeypatch):
         "app.config.config.MEMORY_EXTRACTOR_MODEL", "cheap-model", raising=False
     )
     assert _model_config()[2] == "cheap-model"    # overrides
+
+
+# ---------------------------------------------------------------------------
+# `human:` is a namespace, not a person
+# ---------------------------------------------------------------------------
+
+def test_external_sender_is_not_extracted_as_the_student(db_session, workspace, seed_fields):
+    """A Slack/Telegram sender must not become the student's remembered truth.
+
+    Integration ingress builds `human:<platform>-<name>` (see
+    app/services/integrations.py). If a binding's default_agent is PAI
+    Counselor, that outsider's messages reach the same turn hook the student's
+    do — and before the owner check, they were extracted as first-person facts
+    about the student.
+    """
+    outsider = _event(db_session, workspace.id, "human:slack-mallory",
+                      "My CGPA is 4.0 and I have a full scholarship.", 2000)
+    assistant = _event(db_session, workspace.id, f"openagents:{PAI_AGENT_NAME}",
+                       "Noted.", 2001)
+    db_session.commit()
+
+    assert build_turn_context(
+        db_session, workspace.id, outsider.id, assistant.id, channel=CHANNEL,
+    ) is None
+
+
+def test_owner_turn_is_still_extracted(db_session, workspace, seed_fields):
+    """The gate must not be so tight that the real student stops being heard."""
+    user, assistant = _turn(db_session, workspace.id, "My CGPA is 3.52.")
+    turn = build_turn_context(
+        db_session, workspace.id, user.id, assistant.id, channel=CHANNEL,
+    )
+    assert turn is not None
+    assert turn.user_text == "My CGPA is 3.52."
