@@ -199,3 +199,27 @@ def test_models_alembic_and_init_sql_have_the_same_schema_shape():
     assert init_stamp == alembic_head
     assert init_shape == model_shape
     assert alembic_shape == model_shape
+
+
+def test_dropping_creator_email_still_guards_against_data_loss():
+    """Migration 061 must never become a bare `drop_column`.
+
+    `creator_email` is the only link to a human for any active workspace that
+    migration 053 left ownerless (it backfilled one workspace per user and
+    deliberately orphaned the rest). 061 recovers what it safely can and raises
+    on whatever is left rather than destroying it. Simplifying it back to a
+    plain drop would silently lose that data on the next deployment that has
+    such rows — and those rows exist by construction, not by accident.
+    """
+    source = (ALEMBIC_VERSIONS_DIR / "061_drop_creator_email.py").read_text(encoding="utf-8")
+
+    assert "drop_column" in source, "061 should still drop the column"
+    # Recovers the unambiguous case...
+    assert "UPDATE workspaces" in source and "owner_user_id" in source
+    # ...and refuses the rest instead of dropping through.
+    assert "raise RuntimeError" in source
+    assert "owner_user_id IS NULL" in source
+
+    drop_at = source.index("op.drop_column")
+    raise_at = source.index("raise RuntimeError")
+    assert raise_at < drop_at, "the orphan check must run BEFORE the column is dropped"
