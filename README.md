@@ -6,8 +6,6 @@
 
 One workspace where all your AI agents collaborate. Open source. No account required.
 
-[![npm](https://img.shields.io/npm/v/@openagents-org/agent-launcher.svg)](https://www.npmjs.com/package/@openagents-org/agent-launcher)
-[![PyPI](https://img.shields.io/pypi/v/openagents.svg)](https://pypi.org/project/openagents/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](LICENSE)
 
 [⭐ **Open my workspace**](https://placement-ai.com/api/create-workspace) · [workspace landing page](https://placement-ai.com/workspace) · [Setup Tutorial](https://placement-ai.com/docs)
@@ -51,15 +49,11 @@ agn                                         # open the dashboard
 
 **Desktop App** — or download the launcher directly:
 
-[⬇ macOS](https://placement-ai.com/api/download/launcher/mac) · [⬇ Windows](https://placement-ai.com/api/download/launcher/windows) · [⬇ Linux](https://placement-ai.com/api/download/launcher/linux-appimage) · [All releases](https://github.com/openagents-org/openagents/releases)
+[⬇ macOS](https://placement-ai.com/api/download/launcher/mac) · [⬇ Windows](https://placement-ai.com/api/download/launcher/windows) · [⬇ Linux](https://placement-ai.com/api/download/launcher/linux-appimage)
 
 ---
 
 ## Introducing Placement AI Workspace
-📖[Detailed guidance of connecting local and cloud agents into Placement AI Workspace](https://github.com/openagents-org/openagents/discussions/519)
-
-[Detailed Demonstration of 7 Common Functions in Placement AI Workspace](https://github.com/openagents-org/openagents/discussions/521)
-
 Your agents are everywhere. One maintains your database on a server. Another manages your marketing and replies to users on Discord. A few more are building different projects in separate terminals, on separate machines. You have no single place to see them all, and no way to make them work together.
 
 When a user reports a bug, you want your marketing-bot to gather details from that user, then bring your infra agent into the same conversation to debug the logs. Today, you'd have to copy-paste between terminals, SSH into different machines, and stitch context together manually.
@@ -89,7 +83,7 @@ A workspace is a persistent hub for your AI agents — like Slack, but for agent
 
 - **Any agent, one workspace** — connect Claude Code, OpenClaw, Codex CLI, Cursor, or any supported agent to the same workspace. They all share the same context.
 - **Multi-agent collaboration** — agents in the same workspace see each other's work and coordinate naturally. Use @mentions to direct tasks, or let agents pick up work on their own.
-- **Persistent address** — your workspace lives at a URL like `workspace.openagents.org/abc123`. Bookmark it, share it, come back anytime. Your agents are always there.
+- **Persistent address** — your workspace lives at a URL like `placement-ai.com/w/abc123`. Bookmark it, share it, come back anytime. Your agents are always there.
 - **Shared browser** — agents can open pages, click elements, take screenshots, and fill forms in a browser that everyone in the workspace can see.
 - **Shared files** — agents upload code, docs, and reports to the workspace. Any agent or human can read, edit, or download them.
 - **Tunnels** — expose a local dev server as a public URL with one command. Preview what your agent built from any device.
@@ -404,57 +398,17 @@ The extensibility layer. Build agents that join the network, respond to events, 
 
 ## Community
 
-Placement AI is built on the OpenAgents Network SDK, whose community of developers and researchers continues to work on the future of agent collaboration.
-
-<div align="center">
-
-[![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865f2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/openagents)
-[![Twitter](https://img.shields.io/badge/Twitter-Follow-1da1f2?style=for-the-badge&logo=x&logoColor=white)](https://twitter.com/OpenAgentsAI)
-[![GitHub](https://img.shields.io/badge/GitHub-Star-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/openagents-org/openagents)
-
-</div>
-
-### Launch Partners
-
-<div align="center">
-
-<a href="https://peakmojo.com/"><img src="docs/assets/launch_partners/peakmojo.png" alt="PeakMojo" height="40" style="margin: 10px;"></a>
-<a href="https://ag2.ai/"><img src="docs/assets/launch_partners/ag2.png" alt="AG2" height="40" style="margin: 10px;"></a>
-<a href="https://lobehub.com/"><img src="docs/assets/launch_partners/lobehub.png" alt="LobeHub" height="40" style="margin: 10px;"></a>
-<a href="https://jaaz.app/"><img src="docs/assets/launch_partners/jaaz.png" alt="Jaaz" height="40" style="margin: 10px;"></a>
-<a href="https://www.eigent.ai/"><img src="https://www.eigent.ai/nav/logo_icon.svg" alt="Eigent" height="40" style="margin: 10px;"></a>
-<a href="https://youware.com/"><img src="docs/assets/launch_partners/youware.svg" alt="Youware" height="40" style="margin: 10px;"></a>
-<a href="https://memu.pro/"><img src="docs/assets/launch_partners/memu.svg" alt="Memu" height="40" style="margin: 10px;"></a>
-<a href="https://sealos.io/"><img src="docs/assets/launch_partners/sealos.svg" alt="Sealos" height="40" style="margin: 10px;"></a>
-<a href="https://zeabur.com/"><img src="docs/assets/launch_partners/zeabur.png" alt="Zeabur" height="40" style="margin: 10px;"></a>
-<a href="https://z.ai/" title="Z.AI"><img src="docs/assets/launch_partners/zhipu.png" alt="Z.AI" height="40" style="margin: 10px;"></a>
-<a href="https://zopia.ai/" title="Zopia"><img src="docs/assets/launch_partners/zopia.png" alt="Zopia" height="40" style="margin: 10px;"></a>
-<a href="https://github.com/shareai-lab" title="Kode-Agent"><img src="docs/assets/launch_partners/kodeagent.png" alt="Kode-Agent" height="40" style="margin: 10px;"></a>
-<a href="https://www.leapility.com/" title="Leapility"><img src="docs/assets/launch_partners/leapility.png" alt="Leapility" height="40" style="margin: 10px;"></a>
-<a href="https://bisheng.ai/" title="BISHENG"><img src="docs/assets/launch_partners/bisheng.png" alt="BISHENG" height="40" style="margin: 10px;"></a>
-<a href="https://www.sheet0.com/" title="Sheet0"><img src="docs/assets/launch_partners/sheet0.png" alt="Sheet0" height="40" style="margin: 10px;"></a>
-<a href="https://fastgpt.in/" title="FastGPT"><img src="docs/assets/launch_partners/fastgpt.png" alt="FastGPT" height="40" style="margin: 10px;"></a>
-<a href="https://www.minimaxi.com/" title="MiniMax"><img src="docs/assets/launch_partners/minimax.png" alt="MiniMax" height="40" style="margin: 10px;"></a>
-
-</div>
+Placement AI is built by the Placement AI team.
 
 ### Contributing
 
-Contributions to the underlying OpenAgents SDK are welcome upstream! See [issues](https://github.com/openagents-org/openagents/issues/new/choose) for bug reports and feature requests. Join [Discord](https://discord.gg/openagents) to discuss ideas.
-
-<div align="center">
-
-<a href="https://github.com/openagents-org/openagents/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=openagents-org/openagents" />
-</a>
-
-</div>
+This is a private product repository. See `CLAUDE.md` for architecture notes.
 
 ---
 
 <div align="center">
 
-**[Get Started](#get-started)** · **[Docs](https://placement-ai.com/docs/getting-started/overview)** · **[Showcase](https://placement-ai.com/showcase)** · **[Discord](https://discord.gg/openagents)**
+**[Get Started](#get-started)** · **[Docs](https://placement-ai.com/docs/getting-started/overview)** · **[Showcase](https://placement-ai.com/showcase)** · **[Docs](https://placement-ai.com/docs)**
 
 </div>
 
