@@ -15,6 +15,16 @@ x-backend-env: &backend-env
   WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
   WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
   WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
+  # Derived memory retrieval index. Unset MEMORY_VECTOR_BACKEND -> NullMemoryIndex
+  # and retrieval degrades to the existing structured/lexical paths.
+  MEMORY_VECTOR_BACKEND: ${MEMORY_VECTOR_BACKEND:-}
+  QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-pai_memory}
+  MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
+  MEMORY_EMBEDDING_API_KEY: ${MEMORY_EMBEDDING_API_KEY:-}
+  MEMORY_EMBEDDING_BASE_URL: ${MEMORY_EMBEDDING_BASE_URL:-}
+  MEMORY_EMBEDDING_DIM: ${MEMORY_EMBEDDING_DIM:-1536}
 
 services:
   db:
@@ -32,6 +42,24 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  # Derived vector index for memory retrieval. Holds NO canonical data —
+  # losing this volume costs a `memory.reindex`, never student memory.
+  qdrant:
+    image: qdrant/qdrant:v1.15.1
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant_data:/qdrant/storage
+    healthcheck:
+      # The Qdrant image is distroless — no curl/wget — so probe the TCP port
+      # with bash's /dev/tcp instead of an HTTP client that is not there.
+      test: ["CMD-SHELL", "bash -c ':> /dev/tcp/127.0.0.1/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
 
   backend:
     build:
@@ -92,3 +120,4 @@ services:
 
 volumes:
   pgdata:
+  qdrant_data:

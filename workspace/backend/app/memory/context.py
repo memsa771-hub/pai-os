@@ -153,6 +153,84 @@ class MemoryContextService:
             workspace_id=workspace_id, context_refs=context_refs, caller=caller,
         )
 
+    async def build_student_context_async(
+        self,
+        workspace_id: str,
+        query: Optional[str] = None,
+        context_refs: Optional[list[str]] = None,
+        caller: str = "counselor",
+        include_sensitive: bool = False,
+    ) -> StudentContext:
+        """Same contract, but uses hybrid retrieval when a query is present.
+
+        Kept as a separate method rather than making `build_student_context`
+        async: both existing callers (PAI Operator's background task and the
+        memory tools) are synchronous, and hybrid retrieval needs an event
+        loop. They keep working unchanged on the structured/lexical path.
+
+        Vault stays structured-only either way — exact state is not a
+        similarity problem.
+        """
+        granted = capabilities_for_agent(self._agent_name_for(caller))
+        context = StudentContext(workspace_id=workspace_id)
+        refs = context_refs if context_refs is not None else [REF_VAULT, REF_MEMORY, REF_EPISODES]
+
+        wants_memory = any(r.partition(":")[0].strip().lower() == REF_MEMORY for r in refs)
+        wants_episodes = any(r.partition(":")[0].strip().lower() == REF_EPISODES for r in refs)
+        can_read_memory = Capability.MEMORY_READ.value in granted
+
+        retrieved = None
+        if query and can_read_memory and (wants_memory or wants_episodes):
+            from .retriever import KIND_EPISODE, KIND_SEMANTIC, MemoryRetriever
+
+            kinds = tuple(
+                k for k, wanted in (
+                    (KIND_SEMANTIC, wants_memory), (KIND_EPISODE, wants_episodes),
+                ) if wanted
+            )
+            retrieved = await MemoryRetriever(self.db).retrieve(
+                workspace_id=workspace_id, query=query, kinds=kinds,
+                limit=max(MAX_SEMANTIC_MEMORIES, MAX_EPISODES),
+            )
+
+        for ref in refs:
+            name, _, argument = ref.partition(":")
+            name = name.strip().lower()
+
+            if name == REF_VAULT:
+                if Capability.VAULT_READ.value not in granted:
+                    continue
+                context.vault = self._vault_section(workspace_id, include_sensitive)
+                context.resolved_refs.append(ref)
+            elif name == REF_MEMORY:
+                if not can_read_memory:
+                    continue
+                context.memories = (
+                    [MemoryService.to_dict(m) for m in retrieved.memories[:MAX_SEMANTIC_MEMORIES]]
+                    if retrieved is not None
+                    else self._semantic_section(workspace_id, query, argument or None)
+                )
+                context.resolved_refs.append(ref)
+            elif name == REF_EPISODES:
+                if not can_read_memory:
+                    continue
+                context.episodes = (
+                    [EpisodicMemoryService.to_dict(e) for e in retrieved.episodes[:MAX_EPISODES]]
+                    if retrieved is not None
+                    else self._episode_section(workspace_id, query, argument or None)
+                )
+                context.resolved_refs.append(ref)
+            else:
+                logger.debug("ignoring unknown context ref: %s", ref)
+
+        if retrieved is not None:
+            logger.info(
+                "context: workspace=%s mode=%s memories=%d episodes=%d",
+                workspace_id, retrieved.mode,
+                len(context.memories), len(context.episodes),
+            )
+        return context
+
     # -- sections ----------------------------------------------------------
 
     def _vault_section(self, workspace_id: str, include_sensitive: bool) -> dict[str, Any]:

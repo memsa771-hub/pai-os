@@ -42,6 +42,9 @@ class SearchHit:
     kind: str
     score: float
     text: Optional[str] = None
+    # Which retrieval arm produced this: "dense" | "sparse" | "hybrid".
+    # Observability only — fusion and PostgreSQL validation decide the outcome.
+    retrieval_source: str = "hybrid"
 
 
 class MemoryIndex(ABC):
@@ -101,10 +104,33 @@ _index: Optional[MemoryIndex] = None
 
 
 def get_memory_index() -> MemoryIndex:
-    """The process-wide index. Swapped by configuration in Phase 2."""
+    """The process-wide index, chosen by `MEMORY_VECTOR_BACKEND`.
+
+    Unconfigured or misconfigured -> NullMemoryIndex, so a deployment without
+    Qdrant runs exactly as it did before rather than failing every job.
+    """
     global _index
     if _index is None:
-        _index = NullMemoryIndex()
+        from app.config import config
+
+        backend = (config.MEMORY_VECTOR_BACKEND or "").lower()
+        if backend == "qdrant" and config.QDRANT_URL:
+            from .index_qdrant import QdrantMemoryIndex
+
+            _index = QdrantMemoryIndex(
+                url=config.QDRANT_URL,
+                collection=config.QDRANT_COLLECTION,
+                api_key=config.QDRANT_API_KEY or None,
+            )
+            logger.info("memory index: qdrant collection=%s", config.QDRANT_COLLECTION)
+        else:
+            if backend:
+                logger.warning(
+                    "memory index: backend %r not usable (QDRANT_URL set? %s) — "
+                    "falling back to NullMemoryIndex",
+                    backend, bool(config.QDRANT_URL),
+                )
+            _index = NullMemoryIndex()
     return _index
 
 

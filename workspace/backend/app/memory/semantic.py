@@ -19,6 +19,9 @@ from sqlalchemy import select
 
 from app.models import PaiMemory
 
+from .dedupe import memory_fingerprint
+from .index_lifecycle import enqueue_unindex
+
 logger = logging.getLogger(__name__)
 
 MEMORY_TYPES = ("preference", "goal", "constraint", "interest", "context")
@@ -61,6 +64,10 @@ class MemoryService:
             source_type=source_type,
             source_event_ids=source_event_ids,
             meta=metadata,
+            # Written here so dedupe stays an indexed lookup. Computed from the
+            # same stripped content that is stored, so it always matches what a
+            # later lookup derives from the row.
+            fingerprint=memory_fingerprint(memory_type, content.strip()),
             status="active",
         )
         self.db.add(memory)
@@ -128,6 +135,7 @@ class MemoryService:
         memory.status = "forgotten"
         memory.valid_until = _now()
         self.db.flush()
+        enqueue_unindex(self.db, workspace_id, [memory.id])
         return memory
 
     def forget_matching(
@@ -144,6 +152,7 @@ class MemoryService:
             memory.valid_until = _now()
         if matches:
             self.db.flush()
+            enqueue_unindex(self.db, workspace_id, [m.id for m in matches])
         return matches
 
     @staticmethod

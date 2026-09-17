@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 JOB_EXTRACT = "memory.extract"
 JOB_RECONCILE = "memory.reconcile"
 JOB_EMBED = "memory.embed"
+JOB_UNINDEX = "memory.unindex"
+JOB_REINDEX = "memory.reindex"
 
 
 def _is_duplicate(db, workspace_id: str, item) -> bool:
@@ -218,17 +220,28 @@ async def reconcile_memory(job, db) -> dict:
     #
     # The idempotency key is derived from the memory ids, so a retried
     # reconcile job cannot queue the same embedding work twice.
-    memory_ids = [
-        r.result_id for r in accepted
-        if r.result_id and MemoryService(db).get(workspace_id, r.result_id) is not None
-    ]
-    if memory_ids:
+    # Both kinds: episodes are retrievable too, so indexing only semantic
+    # memories would leave half the hybrid index permanently empty.
+    from app.memory.episodic import EpisodicMemoryService
+
+    memory_service = MemoryService(db)
+    episode_service = EpisodicMemoryService(db)
+    memory_ids, episode_ids = [], []
+    for r in accepted:
+        if not r.result_id:
+            continue
+        if memory_service.get(workspace_id, r.result_id) is not None:
+            memory_ids.append(r.result_id)
+        elif episode_service.get(workspace_id, r.result_id) is not None:
+            episode_ids.append(r.result_id)
+
+    if memory_ids or episode_ids:
         from app.jobs.service import BackgroundJobService
 
         BackgroundJobService(db).enqueue(
             job_type=JOB_EMBED,
             workspace_id=workspace_id,
-            payload={"memory_ids": memory_ids},
+            payload={"memory_ids": memory_ids, "episode_ids": episode_ids},
             idempotency_key=f"embed:{job.id}",
         )
 
@@ -236,40 +249,144 @@ async def reconcile_memory(job, db) -> dict:
         "reconciled": len(results),
         "accepted": len(accepted),
         "rejected": len(results) - len(accepted),
-        "embed_enqueued": len(memory_ids),
+        "embed_enqueued": len(memory_ids) + len(episode_ids),
     }
 
 
 async def embed_memory(job, db) -> dict:
-    """Push memories into the retrieval index.
+    """Push memories AND episodes into the retrieval index.
 
     Separate from reconciliation because embedding is the part that calls an
     external provider and therefore fails differently — it deserves its own
     retry schedule rather than dragging a successful reconciliation down with
     it.
+
+    Only `active` rows are indexed. A row that was forgotten between
+    reconciliation and this job simply never enters the index.
     """
     workspace_id = job.workspace_id
     if not workspace_id:
         raise ValueError("memory.embed requires a workspace_id")
 
     payload = job.payload or {}
-    memories = MemoryService(db)
+    records = _records_for(
+        db, workspace_id,
+        memory_ids=payload.get("memory_ids") or [],
+        episode_ids=payload.get("episode_ids") or [],
+    )
+
+    indexed = await get_memory_index().index(records) if records else 0
+    logger.info(
+        "memory.embed: job=%s workspace=%s requested=%d indexed=%d",
+        job.id, workspace_id,
+        len(payload.get("memory_ids") or []) + len(payload.get("episode_ids") or []),
+        indexed,
+    )
+    return {"indexed": indexed}
+
+
+def _records_for(db, workspace_id: str, memory_ids: list, episode_ids: list) -> list:
+    """Build index records from canonical rows, skipping inactive ones."""
+    from app.memory.episodic import EpisodicMemoryService
+
     records = []
-    for memory_id in payload.get("memory_ids") or []:
+    memories = MemoryService(db)
+    for memory_id in memory_ids:
         memory = memories.get(workspace_id, memory_id)
         if memory is not None and memory.status == "active":
             records.append(MemoryRecord(
-                id=memory.id,
-                workspace_id=workspace_id,
-                kind="semantic_memory",
+                id=memory.id, workspace_id=workspace_id, kind="semantic_memory",
                 text=memory.content,
-                filters={"memory_type": memory.memory_type},
+                filters={
+                    "memory_type": memory.memory_type,
+                    "status": memory.status,
+                    "importance": memory.importance,
+                },
             ))
 
-    indexed = await get_memory_index().index(records) if records else 0
-    return {"indexed": indexed}
+    episodes = EpisodicMemoryService(db)
+    for episode_id in episode_ids:
+        episode = episodes.get(workspace_id, episode_id)
+        if episode is not None and episode.status == "active":
+            records.append(MemoryRecord(
+                id=episode.id, workspace_id=workspace_id, kind="episode",
+                text=episode.summary,
+                filters={
+                    "memory_type": episode.event_type,
+                    "status": episode.status,
+                    "importance": episode.importance,
+                    "occurred_at": (
+                        episode.occurred_at.isoformat() if episode.occurred_at else None
+                    ),
+                },
+            ))
+    return records
+
+
+async def unindex_memory(job, db) -> dict:
+    """Remove ids from the retrieval index (forgotten/superseded rows).
+
+    Correctness does NOT depend on this landing: `MemoryRetriever` re-reads
+    PostgreSQL and drops anything inactive, so a delayed or failed deletion
+    cannot resurface a forgotten memory. This just keeps the index tidy.
+    """
+    workspace_id = job.workspace_id
+    if not workspace_id:
+        raise ValueError("memory.unindex requires a workspace_id")
+
+    ids = (job.payload or {}).get("ids") or []
+    deleted = await get_memory_index().delete(workspace_id, ids) if ids else 0
+    logger.info(
+        "memory.unindex: job=%s workspace=%s deleted=%d", job.id, workspace_id, deleted
+    )
+    return {"deleted": deleted}
+
+
+async def reindex_workspace(job, db) -> dict:
+    """Rebuild one workspace's index from PostgreSQL.
+
+    The recovery path: Qdrant lost, collection dropped, or the embedding model
+    changed. Canonical data is untouched, so this is always safe to re-run.
+    """
+    from app.memory.episodic import EpisodicMemoryService
+
+    workspace_id = job.workspace_id
+    if not workspace_id:
+        raise ValueError("memory.reindex requires a workspace_id")
+
+    index = get_memory_index()
+    payload = job.payload or {}
+
+    if payload.get("purge_first") and hasattr(index, "drop_workspace"):
+        await index.drop_workspace(workspace_id)
+
+    memory_ids = [m.id for m in MemoryService(db).list_memories(workspace_id, limit=10000)]
+    episode_ids = [e.id for e in EpisodicMemoryService(db).recent(workspace_id, limit=10000)]
+
+    total = 0
+    batch_size = int(payload.get("batch_size") or 64)
+    all_ids = [("m", i) for i in memory_ids] + [("e", i) for i in episode_ids]
+    for start in range(0, len(all_ids), batch_size):
+        chunk = all_ids[start:start + batch_size]
+        records = _records_for(
+            db, workspace_id,
+            memory_ids=[i for kind, i in chunk if kind == "m"],
+            episode_ids=[i for kind, i in chunk if kind == "e"],
+        )
+        if records:
+            total += await index.index(records)
+
+    logger.info(
+        "memory.reindex: job=%s workspace=%s memories=%d episodes=%d indexed=%d",
+        job.id, workspace_id, len(memory_ids), len(episode_ids), total,
+    )
+    return {
+        "indexed": total, "memories": len(memory_ids), "episodes": len(episode_ids),
+    }
 
 
 job_handlers.register(JOB_EXTRACT, extract_memory)
 job_handlers.register(JOB_RECONCILE, reconcile_memory)
 job_handlers.register(JOB_EMBED, embed_memory)
+job_handlers.register(JOB_UNINDEX, unindex_memory)
+job_handlers.register(JOB_REINDEX, reindex_workspace)

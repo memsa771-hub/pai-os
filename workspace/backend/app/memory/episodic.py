@@ -16,6 +16,9 @@ from sqlalchemy import select
 
 from app.models import PaiEpisode
 
+from .dedupe import episode_fingerprint
+from .index_lifecycle import enqueue_unindex
+
 logger = logging.getLogger(__name__)
 
 
@@ -51,6 +54,7 @@ class EpisodicMemoryService:
             occurred_at=occurred_at or _now(),
             source_event_ids=source_event_ids,
             meta=metadata,
+            fingerprint=episode_fingerprint(event_type, summary.strip()),
             status="active",
         )
         self.db.add(episode)
@@ -102,6 +106,7 @@ class EpisodicMemoryService:
             return None
         episode.status = "forgotten"
         self.db.flush()
+        enqueue_unindex(self.db, workspace_id, [episode.id])
         return episode
 
     @staticmethod

@@ -145,6 +145,42 @@ class Config:
     MEMORY_EXTRACTOR_MODEL: str = os.environ.get("MEMORY_EXTRACTOR_MODEL", "")
     MEMORY_EXTRACTOR_API_KEY: str = os.environ.get("MEMORY_EXTRACTOR_API_KEY", "")
     MEMORY_EXTRACTOR_BASE_URL: str = os.environ.get("MEMORY_EXTRACTOR_BASE_URL", "")
+
+    # ---- Memory retrieval index (app/memory/index_qdrant.py) --------------
+    # Qdrant is a DERIVED index. Losing it costs a reindex, never data.
+    # Unset backend -> NullMemoryIndex, and retrieval degrades to the existing
+    # structured/lexical paths.
+    MEMORY_VECTOR_BACKEND: str = os.environ.get("MEMORY_VECTOR_BACKEND", "")
+    QDRANT_URL: str = os.environ.get("QDRANT_URL", "")
+    QDRANT_API_KEY: str = os.environ.get("QDRANT_API_KEY", "")
+    QDRANT_COLLECTION: str = os.environ.get("QDRANT_COLLECTION", "pai_memory")
+
+    # Embeddings. Deliberately NOT defaulted to the PAI chat credentials: a
+    # chat-model key/endpoint does not necessarily serve an embeddings route,
+    # and silently pointing at one turns a config mistake into a runtime error
+    # on every indexing job. Fallback happens only when PAI is explicitly an
+    # OpenAI-compatible endpoint (see embeddings.resolve_config).
+    MEMORY_EMBEDDING_PROVIDER: str = os.environ.get("MEMORY_EMBEDDING_PROVIDER", "openai")
+    MEMORY_EMBEDDING_MODEL: str = os.environ.get(
+        "MEMORY_EMBEDDING_MODEL", "text-embedding-3-small"
+    )
+    MEMORY_EMBEDDING_API_KEY: str = os.environ.get("MEMORY_EMBEDDING_API_KEY", "")
+    MEMORY_EMBEDDING_BASE_URL: str = os.environ.get("MEMORY_EMBEDDING_BASE_URL", "")
+    # Dimensions of the configured model. Stored alongside each indexed point
+    # so a model change is detectable and can trigger a reindex rather than
+    # silently mixing incompatible vector spaces.
+    MEMORY_EMBEDDING_DIM: int = int(os.environ.get("MEMORY_EMBEDDING_DIM", "1536"))
+    # Sparse (lexical) encoder. Qdrant/bm25 via fastembed, with the collection's
+    # sparse vector configured with Modifier.IDF so Qdrant computes real BM25
+    # scoring server-side rather than us approximating it.
+    MEMORY_SPARSE_MODEL: str = os.environ.get("MEMORY_SPARSE_MODEL", "Qdrant/bm25")
+
+    # Retrieval shape. Fetch a wide candidate pool, rerank, return few.
+    MEMORY_RETRIEVAL_CANDIDATES: int = int(
+        os.environ.get("MEMORY_RETRIEVAL_CANDIDATES", "40")
+    )
+    MEMORY_RETRIEVAL_LIMIT: int = int(os.environ.get("MEMORY_RETRIEVAL_LIMIT", "8"))
+    MEMORY_RERANKER: str = os.environ.get("MEMORY_RERANKER", "")
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")

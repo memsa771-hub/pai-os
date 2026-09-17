@@ -1090,6 +1090,9 @@ class PaiMemory(Base):
     valid_from = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     valid_until = Column(DateTime(timezone=True), nullable=True)
     # active | superseded | forgotten  ("forget Canada" -> forgotten, not deleted)
+    # Exact-normalized dedupe key (app/memory/dedupe.py). Indexed so dedupe is
+    # a lookup, not a scan. NOT semantic similarity — that is the vector index.
+    fingerprint = Column(Text, nullable=True)
     status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
@@ -1097,6 +1100,10 @@ class PaiMemory(Base):
     __table_args__ = (
         Index("idx_pai_memories_workspace", "workspace_id"),
         Index("idx_pai_memories_ws_status_type", "workspace_id", "status", "memory_type"),
+        Index(
+            "idx_pai_memories_ws_status_fingerprint",
+            "workspace_id", "status", "fingerprint",
+        ),
     )
 
 
@@ -1120,6 +1127,8 @@ class PaiEpisode(Base):
     occurred_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     source_event_ids = Column(JSONB, nullable=True)
     meta = Column("metadata", JSONB, nullable=True)
+    # Exact-normalized dedupe key — see PaiMemory.fingerprint.
+    fingerprint = Column(Text, nullable=True)
     status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
@@ -1127,6 +1136,10 @@ class PaiEpisode(Base):
     __table_args__ = (
         Index("idx_pai_episodes_workspace", "workspace_id"),
         Index("idx_pai_episodes_ws_status_time", "workspace_id", "status", "occurred_at"),
+        Index(
+            "idx_pai_episodes_ws_status_fingerprint",
+            "workspace_id", "status", "fingerprint",
+        ),
     )
 
 

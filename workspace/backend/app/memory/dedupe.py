@@ -54,26 +54,33 @@ def episode_fingerprint(event_type: str, summary: str) -> str:
 def is_duplicate_memory(db, workspace_id: str, memory_type: str, content: str) -> bool:
     """True if an active memory with this fingerprint already exists.
 
-    Compares in Python rather than SQL because the fingerprint is not stored:
-    adding a column would need a migration, and the active-memory set per
-    workspace is small (tens, budget-capped at read time). Revisit if that
-    stops being true.
+    An indexed lookup on (workspace_id, status, fingerprint), not a scan: the
+    previous implementation fingerprinted up to 500 rows in Python for every
+    proposed candidate, which grew with the student's history.
     """
-    from .semantic import MemoryService
+    from sqlalchemy import select
 
-    target = memory_fingerprint(memory_type, content)
-    for existing in MemoryService(db).list_memories(workspace_id, limit=500):
-        if memory_fingerprint(existing.memory_type, existing.content) == target:
-            return True
-    return False
+    from app.models import PaiMemory
+
+    return db.execute(
+        select(PaiMemory.id).where(
+            PaiMemory.workspace_id == workspace_id,
+            PaiMemory.status == "active",
+            PaiMemory.fingerprint == memory_fingerprint(memory_type, content),
+        ).limit(1)
+    ).scalar_one_or_none() is not None
 
 
 def is_duplicate_episode(db, workspace_id: str, event_type: str, summary: str) -> bool:
     """True if an active episode with this fingerprint already exists."""
-    from .episodic import EpisodicMemoryService
+    from sqlalchemy import select
 
-    target = episode_fingerprint(event_type, summary)
-    for existing in EpisodicMemoryService(db).recent(workspace_id, limit=500):
-        if episode_fingerprint(existing.event_type, existing.summary) == target:
-            return True
-    return False
+    from app.models import PaiEpisode
+
+    return db.execute(
+        select(PaiEpisode.id).where(
+            PaiEpisode.workspace_id == workspace_id,
+            PaiEpisode.status == "active",
+            PaiEpisode.fingerprint == episode_fingerprint(event_type, summary),
+        ).limit(1)
+    ).scalar_one_or_none() is not None
