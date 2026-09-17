@@ -238,6 +238,63 @@ async def test_extract_job_reads_events_not_payload(db_session, workspace, seed_
     assert "I want Germany as my first preference." in captured["prompt"]
 
 
+@pytest.mark.asyncio
+async def test_prompt_lists_the_exact_vault_keys_the_filter_allows(
+    db_session, workspace, seed_fields, monkeypatch,
+):
+    """The allow-list must be SHOWN to the model, not only enforced after it.
+
+    `_validate` drops any vault_fact whose key is not in the allowed set. If
+    the prompt never names those keys, the model guesses (`cgpa`, `ielts`),
+    every proposal is dropped, and the Vault silently never populates from
+    conversation — the failure is invisible because the job still succeeds.
+    """
+    from app.memory.field_definitions import VaultFieldDefinitionService
+
+    user, assistant = _turn(db_session, workspace.id, "My CGPA is 3.52 and IELTS is 7.5.")
+    captured = {}
+
+    async def _fake(**kwargs):
+        captured["prompt"] = kwargs["messages"][0]["content"]
+        return json.dumps({"candidates": []})
+
+    monkeypatch.setattr("app.memory.extractor.chat_completion", _fake)
+    monkeypatch.setattr("app.config.config.PAI_API_KEY", "test-key", raising=False)
+
+    await _run_extract(db_session, workspace.id, user, assistant)
+
+    allowed = VaultFieldDefinitionService(db_session).keys()
+    assert allowed, "fixture should seed at least one vault field"
+    for key in allowed:
+        assert key in captured["prompt"], f"{key} is accepted but never shown to the model"
+
+
+@pytest.mark.asyncio
+async def test_prompt_declares_value_shape_for_structured_fields(
+    db_session, workspace, seed_fields, monkeypatch,
+):
+    """A right key with a wrong-shaped value is rejected one layer later, so
+    the declared type travels with the key."""
+    from app.memory.field_definitions import VaultFieldDefinitionService
+
+    user, assistant = _turn(db_session, workspace.id, "My budget is 20000 EUR per year.")
+    captured = {}
+
+    async def _fake(**kwargs):
+        captured["prompt"] = kwargs["messages"][0]["content"]
+        return json.dumps({"candidates": []})
+
+    monkeypatch.setattr("app.memory.extractor.chat_completion", _fake)
+    monkeypatch.setattr("app.config.config.PAI_API_KEY", "test-key", raising=False)
+
+    await _run_extract(db_session, workspace.id, user, assistant)
+
+    for definition in VaultFieldDefinitionService(db_session).list_definitions():
+        if definition.data_type:
+            assert definition.data_type in captured["prompt"]
+            break
+
+
 # ---------------------------------------------------------------------------
 # 3. What gets extracted — and what must not
 # ---------------------------------------------------------------------------

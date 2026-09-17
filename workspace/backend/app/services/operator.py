@@ -303,19 +303,32 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> 
 
     Runs on its own short-lived session: this is called from the background
     execution task, which owns no request session.
+
+    Rendered through the SAME escaping/envelope/rules PAI Counselor's foreground
+    path uses (``app/memory/foreground``), not a second renderer. Student memory
+    is untrusted student-authored data on both paths, and Operator is the one
+    holding the write tools — so it needs that boundary at least as much as
+    Counselor does. Sharing the renderer is also what keeps the two from
+    drifting: hardening the rules once now protects both callers.
     """
     if not context_refs:
         return ""
     db = new_session()
     try:
         from app.memory.context import MemoryContextService
+        from app.memory.foreground import (
+            MEMORY_RULES, MEMORY_RULES_TRAILER, render_block,
+        )
 
         student = MemoryContextService(db).resolve_refs(
             workspace_id=workspace_id,
             context_refs=list(context_refs),
             caller=PAI_OPERATOR_AGENT_NAME,
         )
-        return student.to_prompt_block()
+        block, _truncated = render_block(student)
+        if not block:
+            return ""
+        return f"{MEMORY_RULES}\n\n{block}\n\n{MEMORY_RULES_TRAILER}"
     except Exception:
         logger.exception(
             "operator: failed to resolve context_refs for workspace %s", workspace_id

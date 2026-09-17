@@ -90,8 +90,9 @@ Return ONLY a JSON object, no prose and no markdown fences:
 Each candidate is one of:
 
   {"candidate_type": "vault_fact", "operation": "upsert",
-   "key": "<one of the allowed vault field keys>",
-   "proposed_value": <value matching that field>,
+   "key": "<copy one key EXACTLY from the VAULT FIELDS list in the user message;
+           never invent or abbreviate one>",
+   "proposed_value": <value matching that field's declared type>,
    "confidence": 0.0-1.0,
    "quote": "<the student's exact words that state this>"}
 
@@ -132,9 +133,46 @@ def _model_config() -> tuple[str, str, str, Optional[str]]:
     return api_key, provider, model, base_url
 
 
-def build_user_prompt(turn) -> str:
+def _render_field_specs(field_specs) -> str:
+    """Render the Vault fields the model is allowed to propose.
+
+    Without this the model is asked for "<one of the allowed vault field keys>"
+    and never told what they are, so it guesses (`cgpa`, `ielts`) and every
+    proposal is dropped by `_validate` as an unknown key — the Vault then never
+    populates from conversation at all. The key must be exact, so it has to be
+    listed; the type has to come with it, because a key the model gets right
+    with a value of the wrong shape is rejected one layer later instead.
+    """
+    lines = []
+    for spec in field_specs:
+        key = spec.get("key")
+        if not key:
+            continue
+        bits = [f"- {key}"]
+        if spec.get("data_type"):
+            bits.append(f"({spec['data_type']})")
+        if spec.get("description"):
+            bits.append(f"— {spec['description']}")
+        schema = spec.get("validation_schema") or {}
+        # Objects/arrays are the ones a model reliably gets wrong; a bare
+        # "(object)" does not say which properties are required.
+        if spec.get("data_type") in ("object", "array") and schema:
+            bits.append(f"shape: {json.dumps(schema, sort_keys=True)}")
+        lines.append(" ".join(bits))
+    if not lines:
+        return ""
+    return (
+        "VAULT FIELDS YOU MAY PROPOSE (`key` must match one of these EXACTLY; "
+        "if nothing fits, use a semantic_memory instead):\n" + "\n".join(lines)
+    )
+
+
+def build_user_prompt(turn, field_specs=None) -> str:
     """Render a TurnContext into the extractor's user message."""
     parts: list[str] = []
+
+    if field_specs:
+        parts.append(_render_field_specs(field_specs))
 
     if turn.vault:
         parts.append(
@@ -266,8 +304,17 @@ def _normalize(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip().casefold()
 
 
-async def extract_candidates(turn, allowed_vault_keys: set[str]) -> list[ExtractedCandidate]:
-    """Run extraction for one turn. Raises ExtractionError on bad output."""
+async def extract_candidates(
+    turn, allowed_vault_keys: set[str], field_specs=None,
+) -> list[ExtractedCandidate]:
+    """Run extraction for one turn. Raises ExtractionError on bad output.
+
+    `allowed_vault_keys` is the authorization boundary — `_validate` drops
+    anything outside it regardless of what the model returns. `field_specs`
+    (key/type/description) is the same set rendered INTO the prompt so the
+    model can hit those keys exactly; callers that pass only keys still get
+    them listed, just without type hints.
+    """
     if turn.is_empty():
         return []
 
@@ -275,9 +322,10 @@ async def extract_candidates(turn, allowed_vault_keys: set[str]) -> list[Extract
     if not api_key:
         raise ExtractionError("no extraction API key configured")
 
+    specs = field_specs or [{"key": key} for key in sorted(allowed_vault_keys)]
     raw = await chat_completion(
         api_key=api_key, provider=provider, model=model,
-        messages=[{"role": "user", "content": build_user_prompt(turn)}],
+        messages=[{"role": "user", "content": build_user_prompt(turn, specs)}],
         system_prompt=SYSTEM_PROMPT, max_tokens=1200, base_url=base_url,
     )
 

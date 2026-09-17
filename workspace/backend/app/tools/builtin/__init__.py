@@ -70,7 +70,26 @@ def register_builtin_tools(registry):
             obj({
                 "objective": {"type": "string"},
                 "constraints": {"type": "object", "additionalProperties": True},
-                "context_refs": {"type": "array", "items": {"type": "string"}},
+                # The vocabulary has to be spelled out: unknown refs are dropped
+                # silently (see MemoryContextService.build_student_context), so an
+                # undocumented free-form array means Operator runs with no student
+                # context and the objective carries a stale copy instead.
+                "context_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Which parts of the student's memory PAI Operator should "
+                        "load, resolved live when the run executes. Pass these "
+                        "whenever the objective depends on who the student is. "
+                        "Valid values: \"vault\" (canonical profile facts — CGPA, "
+                        "test scores, budget, preferred countries), \"memory\" "
+                        "(preferences and goals; narrow with \"memory:preference\", "
+                        "\"memory:goal\", \"memory:constraint\", \"memory:interest\"), "
+                        "\"episodes\" (recent journey events). Anything else is "
+                        "ignored. Prefer [\"vault\", \"memory\"] for profile-aware "
+                        "work rather than restating the profile in the objective."
+                    ),
+                },
             }, ["objective"]),
             "operator", ToolRisk.WRITE, operator.delegate, audiences=COUNSELOR_ONLY,
         ),
@@ -98,7 +117,18 @@ def register_builtin_tools(registry):
             "advising, rather than asking the student to repeat themselves.",
             obj({
                 "query": {"type": "string"},
-                "context_refs": {"type": "array", "items": {"type": "string"}},
+                "context_refs": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "Which sections to load; omit for all of them. Valid "
+                        "values: \"vault\" (canonical profile facts), \"memory\" "
+                        "(preferences/goals, narrow with \"memory:preference\", "
+                        "\"memory:goal\", \"memory:constraint\", \"memory:interest\"), "
+                        "\"episodes\" (recent journey events). Unknown values are "
+                        "ignored."
+                    ),
+                },
             }),
             "memory", ToolRisk.READ, memory.get_context,
             capabilities=CAP_MEMORY_READ | CAP_VAULT_READ, audiences=BOTH,

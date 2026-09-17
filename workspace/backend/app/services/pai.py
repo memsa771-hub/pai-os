@@ -466,31 +466,47 @@ Do not claim that an action has been completed unless the system confirms it.
 async def workspace_state_summary(api: WorkspaceApi) -> str:
     """A short, live snapshot (via the API) injected into the system prompt so
     PAI Counselor is grounded in what actually exists. Never raises — on API failure it
-    returns a minimal note rather than blocking the reply."""
+    returns a minimal note rather than blocking the reply.
+
+    That promise is enforced here rather than inherited. `WorkspaceApi.request`
+    already converts transport errors into an ``ok: False`` dict, so the body
+    below is safe *today* — but the guarantee callers rely on is this
+    function's, not that one's, and an unexpected response shape (``data`` that
+    is not a dict) would otherwise raise straight through
+    ``cloud_agent._invoke_assistant_agent``'s ``asyncio.gather``, which has no
+    ``return_exceptions`` and would lose the student's whole turn over a
+    grounding nicety. Grounding is an enhancement to a reply, never a
+    precondition for one.
+    """
     lines = ["Current workspace state (live):"]
 
-    discover = await api.get("/v1/discover", network=api.workspace_id)
-    if discover["ok"] and discover["data"]:
-        agents = discover["data"].get("agents") or []
-        real = [
-            f"{a.get('address', '').removeprefix('openagents:')} ({a.get('status')})"
-            for a in agents if not a.get("builtin")
-        ]
-        if real:
-            # Grounding only — e.g. a real background agent a developer has
-            # running. Never surface this to the student as something to
-            # manage; see the "no agent picker" rule in PAI_SYSTEM_PROMPT.
-            lines.append(f"- Other internal processes active: {', '.join(real)}")
+    try:
+        discover = await api.get("/v1/discover", network=api.workspace_id)
+        data = discover.get("data") if discover.get("ok") else None
+        if isinstance(data, dict):
+            agents = data.get("agents") or []
+            real = [
+                f"{a.get('address', '').removeprefix('openagents:')} ({a.get('status')})"
+                for a in agents if not a.get("builtin")
+            ]
+            if real:
+                # Grounding only — e.g. a real background agent a developer has
+                # running. Never surface this to the student as something to
+                # manage; see the "no agent picker" rule in PAI_SYSTEM_PROMPT.
+                lines.append(f"- Other internal processes active: {', '.join(real)}")
+            else:
+                lines.append("- You are the student's only point of contact right now.")
+            channels = data.get("channels") or []
+            if channels:
+                titles = [c.get("title") or c.get("address", "") for c in channels[:15]]
+                lines.append(f"- Existing threads: {', '.join(t for t in titles if t)}")
+            else:
+                lines.append("- No threads created yet.")
         else:
-            lines.append("- You are the student's only point of contact right now.")
-        channels = discover["data"].get("channels") or []
-        if channels:
-            titles = [c.get("title") or c.get("address", "") for c in channels[:15]]
-            lines.append(f"- Existing threads: {', '.join(t for t in titles if t)}")
-        else:
-            lines.append("- No threads created yet.")
-    else:
-        lines.append("- (agent/thread state unavailable right now)")
+            lines.append("- (agent/thread state unavailable right now)")
+    except Exception:
+        logger.exception("pai: workspace state summary failed for %s", api.workspace_id)
+        return "Current workspace state (live): (unavailable)"
 
     return "\n".join(lines)
 

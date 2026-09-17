@@ -126,10 +126,23 @@ async def extract_memory(job, db) -> dict:
             )
             return {"candidates_proposed": 0, "reason": "source_turn_missing"}
 
-        allowed_keys = set(VaultFieldDefinitionService(db).keys())
+        definitions = VaultFieldDefinitionService(db).list_definitions()
+        allowed_keys = {d.key for d in definitions}
+        # The same set twice, for two different jobs: `allowed_keys` is the
+        # authorization filter, `field_specs` is what the model is actually
+        # shown so it can name those keys exactly (see extractor._render_field_specs).
+        field_specs = [
+            {
+                "key": d.key,
+                "data_type": d.data_type,
+                "description": d.description,
+                "validation_schema": d.validation_schema,
+            }
+            for d in definitions
+        ]
         # ExtractionError propagates: malformed model output fails the job so
         # the durable worker retries it, rather than writing half-trusted rows.
-        extracted = await extract_candidates(turn, allowed_keys)
+        extracted = await extract_candidates(turn, allowed_keys, field_specs)
 
         for item in extracted:
             if _is_duplicate(db, workspace_id, item):
