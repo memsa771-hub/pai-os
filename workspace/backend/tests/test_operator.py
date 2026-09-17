@@ -145,7 +145,7 @@ class TestDelegate:
         context carries — delegate() must save it so the finished run knows
         where to auto-post its result (see cloud_agent._post_response)."""
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_ENABLED", True)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
         monkeypatch.setattr(operator, "_execute", lambda *a, **k: asyncio.sleep(0))
@@ -273,7 +273,7 @@ class TestExecutionLoop:
         event-pipeline path a normal cloud-agent reply uses — instead of
         sitting silently in the ExecutionRun row until asked about."""
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
         monkeypatch.setattr(config, "PAI_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(config, "PAI_BASE_URL", "https://api.openai.com/v1")
@@ -328,7 +328,7 @@ class TestExecutionLoop:
         """A run with nowhere to report to (e.g. delegated outside a live
         thread) must not attempt to post anywhere."""
         ws_id = _create_workspace(client)["workspaceId"]
-        monkeypatch.setattr(operator, "SessionLocal", lambda: db)
+        database.set_session_factory(lambda: db)
         monkeypatch.setattr(config, "PAI_API_KEY", "test-server-key")
         monkeypatch.setattr(config, "PAI_MODEL", "gpt-5.4-mini")
         monkeypatch.setattr(config, "PAI_BASE_URL", "https://api.openai.com/v1")

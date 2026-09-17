@@ -405,15 +405,21 @@ class TestToolBoundary:
             )
 
     def test_allowed_tools_contain_no_write_execution_tools(self):
-        """Counselor's allow-list may contain reads and the two Operator
-        hand-off tools (operator.delegate is a WRITE, but it only ever
-        schedules Operator's work — it never executes anything itself)."""
+        """Counselor's allow-list may contain reads, the two Operator hand-off
+        tools (operator.delegate is a WRITE, but it only ever schedules
+        Operator's work — it never executes anything itself), and the two
+        explicit-user-command Memory writes (memory.remember/memory.forget —
+        see app/tools/builtin/memory.py). Those are not "execution" in the
+        Operator sense: they never touch canonical state directly, only ever
+        propose a candidate that the deterministic reconciler accepts or
+        rejects (see app/memory/reconciler.py)."""
         from app.services import pai
         from app.tools import ToolRisk, get_tool_registry
 
         registry = get_tool_registry()
+        exceptions = {"operator.delegate", "memory.remember", "memory.forget"}
         for name in pai.PAI_ALLOWED_TOOLS:
-            if name == "operator.delegate":
+            if name in exceptions:
                 continue
             tool = registry.get(name)
             assert tool.risk is ToolRisk.READ, f"{name} is a {tool.risk} tool but is directly reachable by Counselor"
