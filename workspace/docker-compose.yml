@@ -12,6 +12,12 @@ x-backend-env: &backend-env
   PAI_API_KEY: ${PAI_API_KEY:-}
   PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
   PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
+  # Transactional email (app/services/email.py). Feedback and feature requests
+  # from workspace settings are forwarded to FEEDBACK_EMAIL_TO; EMAIL_FROM's
+  # domain must be verified in Resend. Values live in .env, never here.
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  EMAIL_FROM: ${EMAIL_FROM:-Placement AI <noreply@placement-ai.com>}
+  FEEDBACK_EMAIL_TO: ${FEEDBACK_EMAIL_TO:-}
   WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
   WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
   WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
