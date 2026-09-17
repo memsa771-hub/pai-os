@@ -120,9 +120,30 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         return AsyncOpenAI(**kwargs)
 
     async def embed_documents(self, texts: list[str]) -> EmbeddingResult:
+        """Embed texts, closing the client before returning.
+
+        The client is created per call and closed in a `finally`, so it never
+        outlives the event loop that owns it. Foreground retrieval runs inside
+        short-lived `asyncio.run()` loops, and an AsyncOpenAI client left open
+        there would have its async HTTP resources torn down with the loop
+        rather than released cleanly.
+
+        Deliberately NOT cached on the instance: this provider is a
+        process-wide singleton, so a cached client would be shared across
+        independent foreground loops — the same cross-loop ownership bug
+        already fixed for the Qdrant client.
+        """
         if not texts:
             return EmbeddingResult([], self.model_id, self._dimensions)
-        response = await self._client().embeddings.create(model=self._model, input=texts)
+
+        client = self._client()
+        try:
+            response = await client.embeddings.create(model=self._model, input=texts)
+        finally:
+            # Closed on the error path too: a provider outage must not leak a
+            # client per failed indexing job.
+            await client.close()
+
         vectors = [item.embedding for item in response.data]
         actual = len(vectors[0]) if vectors else self._dimensions
         if vectors and actual != self._dimensions:
