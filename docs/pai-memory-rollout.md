@@ -59,9 +59,36 @@ collection from PostgreSQL.
 | `PAI_MEMORY_CONTEXT_ENABLED` | `false` | Foreground injection master switch |
 | `PAI_MEMORY_CONTEXT_TIMEOUT_MS` | `1500` | **Total** foreground budget, all tiers |
 | `PAI_MEMORY_CONTEXT_MAX_CHARS` | `2500` | Hard cap on the rendered block, delimiters included |
+| `PAI_MEMORY_FOREGROUND_WORKERS` | `4` | Threads for foreground memory DB work |
+| `PAI_MEMORY_FOREGROUND_MAX_INFLIGHT` | `8` | Cap on concurrent (incl. abandoned) foreground DB operations |
 | `MEMORY_RETRIEVAL_CANDIDATES` | `40` | Hybrid candidate pool |
 | `MEMORY_RETRIEVAL_LIMIT` | `8` | Results after rerank |
 | `MEMORY_RERANKER` | `identity` | `identity` \| `importance` |
+
+All of these are passed through `workspace/docker-compose.yml`, and a test
+(`tests/memory/test_foreground_runtime.py`) fails if one is dropped — they were
+once documented here without being plumbed through, so setting them did
+nothing.
+
+### Why foreground work runs on its own thread pool
+
+Foreground retrieval ends in synchronous SQLAlchemy. `asyncio.wait_for` bounds
+awaits, not blocking calls, so a stalled PostgreSQL would freeze the event loop
+inside a single await and the deadline would bound nothing. That work therefore
+runs on a small dedicated pool (`PAI_MEMORY_FOREGROUND_WORKERS`), and because a
+thread cannot be killed, `PAI_MEMORY_FOREGROUND_MAX_INFLIGHT` caps how much
+abandoned DB work can accumulate. Past that limit the request sheds
+(`mode=busy`) rather than queueing behind stuck threads.
+
+### Reading the telemetry
+
+`ForegroundContext.mode` reports what retrieval actually did, propagated from
+the retriever rather than inferred from configuration:
+
+`hybrid` · `lexical_fallback` · `empty` · `timeout` · `busy` · `error` · `none`
+
+In Mode 1 expect `lexical_fallback`. Seeing `hybrid` there would mean a vector
+backend is configured when you did not intend one.
 
 ## Verifying a pilot
 

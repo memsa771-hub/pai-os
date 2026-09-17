@@ -179,6 +179,12 @@ class MemoryContextService:
         wants_episodes = any(r.partition(":")[0].strip().lower() == REF_EPISODES for r in refs)
         can_read_memory = Capability.MEMORY_READ.value in granted
 
+        # Recorded so the caller can report what retrieval ACTUALLY did rather
+        # than assuming "a query was supplied, therefore hybrid" — the
+        # retriever degrades to lexical on its own when no vector backend is
+        # configured or the index is unreachable.
+        self.last_retrieval_mode = None
+
         retrieved = None
         if query and can_read_memory and (wants_memory or wants_episodes):
             from .retriever import KIND_EPISODE, KIND_SEMANTIC, MemoryRetriever
@@ -192,6 +198,7 @@ class MemoryContextService:
                 workspace_id=workspace_id, query=query, kinds=kinds,
                 limit=max(MAX_SEMANTIC_MEMORIES, MAX_EPISODES),
             )
+            self.last_retrieval_mode = retrieved.mode
 
         for ref in refs:
             name, _, argument = ref.partition(":")

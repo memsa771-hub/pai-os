@@ -30,6 +30,8 @@ from typing import Optional
 
 from app.config import config
 
+from .foreground_executor import ForegroundBusy, run_bounded
+
 logger = logging.getLogger(__name__)
 
 # Minimum slice of the overall budget worth starting the fallback with.
@@ -90,7 +92,8 @@ class ForegroundContext:
     """The rendered block plus what it cost to build."""
 
     block: str = ""
-    mode: str = "none"          # hybrid | lexical_fallback | empty | none | timeout | error
+    # hybrid | lexical_fallback | empty | none | timeout | error | busy
+    mode: str = "none"
     vault_facts: int = 0
     memories: int = 0
     episodes: int = 0
@@ -260,15 +263,25 @@ async def build_foreground_context(
         return context
 
     try:
-        student = await asyncio.wait_for(
+        student, retrieval_mode = await asyncio.wait_for(
             _hybrid(workspace_id, query, caller), max(0.01, remaining())
         )
-        return _finish(student, "hybrid")
+        # Report what the retriever ACTUALLY did. Labelling a lexical fallback
+        # as "hybrid" would make Mode 1 rollout telemetry claim a vector
+        # backend was working when none is configured.
+        return _finish(student, retrieval_mode or "hybrid")
     except asyncio.TimeoutError:
         logger.warning(
             "memory context: hybrid exceeded the %dms budget workspace=%s",
             config.PAI_MEMORY_CONTEXT_TIMEOUT_MS, workspace_id,
         )
+    except ForegroundBusy as exc:
+        # Shed rather than queue: the pool is saturated with stuck DB work, so
+        # a fallback would join the same queue and time out anyway.
+        logger.warning("memory context: %s workspace=%s", exc, workspace_id)
+        context.mode = "busy"
+        context.elapsed_ms = int((time.monotonic() - started) * 1000)
+        return context
     except Exception:
         logger.warning(
             "memory context: hybrid failed workspace=%s — falling back",
@@ -295,9 +308,14 @@ async def build_foreground_context(
 
     try:
         student = await asyncio.wait_for(
-            asyncio.to_thread(_structured, workspace_id, query, caller), left
+            run_bounded(_structured, workspace_id, query, caller), left
         )
         return _finish(student, "lexical_fallback")
+    except ForegroundBusy as exc:
+        logger.warning("memory context: %s workspace=%s", exc, workspace_id)
+        context.mode = "busy"
+        context.elapsed_ms = int((time.monotonic() - started) * 1000)
+        return context
     except asyncio.TimeoutError:
         logger.warning(
             "memory context: fallback exceeded the remaining budget workspace=%s",
@@ -316,20 +334,45 @@ async def build_foreground_context(
 
 
 async def _hybrid(workspace_id: str, query: str, caller: str):
-    """Hybrid retrieval on its own session, off the event loop where blocking."""
+    """Hybrid retrieval, entirely off the main event loop.
+
+    Runs on the bounded foreground pool rather than inline. The async context
+    builder awaits an embedding call and a Qdrant round trip, but the Vault
+    read, the canonical validation and the session/pool acquisition around
+    them are synchronous SQLAlchemy — a stalled database would otherwise block
+    the event loop inside a single await, and `wait_for` cannot interrupt that.
+
+    Each call gets its own event loop inside the worker thread, so the async
+    parts still run normally; they simply do not run on the loop serving
+    requests.
+
+    Returns `(StudentContext, retrieval_mode)` so the caller reports what
+    actually happened — the retriever may itself have degraded to lexical.
+    """
+    from .foreground_executor import run_bounded
+
+    return await run_bounded(_hybrid_blocking, workspace_id, query, caller)
+
+
+def _hybrid_blocking(workspace_id: str, query: str, caller: str):
+    """The synchronous body, executed on a foreground worker thread."""
     from app.database import new_session
     from app.memory.context import MemoryContextService
 
     db = new_session()
     try:
-        return await MemoryContextService(db).build_student_context_async(
+        service = MemoryContextService(db)
+        student = asyncio.run(service.build_student_context_async(
             workspace_id=workspace_id,
             query=query,
             caller=caller,
             # Vault sensitivity flags are honoured: automatic context never
             # carries fields the definition marks sensitive.
             include_sensitive=False,
-        )
+        ))
+        # The retriever records whether it really ran hybrid or fell back;
+        # reading it here is what keeps rollout telemetry honest.
+        return student, getattr(service, "last_retrieval_mode", None)
     finally:
         db.close()
 

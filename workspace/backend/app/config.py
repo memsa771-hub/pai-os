@@ -208,6 +208,16 @@ class Config:
     PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
         "PAI_MEMORY_CONTEXT_ENABLED", "false"
     ).lower() in ("true", "1", "yes")
+    # Foreground retrieval runs on its own small thread pool so a stalled
+    # PostgreSQL cannot block the event loop (see foreground_executor.py).
+    # Threads cannot be killed, so MAX_INFLIGHT — not the pool size — is what
+    # bounds abandoned DB work when the database is slow.
+    PAI_MEMORY_FOREGROUND_WORKERS: int = int(
+        os.environ.get("PAI_MEMORY_FOREGROUND_WORKERS", "4")
+    )
+    PAI_MEMORY_FOREGROUND_MAX_INFLIGHT: int = int(
+        os.environ.get("PAI_MEMORY_FOREGROUND_MAX_INFLIGHT", "8")
+    )
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")
