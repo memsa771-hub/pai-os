@@ -35,10 +35,39 @@ KIND_SEMANTIC = "semantic_memory"
 KIND_EPISODE = "episode"
 
 
+@dataclass(frozen=True)
+class RetrievedItem:
+    """One result, with its position in the GLOBAL ranking."""
+
+    kind: str          # KIND_SEMANTIC | KIND_EPISODE
+    record: Any        # PaiMemory | PaiEpisode
+    rank: int          # 0-based position across both kinds
+    score: float = 0.0
+
+    @property
+    def id(self) -> str:
+        return self.record.id
+
+    @property
+    def text(self) -> str:
+        return (
+            self.record.summary if self.kind == KIND_EPISODE else self.record.content
+        ) or ""
+
+
 @dataclass
 class RetrievalResult:
-    """Canonical rows, plus how they were found."""
+    """Canonical rows, plus how they were found.
 
+    `ordered` is the real ranking. `memories`/`episodes` are per-kind views of
+    the same rows, kept for existing callers — but splitting by kind DESTROYS
+    the global order, so anything rank-sensitive (MRR, Recall@k for k below
+    the total) must read `ordered`. Reconstructing order as
+    `memories + episodes` silently reports every episode as ranking below
+    every memory.
+    """
+
+    ordered: list = field(default_factory=list)       # RetrievedItem
     memories: list = field(default_factory=list)      # PaiMemory
     episodes: list = field(default_factory=list)      # PaiEpisode
     # "hybrid" | "lexical_fallback" | "empty"
@@ -48,6 +77,13 @@ class RetrievalResult:
 
     def is_empty(self) -> bool:
         return not (self.memories or self.episodes)
+
+    def add(self, kind: str, record, score: float = 0.0) -> None:
+        """Append preserving global rank and keeping the per-kind views."""
+        self.ordered.append(
+            RetrievedItem(kind=kind, record=record, rank=len(self.ordered), score=score)
+        )
+        (self.episodes if kind == KIND_EPISODE else self.memories).append(record)
 
 
 class MemoryRetriever:
@@ -153,8 +189,8 @@ class MemoryRetriever:
             row = rows_by_id.get((candidate.kind, candidate.id))
             if row is None:
                 continue
-            (result.episodes if candidate.kind == KIND_EPISODE
-             else result.memories).append(row)
+            # Rank is assigned in reranked order, across both kinds.
+            result.add(candidate.kind, row, candidate.score)
 
         logger.info(
             "retrieval: workspace=%s mode=hybrid candidates=%d validated=%d "
@@ -196,7 +232,7 @@ class MemoryRetriever:
         result = RetrievalResult(mode="lexical_fallback" if query else "empty")
 
         if KIND_SEMANTIC in kinds:
-            result.memories = (
+            for row in (
                 self.memories.search(
                     workspace_id, query, limit=limit, memory_types=memory_types,
                 )
@@ -204,9 +240,10 @@ class MemoryRetriever:
                 self.memories.list_memories(
                     workspace_id, limit=limit, memory_types=memory_types,
                 )
-            )
+            ):
+                result.add(KIND_SEMANTIC, row)
         if KIND_EPISODE in kinds:
-            result.episodes = (
+            for row in (
                 self.episodes.search(
                     workspace_id, query, limit=limit, event_types=event_types,
                 )
@@ -214,7 +251,8 @@ class MemoryRetriever:
                 self.episodes.recent(
                     workspace_id, limit=limit, event_types=event_types,
                 )
-            )
+            ):
+                result.add(KIND_EPISODE, row)
 
         logger.info(
             "retrieval: workspace=%s mode=%s returned=%d",

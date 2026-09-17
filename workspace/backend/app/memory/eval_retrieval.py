@@ -377,12 +377,10 @@ async def run_evaluation(db, index=None, limit: int = 5) -> EvalReport:
         result = await retriever.retrieve(
             workspace_id=case.workspace_id, query=case.query, limit=limit,
         )
-        # Map canonical ids back to dataset labels, interleaving kinds by the
-        # order the retriever produced them.
-        retrieved = [
-            reverse.get(row.id, row.id)
-            for row in (result.memories + result.episodes)
-        ]
+        # `ordered` — the true global ranking. `memories + episodes` would put
+        # every episode after every memory regardless of how they actually
+        # ranked, quietly corrupting MRR and any Recall@k below the total.
+        retrieved = [reverse.get(item.id, item.id) for item in result.ordered]
         relevant = set(case.relevant)
         forbidden = set(case.forbidden)
 

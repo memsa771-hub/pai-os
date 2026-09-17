@@ -254,7 +254,62 @@ async def _invoke_assistant_agent(
     api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
     system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
-    system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
+
+    # Workspace state and student memory are independent reads, so overlap
+    # them: memory retrieval adds an embedding call plus a Qdrant round trip,
+    # and paying that after the state summary would add its full latency to
+    # every turn. Both are bounded (memory by its own timeout) and neither
+    # touches the other's session.
+    memory_context = None
+    inject_memory = (
+        config.PAI_MEMORY_CONTEXT_ENABLED
+        # Only the BUILT-IN counsellor. A user-created cloud agent runs this
+        # same loop and must never be handed the student's profile — gated on
+        # the same identity constant the capability grants use, not a second
+        # permission system.
+        and agent_name == pai.PAI_AGENT_NAME
+        and content
+    )
+    if inject_memory:
+        from app.memory.foreground import build_foreground_context
+
+        state_summary, memory_context = await asyncio.gather(
+            pai.workspace_state_summary(api),
+            build_foreground_context(
+                workspace_id=workspace_id,
+                # The CURRENT student message is the retrieval query. It is
+                # not copied into the memory block — it is already in
+                # `messages`, and duplicating it would let stale context be
+                # mistaken for a restatement.
+                query=content,
+                caller=pai.PAI_AGENT_NAME,
+            ),
+        )
+    else:
+        state_summary = await pai.workspace_state_summary(api)
+
+    system_prompt = system_prompt + "\n\n" + state_summary
+
+    if memory_context is not None and memory_context.has_content:
+        from app.memory.foreground import MEMORY_RULES
+
+        # Rules THEN data. The standing instruction must precede the
+        # untrusted region so it governs everything inside it.
+        system_prompt = (
+            system_prompt + "\n\n" + MEMORY_RULES + "\n\n" + memory_context.block
+        )
+
+    if memory_context is not None:
+        # Counts and sizes only — never the rendered block, which is student
+        # content.
+        logger.info(
+            "assistant memory: workspace=%s mode=%s vault=%d memories=%d "
+            "episodes=%d chars=%d truncated=%s elapsed_ms=%d",
+            workspace_id, memory_context.mode, memory_context.vault_facts,
+            memory_context.memories, memory_context.episodes,
+            memory_context.chars, memory_context.truncated,
+            memory_context.elapsed_ms,
+        )
     from app.tools import ToolContext, get_tool_executor, get_tool_registry
     from app.memory.permissions import capabilities_for_agent
     allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)

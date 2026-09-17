@@ -181,6 +181,24 @@ class Config:
     )
     MEMORY_RETRIEVAL_LIMIT: int = int(os.environ.get("MEMORY_RETRIEVAL_LIMIT", "8"))
     MEMORY_RERANKER: str = os.environ.get("MEMORY_RERANKER", "")
+
+    # ---- Foreground memory injection (app/memory/foreground.py) -----------
+    # Hard ceiling on the rendered student-context block. MemoryContextService
+    # already caps per section; this is the backstop so pathological values
+    # (a very long free-text Vault field) cannot expand the system prompt.
+    # Conservative on purpose — this is context, not the conversation.
+    PAI_MEMORY_CONTEXT_MAX_CHARS: int = int(
+        os.environ.get("PAI_MEMORY_CONTEXT_MAX_CHARS", "2500")
+    )
+    # Retrieval is on the response-critical path. Past this, PAI drops to the
+    # PostgreSQL-only fallback rather than making the student wait.
+    PAI_MEMORY_CONTEXT_TIMEOUT_MS: int = int(
+        os.environ.get("PAI_MEMORY_CONTEXT_TIMEOUT_MS", "1500")
+    )
+    # Master switch for automatic injection into PAI Counselor.
+    PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
+        "PAI_MEMORY_CONTEXT_ENABLED", "true"
+    ).lower() in ("true", "1", "yes")
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")
