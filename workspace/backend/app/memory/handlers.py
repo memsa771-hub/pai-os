@@ -147,10 +147,19 @@ async def extract_memory(job, db) -> dict:
                 # cannot reach `user_explicit` — `propose()` refuses it without
                 # `allow_user_explicit`, which this path never passes.
                 source_type=source_type,
-                source_event_ids=[
-                    e for e in (turn.user_event_id, turn.assistant_event_id) if e
-                ],
-                evidence=item.evidence,
+                # EVIDENCE — the student's event only. The assistant reply is
+                # context for resolving references, never a factual source; a
+                # memory attributed to it would let PAI's own words become
+                # student truth via the provenance trail.
+                source_event_ids=[turn.user_event_id],
+                # The assistant event stays reachable for debugging ("what was
+                # PAI saying when this was extracted?") but as context, clearly
+                # separated from what evidences the claim.
+                evidence={
+                    **item.evidence,
+                    **({"context_assistant_event_id": turn.assistant_event_id}
+                       if turn.assistant_event_id else {}),
+                },
             )
             proposed.append(candidate.id)
             types_proposed.append(item.candidate_type)

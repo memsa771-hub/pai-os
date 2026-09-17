@@ -195,6 +195,16 @@ class MemoryReconciler:
             return self._reject(candidate, f"unsupported episode operation: {candidate.operation}")
         if not (candidate.content or "").strip():
             return self._reject(candidate, "episode candidate requires content")
+        # Same gate as Vault and semantic memory. Episodes were the one type
+        # without it, so a low-confidence guess at "what the student decided"
+        # became canonical history while an equally weak preference was
+        # rejected. `_min_confidence_for` still exempts `user_explicit`.
+        if not self._confident_enough(candidate):
+            return self._reject(
+                candidate,
+                f"confidence {candidate.confidence} below threshold for source "
+                f"{candidate.source_type}",
+            )
 
         event_type = (candidate.entities or {}).get("event_type") or candidate.key or "note"
         episode = self.episodes.record(

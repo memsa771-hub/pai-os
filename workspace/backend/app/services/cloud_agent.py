@@ -782,8 +782,6 @@ async def _post_response(
     except Exception:
         logger.exception("cloud_agent: push fan-out failed for %s", agent_name)
 
-    return event.id
-
     # Publish to Redis so SSE clients receive the event in real-time
     try:
         from app import cache
@@ -830,6 +828,12 @@ async def _post_response(
         )
     except Exception:
         logger.warning("cloud_agent: failed to schedule integration relay", exc_info=True)
+
+    # LAST. Every post-commit hook above must run before this returns —
+    # returning early once orphaned the Redis publish, workflow advance and
+    # integration relay, which cloud replies reach ONLY from here (they bypass
+    # the POST /v1/events route that schedules them for everyone else).
+    return event.id
 
 
 async def _post_error_message(
