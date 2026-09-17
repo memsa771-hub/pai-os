@@ -255,7 +255,7 @@ async def _invoke_assistant_agent(
 
     system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
     system_prompt = system_prompt + "\n\n" + await pai.workspace_state_summary(api)
-    from app.tools import ToolContext, get_tool_executor, get_tool_registry
+    from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor, get_tool_registry
     allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)
     tool_context = ToolContext(
         workspace_id=workspace_id,
@@ -265,6 +265,11 @@ async def _invoke_assistant_agent(
         user_id=(event_data.get("source") or "").removeprefix("human:") or None,
         api=api,
         allowed_tools=allowed_tools,
+        # Structural backstop (see ToolPolicy.authorize): even if
+        # PAI_ALLOWED_TOOLS ever drifted to include an operator-only tool
+        # again, this still blocks it — audience is enforced independently
+        # of the allow-list above.
+        audience=AUDIENCE_COUNSELOR,
     )
     tool_registry = get_tool_registry()
     tool_executor = get_tool_executor()

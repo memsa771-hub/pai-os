@@ -24,9 +24,7 @@ def register_builtin_tools(registry):
     definitions = [
         # ---- Lightweight reads / context inspection — Counselor may use
         # these directly; Operator uses them too while executing a plan. ----
-        ToolDefinition("workspace.agents.list", "List agents in this workspace and their status.", EMPTY, "workspace", ToolRisk.READ, workspace.list_agents, audiences=BOTH),
         ToolDefinition("workspace.threads.list", "List workspace conversations.", EMPTY, "workspace", ToolRisk.READ, workspace.list_threads, audiences=BOTH),
-        ToolDefinition("workspace.thread.create", "Create a workspace conversation.", obj({"title": {"type": "string"}, "agents": {"type": "array", "items": {"type": "string"}}}, ["title"]), "workspace", ToolRisk.WRITE, workspace.create_thread, audiences=BOTH),
         ToolDefinition("tasks.list", "List workspace task cards.", EMPTY, "tasks", ToolRisk.READ, tasks.list_tasks, audiences=BOTH),
         ToolDefinition("files.list", "List files in workspace storage.", obj({"path": {"type": "string"}, "recursive": {"type": "boolean"}, "limit": {"type": "integer"}}), "files", ToolRisk.READ, files.list_files, audiences=BOTH),
         ToolDefinition("files.read", "Read a text file from workspace storage by file ID.", obj({"file_id": {"type": "string"}, "max_chars": {"type": "integer"}}, ["file_id"]), "files", ToolRisk.READ, files.read_file, audiences=BOTH),
@@ -34,7 +32,13 @@ def register_builtin_tools(registry):
         ToolDefinition("web.fetch", "Read a public URL through the workspace fetch and safety pipeline.", obj({"url": {"type": "string"}, "mode": {"type": "string", "enum": ["auto", "static", "render"]}, "max_chars": {"type": "integer"}}, ["url"]), "web", ToolRisk.READ, web.fetch, audiences=BOTH),
 
         # ---- Real execution — Operator's domain only. Counselor delegates
-        # instead of calling these; see operator.delegate below. ----
+        # instead of calling these; see operator.delegate below.
+        # workspace.agents.list/workspace.thread.create are here too, even
+        # though they're reads/lightweight — PAI does not let the student
+        # manage agents or spin up threads directly (see PAI_SYSTEM_PROMPT in
+        # app/services/pai.py), so Counselor has no business calling either. ----
+        ToolDefinition("workspace.agents.list", "List agents in this workspace and their status.", EMPTY, "workspace", ToolRisk.READ, workspace.list_agents, audiences=OPERATOR_ONLY),
+        ToolDefinition("workspace.thread.create", "Create a workspace conversation.", obj({"title": {"type": "string"}, "agents": {"type": "array", "items": {"type": "string"}}}, ["title"]), "workspace", ToolRisk.WRITE, workspace.create_thread, audiences=OPERATOR_ONLY),
         ToolDefinition("tasks.create", "Create a task card requested by the user.", obj({"title": {"type": "string"}, "description": {"type": "string"}, "priority": {"type": "string", "enum": ["low", "normal", "high"]}, "assignee": {"type": "string"}}, ["title"]), "tasks", ToolRisk.WRITE, tasks.create_task, audiences=OPERATOR_ONLY),
         ToolDefinition("files.write", "Write UTF-8 text into workspace storage.", obj({"filename": {"type": "string"}, "content": {"type": "string"}, "content_type": {"type": "string"}}, ["filename", "content"]), "files", ToolRisk.WRITE, files.write_file, audiences=OPERATOR_ONLY),
         ToolDefinition("browser.tabs.list", "List shared workspace browser tabs.", EMPTY, "browser", ToolRisk.READ, browser.list_tabs, audiences=OPERATOR_ONLY),

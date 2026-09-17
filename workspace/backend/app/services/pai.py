@@ -49,15 +49,26 @@ PAI_KEY_PLACEHOLDER = "__server_managed__"
 PAI_PRIMARY_CHANNEL = "pai-counselor"
 # PAI Counselor's tool boundary: lightweight reads/context-inspection plus the
 # two Operator hand-off tools — nothing that performs real execution (writes,
-# browser automation, destructive or multi-step actions). Those live behind
-# PAI Operator (see app/services/operator.py), which discovers them itself
-# via the "operator" tool audience (see app/tools/registry.py) rather than a
-# list maintained here. Do not add write/execution tools to this tuple —
-# route that work through operator.delegate instead; see the module docstring
-# and PAI_SYSTEM_PROMPT below for the counsel-vs-execute split this enforces.
+# browser automation, destructive or multi-step actions) and nothing that lets
+# the student manage agents or spin up threads (PAI has no agent picker; see
+# PAI_SYSTEM_PROMPT below — that's Operator's business, not a conversational
+# one). Those live behind PAI Operator (see app/services/operator.py), which
+# discovers them itself via the "operator" tool audience (see
+# app/tools/registry.py) rather than a list maintained here.
+#
+# This tuple must stay a subset of what app/tools/builtin/__init__.py tags
+# audiences=..."counselor"... for every non-operator.* entry — see
+# TestToolBoundary.test_allowed_tools_match_counselor_audience in
+# tests/test_pai.py, which fails loudly if the two ever drift apart again
+# (they already have once: workspace.agents.list/workspace.thread.create used
+# to be listed here despite being real execution, not lightweight reads).
+#
+# Do not add write/execution tools to this tuple — route that work through
+# operator.delegate instead; see the module docstring and PAI_SYSTEM_PROMPT
+# below for the counsel-vs-execute split this enforces.
 PAI_ALLOWED_TOOLS = (
-    "workspace.agents.list", "workspace.threads.list", "workspace.thread.create",
-    "tasks.list", "files.list", "files.read", "web.search", "web.fetch",
+    "workspace.threads.list", "tasks.list", "files.list", "files.read",
+    "web.search", "web.fetch",
     # PAI Operator — see app/services/operator.py. Counselor never touches
     # execution tools directly; it delegates and reads status back through these.
     "operator.delegate", "operator.status",
@@ -494,7 +505,7 @@ async def execute_tool(
     api: WorkspaceApi, agent_name: str, name: str, args: dict,
 ) -> dict:
     """Compatibility facade; execution is owned by the shared ToolExecutor."""
-    from app.tools import ToolContext, get_tool_executor
+    from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor
     aliases = {
         "list_agents": "workspace.agents.list", "list_threads": "workspace.threads.list",
         "create_thread": "workspace.thread.create", "list_tasks": "tasks.list",
@@ -502,6 +513,6 @@ async def execute_tool(
     }
     context = ToolContext(
         workspace_id=api.workspace_id, agent_name=agent_name, api=api,
-        allowed_tools=frozenset(PAI_ALLOWED_TOOLS),
+        allowed_tools=frozenset(PAI_ALLOWED_TOOLS), audience=AUDIENCE_COUNSELOR,
     )
     return await get_tool_executor().execute(aliases.get(name, name), args, context)

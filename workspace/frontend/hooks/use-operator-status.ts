@@ -8,6 +8,23 @@ const ACTIVE_POLL_MS = 4_000;
 const IDLE_POLL_MS = 20_000;
 
 /**
+ * Resolve a race between two sources updating the same state (SSE, the
+ * initial seed fetch, and the polling fallback can all land in any order —
+ * a slow HTTP response can resolve after a newer SSE event already arrived).
+ * Never apply an update that is older than what's already shown, keyed by
+ * the server's own `updatedAt` rather than arrival order. A missing/absent
+ * incoming run never clears an existing one — an empty read racing behind a
+ * real update should not blank the indicator.
+ */
+function pickNewer(current: OperatorRun | null, incoming: OperatorRun | null): OperatorRun | null {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const incomingTime = incoming.updatedAt ? Date.parse(incoming.updatedAt) : 0;
+  const currentTime = current.updatedAt ? Date.parse(current.updatedAt) : 0;
+  return incomingTime >= currentTime ? incoming : current;
+}
+
+/**
  * PAI Operator's most recent run — the read side of the "PAI is working…"
  * indicator. Backed by realtime SSE first: every meaningful status change
  * PAI Operator makes is persisted to Postgres AND published as a
@@ -43,7 +60,7 @@ export function useOperatorStatus(enabled: boolean): OperatorRun | null {
         // instead of vanishing the instant it leaves the active states.
         const { runs } = await workspaceApi.listOperatorRuns({ limit: 1 });
         latest = runs[0] ?? null;
-        if (!cancelled) setRun(latest);
+        if (!cancelled) setRun((current) => pickNewer(current, latest));
       } catch {
         // Best-effort — try again on the next tick.
       }
@@ -66,9 +83,12 @@ export function useOperatorStatus(enabled: boolean): OperatorRun | null {
       }
     };
 
-    // Seed initial state, then prefer the realtime stream.
+    // Seed initial state, then prefer the realtime stream. This request and
+    // the SSE connection below race each other — pickNewer (keyed on the
+    // server's updatedAt, not arrival order) is what keeps a slow response
+    // here from clobbering a newer state SSE already delivered.
     workspaceApi.listOperatorRuns({ limit: 1 }).then(({ runs }) => {
-      if (!cancelled) setRun(runs[0] ?? null);
+      if (!cancelled) setRun((current) => pickNewer(current, runs[0] ?? null));
     }).catch(() => {
       // Best-effort — SSE (or the polling fallback below) will catch up.
     });
@@ -79,7 +99,7 @@ export function useOperatorStatus(enabled: boolean): OperatorRun | null {
         try {
           const event = JSON.parse(ev.data);
           if (event.type !== 'workspace.operator.run_updated') return;
-          if (!cancelled) setRun(workspaceApi.mapOperatorRun(event.payload));
+          if (!cancelled) setRun((current) => pickNewer(current, workspaceApi.mapOperatorRun(event.payload)));
         } catch {
           // malformed event
         }

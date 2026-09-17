@@ -13,6 +13,13 @@ class ToolContext:
     conversation: Optional[str] = None
     user_id: Optional[str] = None
     allowed_tools: Optional[frozenset[str]] = field(default=None)
+    # Who is actually calling ("counselor"/"operator" — see AUDIENCE_* in
+    # tools/registry.py). ToolPolicy checks this against ToolDefinition.audiences
+    # at execution time, independent of `allowed_tools` — a second, structural
+    # layer so a caller that's merely missing an allowed_tools entry (or one
+    # constructed with allowed_tools=None) still can't reach a tool meant for
+    # the other audience. None skips the check (non-PAI/internal callers).
+    audience: Optional[str] = field(default=None)
 
     @property
     def source(self) -> str:

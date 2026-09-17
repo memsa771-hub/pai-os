@@ -289,24 +289,44 @@ class TestPaiTools:
         from app.services.pai import WorkspaceApi
         return WorkspaceApi(data["workspaceId"], data["token"])
 
-    def test_create_thread_and_reads_via_api(self, client, pai_enabled):
+    def test_counselor_cannot_create_threads_or_list_agents_directly(self, client, pai_enabled):
+        """PAI has no agent picker and doesn't let the student manage agents
+        or spin up threads on their own (see PAI_SYSTEM_PROMPT) — both are
+        Operator-only now, even though workspace.agents.list is a read. See
+        PAI_ALLOWED_TOOLS in app/services/pai.py and the tool audiences in
+        app/tools/builtin/__init__.py."""
         from app.services.pai import execute_tool
 
         data = _create_workspace(client)
         api = self._api(data)
 
-        created = asyncio.run(execute_tool(api, "pai", "create_thread",
-                                           {"title": "Planning"}))
-        assert created["ok"] and created["channel_name"]
+        created = asyncio.run(execute_tool(api, "pai", "create_thread", {"title": "Planning"}))
+        assert created["ok"] is False
+        assert created["error"]["code"] == "tool_not_allowed"
+
+        agents = asyncio.run(execute_tool(api, "pai", "list_agents", {}))
+        assert agents["ok"] is False
+        assert agents["error"]["code"] == "tool_not_allowed"
+
+    def test_list_threads_via_counselor(self, client, pai_enabled):
+        """Reading threads stays available to Counselor even though creating
+        one and listing agents don't — lightweight reads/context inspection
+        are its job."""
+        from app.services.pai import execute_tool
+        from app.tools import ToolContext, get_tool_executor
+
+        data = _create_workspace(client)
+        api = self._api(data)
+
+        # Seeded the way PAI Operator would (workspace.thread.create is
+        # operator-only).
+        ctx = ToolContext(workspace_id=data["workspaceId"], agent_name="pai-operator", api=api)
+        created = asyncio.run(get_tool_executor().execute("workspace.thread.create", {"title": "Planning"}, ctx))
+        assert created["ok"], created
 
         threads = asyncio.run(execute_tool(api, "pai", "list_threads", {}))
         assert threads["ok"]
         assert any(t["title"] == "Planning" for t in threads["threads"])
-
-        agents = asyncio.run(execute_tool(api, "pai", "list_agents", {}))
-        assert agents["ok"]
-        pai_row = next(a for a in agents["agents"] if a["name"] == "pai")
-        assert pai_row["builtin"] is True
 
     def test_counselor_cannot_create_tasks_directly(self, client, pai_enabled):
         """tasks.create is real execution (a write), so it's Operator-only —
@@ -359,6 +379,64 @@ class TestPaiTools:
         data = _create_workspace(client)
         summary = asyncio.run(workspace_state_summary(self._api(data)))
         assert "agent-alpha" in summary
+
+
+class TestToolBoundary:
+    """Guards against the exact contradiction a review previously caught:
+    PAI_ALLOWED_TOOLS (app/services/pai.py) claiming Counselor is read-only/
+    delegating while actually listing a write or operator-only tool. These
+    two sources of truth (the tuple and each ToolDefinition.audiences) must
+    never drift apart again — see app/tools/registry.py and
+    app/tools/builtin/__init__.py."""
+
+    def test_allowed_tools_match_counselor_audience(self):
+        from app.services import pai
+        from app.tools import AUDIENCE_COUNSELOR, get_tool_registry
+
+        registry = get_tool_registry()
+        counselor_audience_names = {t.name for t in registry.for_audience(AUDIENCE_COUNSELOR)}
+        for name in pai.PAI_ALLOWED_TOOLS:
+            tool = registry.get(name)
+            assert tool is not None, f"{name} is in PAI_ALLOWED_TOOLS but not registered"
+            assert name in counselor_audience_names, (
+                f"{name} is in PAI_ALLOWED_TOOLS but its ToolDefinition doesn't "
+                f"declare audiences={{'counselor', ...}} — the tuple and the "
+                f"registry have drifted apart"
+            )
+
+    def test_allowed_tools_contain_no_write_execution_tools(self):
+        """Counselor's allow-list may contain reads and the two Operator
+        hand-off tools (operator.delegate is a WRITE, but it only ever
+        schedules Operator's work — it never executes anything itself)."""
+        from app.services import pai
+        from app.tools import ToolRisk, get_tool_registry
+
+        registry = get_tool_registry()
+        for name in pai.PAI_ALLOWED_TOOLS:
+            if name == "operator.delegate":
+                continue
+            tool = registry.get(name)
+            assert tool.risk is ToolRisk.READ, f"{name} is a {tool.risk} tool but is directly reachable by Counselor"
+
+    def test_audience_blocks_a_tool_even_when_allowed_tools_permits_it(self):
+        """Defense in depth: ToolContext.audience is enforced by ToolPolicy
+        independently of allowed_tools, so a caller that (by bug or by a
+        future permissive allowed_tools=None) could otherwise reach an
+        operator-only tool is still blocked."""
+        from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor
+
+        class FakeApi:
+            async def get(self, *a, **k):
+                return {"ok": True, "data": {}}
+
+        ctx = ToolContext(
+            workspace_id="ws-1", agent_name="pai", api=FakeApi(),
+            allowed_tools=None,  # deliberately permissive on this axis
+            audience=AUDIENCE_COUNSELOR,
+        )
+        result = asyncio.run(get_tool_executor().execute("workspace.thread.create", {"title": "x"}, ctx))
+        assert result["ok"] is False
+        assert result["error"]["code"] == "tool_not_allowed"
 
 
 class TestAssistantLoop:

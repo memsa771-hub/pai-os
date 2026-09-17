@@ -71,14 +71,26 @@ class ToolRegistry:
         """
         return tuple(t for t in self._tools.values() if audience in t.audiences)
 
+    def _schema(self, tool: ToolDefinition) -> dict:
+        return {"type": "function", "function": {
+            "name": tool.transport_name,
+            "description": tool.description,
+            "parameters": tool.arguments,
+        }}
+
+    def openai_tools_for_audience(self, audience: str) -> list[dict]:
+        """The model-facing schema list for a given audience — the safe
+        default for any caller building a tool list for an LLM. Prefer this
+        over ``openai_tools_for_agent`` for model-facing use: that method's
+        ``allowed_tools=None`` means "every registered tool", which is an easy
+        footgun (a future internal/other-audience tool would be silently
+        handed to whichever caller forgets to pass an allow-list)."""
+        return [self._schema(tool) for tool in self.for_audience(audience)]
+
     def openai_tools_for_agent(self, allowed_tools=None) -> list[dict]:
         allowed = None if allowed_tools is None else set(allowed_tools)
         return [
-            {"type": "function", "function": {
-                "name": tool.transport_name,
-                "description": tool.description,
-                "parameters": tool.arguments,
-            }}
+            self._schema(tool)
             for tool in self._tools.values()
             if allowed is None or tool.name in allowed or tool.category in allowed
         ]

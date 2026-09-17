@@ -459,10 +459,14 @@ async def _execute(
         # counselor-only, so this can never self-delegate; a tool that opts
         # into no audience (or "internal" only) is invisible here too.
         allowed_tools = frozenset(t.name for t in tool_registry.for_audience(AUDIENCE_OPERATOR))
-        tools = tool_registry.openai_tools_for_agent(allowed_tools)
+        tools = tool_registry.openai_tools_for_audience(AUDIENCE_OPERATOR)
         tool_context = ToolContext(
             workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
             api=api, allowed_tools=allowed_tools,
+            # Structural backstop (see ToolPolicy.authorize) — independent of
+            # allowed_tools above, so a tool that shouldn't be reachable by
+            # Operator stays blocked even if it ever ended up in that set.
+            audience=AUDIENCE_OPERATOR,
         )
 
         plan_listing = "\n".join(f"- {s['id']}: {s['title']}" for s in plan)
