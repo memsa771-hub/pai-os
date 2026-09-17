@@ -1104,6 +1104,16 @@ class PaiMemory(Base):
             "idx_pai_memories_ws_status_fingerprint",
             "workspace_id", "status", "fingerprint",
         ),
+        # The actual no-duplicates invariant. The application's fingerprint
+        # lookup is a fast path; this is what makes two concurrent workers
+        # safe. Partial so forgotten rows may share a fingerprint and a NULL
+        # fingerprint never collides.
+        Index(
+            "uq_pai_memories_ws_fingerprint_active", "workspace_id", "fingerprint",
+            unique=True,
+            postgresql_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+            sqlite_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+        ),
     )
 
 
@@ -1139,6 +1149,12 @@ class PaiEpisode(Base):
         Index(
             "idx_pai_episodes_ws_status_fingerprint",
             "workspace_id", "status", "fingerprint",
+        ),
+        Index(
+            "uq_pai_episodes_ws_fingerprint_active", "workspace_id", "fingerprint",
+            unique=True,
+            postgresql_where=text("status = 'active' AND fingerprint IS NOT NULL"),
+            sqlite_where=text("status = 'active' AND fingerprint IS NOT NULL"),
         ),
     )
 

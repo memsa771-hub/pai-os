@@ -22,6 +22,7 @@ from app.memory.candidates import MemoryCandidateService
 from app.memory.index import MemoryRecord, get_memory_index
 from app.memory.reconciler import MemoryReconciler
 from app.memory.semantic import MemoryService
+from app.models import PaiEpisode, PaiMemory
 
 logger = logging.getLogger(__name__)
 
@@ -312,7 +313,10 @@ def _records_for(db, workspace_id: str, memory_ids: list, episode_ids: list) -> 
                 id=episode.id, workspace_id=workspace_id, kind="episode",
                 text=episode.summary,
                 filters={
-                    "memory_type": episode.event_type,
+                    # `event_type`, NOT `memory_type` — an episode's kind of
+                    # event is a different axis from a memory's type, and
+                    # sharing the field name made them unfilterable apart.
+                    "event_type": episode.event_type,
                     "status": episode.status,
                     "importance": episode.importance,
                     "occurred_at": (
@@ -360,29 +364,56 @@ async def reindex_workspace(job, db) -> dict:
     if payload.get("purge_first") and hasattr(index, "drop_workspace"):
         await index.drop_workspace(workspace_id)
 
-    memory_ids = [m.id for m in MemoryService(db).list_memories(workspace_id, limit=10000)]
-    episode_ids = [e.id for e in EpisodicMemoryService(db).recent(workspace_id, limit=10000)]
+    # Keyset pagination over ALL active rows. The previous `limit=10000` would
+    # have silently omitted everything beyond it — a rebuild that quietly drops
+    # a student's older memories is worse than one that fails.
+    batch_size = max(1, int(payload.get("batch_size") or 64))
+    total = memory_count = episode_count = 0
 
-    total = 0
-    batch_size = int(payload.get("batch_size") or 64)
-    all_ids = [("m", i) for i in memory_ids] + [("e", i) for i in episode_ids]
-    for start in range(0, len(all_ids), batch_size):
-        chunk = all_ids[start:start + batch_size]
-        records = _records_for(
-            db, workspace_id,
-            memory_ids=[i for kind, i in chunk if kind == "m"],
-            episode_ids=[i for kind, i in chunk if kind == "e"],
-        )
+    for batch in _iter_ids(db, workspace_id, PaiMemory, batch_size):
+        memory_count += len(batch)
+        records = _records_for(db, workspace_id, memory_ids=batch, episode_ids=[])
+        if records:
+            total += await index.index(records)
+
+    for batch in _iter_ids(db, workspace_id, PaiEpisode, batch_size):
+        episode_count += len(batch)
+        records = _records_for(db, workspace_id, memory_ids=[], episode_ids=batch)
         if records:
             total += await index.index(records)
 
     logger.info(
-        "memory.reindex: job=%s workspace=%s memories=%d episodes=%d indexed=%d",
-        job.id, workspace_id, len(memory_ids), len(episode_ids), total,
+        "memory.reindex: job=%s workspace=%s memories=%d episodes=%d indexed=%d "
+        "batch_size=%d",
+        job.id, workspace_id, memory_count, episode_count, total, batch_size,
     )
     return {
-        "indexed": total, "memories": len(memory_ids), "episodes": len(episode_ids),
+        "indexed": total, "memories": memory_count, "episodes": episode_count,
     }
+
+
+def _iter_ids(db, workspace_id: str, model, batch_size: int):
+    """Yield batches of active row ids, keyset-paginated by primary key.
+
+    Keyset rather than OFFSET: a concurrent insert during a long rebuild
+    shifts OFFSET windows and makes rows get skipped or repeated. Memory use
+    stays bounded at one batch of ids regardless of table size.
+    """
+    from sqlalchemy import select
+
+    last_id = ""
+    while True:
+        batch = list(db.execute(
+            select(model.id).where(
+                model.workspace_id == workspace_id,
+                model.status == "active",
+                model.id > last_id,
+            ).order_by(model.id).limit(batch_size)
+        ).scalars().all())
+        if not batch:
+            return
+        yield batch
+        last_id = batch[-1]
 
 
 job_handlers.register(JOB_EXTRACT, extract_memory)

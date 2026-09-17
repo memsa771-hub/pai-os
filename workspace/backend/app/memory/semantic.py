@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.models import PaiMemory
 
@@ -70,8 +71,30 @@ class MemoryService:
             fingerprint=memory_fingerprint(memory_type, content.strip()),
             status="active",
         )
-        self.db.add(memory)
-        self.db.flush()
+        # Savepoint so a lost uniqueness race rolls back ONLY this INSERT,
+        # leaving the caller's transaction (often a batch of reconciled
+        # candidates) intact.
+        try:
+            with self.db.begin_nested():
+                self.db.add(memory)
+                self.db.flush()
+        except IntegrityError:
+            existing = self.db.execute(
+                select(PaiMemory).where(
+                    PaiMemory.workspace_id == workspace_id,
+                    PaiMemory.status == "active",
+                    PaiMemory.fingerprint == memory.fingerprint,
+                ).limit(1)
+            ).scalar_one_or_none()
+            if existing is None:
+                raise
+            # Another worker wrote the identical memory first. That is the
+            # dedupe outcome we wanted, not a failure.
+            logger.info(
+                "memory: concurrent duplicate collapsed workspace=%s type=%s",
+                workspace_id, memory_type,
+            )
+            return existing
         return memory
 
     def get(self, workspace_id: str, memory_id: str) -> Optional[PaiMemory]:

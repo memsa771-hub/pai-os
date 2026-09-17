@@ -21,7 +21,7 @@ never look like "the student has no memories".
 import logging
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from app.config import config
 
@@ -78,6 +78,7 @@ class MemoryRetriever:
         query: str,
         kinds: Optional[tuple[str, ...]] = None,
         memory_types: Optional[tuple[str, ...]] = None,
+        event_types: Optional[tuple[str, ...]] = None,
         limit: Optional[int] = None,
         candidate_limit: Optional[int] = None,
     ) -> RetrievalResult:
@@ -89,12 +90,19 @@ class MemoryRetriever:
             return self._fallback(workspace_id, "", kinds, memory_types, limit)
 
         started = time.monotonic()
-        filters = {"memory_type": list(memory_types)} if memory_types else None
+        # Separate fields per kind: an episode's `event_type` is not a
+        # `memory_type` and storing it under that name made the two
+        # indistinguishable in a filter.
+        filters: dict[str, Any] = {}
+        if memory_types:
+            filters["memory_type"] = list(memory_types)
+        if event_types:
+            filters["event_type"] = list(event_types)
 
         try:
             hits = await self.index.search(
                 workspace_id=workspace_id, query=query,
-                limit=candidate_limit, kinds=kinds, filters=filters,
+                limit=candidate_limit, kinds=kinds, filters=filters or None,
             )
         except Exception:
             # Includes QdrantUnavailable. An index outage is not a data
@@ -108,30 +116,52 @@ class MemoryRetriever:
         if not hits:
             return self._fallback(workspace_id, query, kinds, memory_types, limit)
 
-        reranked = await self.reranker.rerank(
-            query,
-            [RerankCandidate(
-                id=h.id, kind=h.kind, text=h.text or "", score=h.score,
-            ) for h in hits if h.id],
-            limit,
-        )
-
-        # PostgreSQL is the authority. Everything above produced ids.
+        # VALIDATE FIRST, then rerank. Three reasons the order matters:
+        #
+        #   1. Reranking before validation lets stale hits consume final slots
+        #      — three dead points at the top of a 3-slot request returned
+        #      nothing, while valid hits sat just below the cut.
+        #   2. A future external reranker would otherwise be sent forgotten
+        #      student content over the network.
+        #   3. Rerank inputs (text, importance) must come from canonical rows,
+        #      not index payload. `ImportanceReranker` was previously scoring
+        #      every candidate at the 0.5 default because nothing supplied it.
         result = RetrievalResult(mode="hybrid", candidates_considered=len(hits))
-        for candidate in reranked:
-            row = self._load_active(workspace_id, candidate)
+        candidates: list[RerankCandidate] = []
+        rows_by_id: dict[tuple[str, str], Any] = {}
+
+        for hit in hits:
+            if not hit.id:
+                continue
+            row = self._load_active(workspace_id, hit.id, hit.kind)
             if row is None:
                 result.dropped_stale += 1
+                continue
+            rows_by_id[(hit.kind, hit.id)] = row
+            candidates.append(RerankCandidate(
+                id=hit.id, kind=hit.kind,
+                # Canonical text/importance, never the indexed copy — payload
+                # can lag an edit, and importance is not on the payload at all
+                # for older points.
+                text=(row.summary if hit.kind == KIND_EPISODE else row.content) or "",
+                score=hit.score,
+                importance=float(getattr(row, "importance", 0.5) or 0.5),
+            ))
+
+        reranked = await self.reranker.rerank(query, candidates, limit)
+        for candidate in reranked:
+            row = rows_by_id.get((candidate.kind, candidate.id))
+            if row is None:
                 continue
             (result.episodes if candidate.kind == KIND_EPISODE
              else result.memories).append(row)
 
         logger.info(
-            "retrieval: workspace=%s mode=hybrid candidates=%d returned=%d "
-            "dropped_stale=%d elapsed_ms=%d",
-            workspace_id, len(hits),
+            "retrieval: workspace=%s mode=hybrid candidates=%d validated=%d "
+            "returned=%d dropped_stale=%d reranker=%s elapsed_ms=%d",
+            workspace_id, len(hits), len(candidates),
             len(result.memories) + len(result.episodes), result.dropped_stale,
-            int((time.monotonic() - started) * 1000),
+            self.reranker.name, int((time.monotonic() - started) * 1000),
         )
         if result.is_empty():
             # Every hit was stale — the index is behind, so answer from
@@ -141,12 +171,12 @@ class MemoryRetriever:
 
     # -- helpers -----------------------------------------------------------
 
-    def _load_active(self, workspace_id: str, candidate: RerankCandidate):
+    def _load_active(self, workspace_id: str, record_id: str, kind: str):
         """Canonical row if it exists and is active, else None."""
-        if candidate.kind == KIND_EPISODE:
-            row = self.episodes.get(workspace_id, candidate.id)
-        else:
-            row = self.memories.get(workspace_id, candidate.id)
+        row = (
+            self.episodes.get(workspace_id, record_id) if kind == KIND_EPISODE
+            else self.memories.get(workspace_id, record_id)
+        )
         if row is None or row.status != "active":
             return None
         return row

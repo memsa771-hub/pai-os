@@ -214,3 +214,103 @@ async def test_payload_carries_versioned_model_metadata(index):
     assert payload["embedding_model"] == "fake:test-embed"
     assert payload["embedding_dim"] == FakeEmbeddings.DIM
     assert payload["workspace_id"] == workspace
+
+
+# ---------------------------------------------------------------------------
+# Model-version safety
+# ---------------------------------------------------------------------------
+
+class OtherModelEmbeddings(FakeEmbeddings):
+    """Same dimension, DIFFERENT model — an incompatible vector space."""
+
+    @property
+    def model_id(self):
+        return "fake:other-model"
+
+    def _vector(self, text):
+        base = super()._vector(text)
+        return list(reversed(base))
+
+
+@pytest.mark.asyncio
+async def test_old_embedding_model_points_are_excluded(index):
+    """Cosine across two models is meaningless — never compare them.
+
+    Points written under model A must be invisible to a search running
+    under model B, even though both are the same dimension.
+    """
+    workspace = str(uuid.uuid4())
+    await index.index([_record(workspace, "old", "Wants Germany for masters")])
+    assert await index.search(workspace, "Germany masters", limit=5)
+
+    # Switch the embedding model; the collection still holds model-A points.
+    index._embeddings = OtherModelEmbeddings()
+    index._ensured = False
+
+    hits = await index.search(workspace, "Germany masters", limit=5)
+    dense_hits = [h for h in hits if h.id == "old"]
+    # BM25 may still match lexically; what must not happen is a DENSE match
+    # against the stale vector space.
+    assert all(h.retrieval_source != "dense" for h in dense_hits), (
+        "a point from the previous embedding model was compared densely"
+    )
+
+
+@pytest.mark.asyncio
+async def test_new_model_points_are_found_after_reindex(index):
+    """The degraded window closes once reindex re-writes the points."""
+    workspace = str(uuid.uuid4())
+    await index.index([_record(workspace, "m1", "Wants Germany for masters")])
+
+    index._embeddings = OtherModelEmbeddings()
+    index._ensured = False
+    # Reindex under the new model.
+    await index.index([_record(workspace, "m1", "Wants Germany for masters")])
+
+    hits = await index.search(workspace, "Germany masters", limit=5)
+    assert any(h.id == "m1" for h in hits)
+
+
+@pytest.mark.asyncio
+async def test_dimension_mismatch_is_detected(index):
+    """A collection built for another size must fail loudly, not silently."""
+    from app.memory.index_qdrant import QdrantUnavailable
+
+    await index.ensure_collection()
+
+    class BigEmbeddings(FakeEmbeddings):
+        DIM = 64
+
+        @property
+        def dimensions(self):
+            return 64
+
+    index._embeddings = BigEmbeddings()
+    index._ensured = False
+
+    with pytest.raises(QdrantUnavailable, match="dimension"):
+        await index.ensure_collection()
+
+
+@pytest.mark.asyncio
+async def test_event_type_and_memory_type_filter_separately(index):
+    """An episode's event_type must not be matched by a memory_type filter."""
+    workspace = str(uuid.uuid4())
+    await index.index([
+        _record(workspace, "m1", "Wants Germany for masters",
+                memory_type="preference"),
+        _record(workspace, "e1", "Removed University X tuition too high",
+                kind="episode", event_type="shortlist_removed"),
+    ])
+
+    by_memory_type = await index.search(
+        workspace, "Germany University", limit=10,
+        filters={"memory_type": ["preference"]},
+    )
+    assert all(h.kind == "semantic_memory" for h in by_memory_type)
+
+    by_event_type = await index.search(
+        workspace, "Germany University", limit=10,
+        filters={"event_type": ["shortlist_removed"]},
+    )
+    assert all(h.kind == "episode" for h in by_event_type)

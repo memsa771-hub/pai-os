@@ -353,3 +353,145 @@ def test_two_workers_never_hold_the_same_valid_lease(pg_sessionmaker, pg_workspa
         t.join(timeout=30)
 
     assert len(winners) == 1, f"job claimed by {len(winners)} workers: {winners}"
+
+
+# ---------------------------------------------------------------------------
+# Exact dedupe under real concurrency
+# ---------------------------------------------------------------------------
+
+def test_concurrent_identical_memories_collapse_to_one(pg_sessionmaker, pg_workspace):
+    """Two workers proposing the same memory must produce ONE active row.
+
+    SQLite serialises writers, so only a real server shows the race the
+    partial unique index exists to arbitrate.
+    """
+    import threading
+
+    from app.memory.semantic import MemoryService
+    from app.models import PaiMemory
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(4)
+
+    def create(worker: int):
+        session = pg_sessionmaker()
+        try:
+            barrier.wait(timeout=10)
+            MemoryService(session).create(
+                workspace_id=pg_workspace,
+                content="Wants Germany for masters.",
+                memory_type="preference",
+            )
+            session.commit()
+        except Exception as exc:          # noqa: BLE001 — surfaced below
+            errors.append(exc)
+            session.rollback()
+        finally:
+            session.close()
+
+    threads = [threading.Thread(target=create, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"concurrent create raised: {errors}"
+
+    session = pg_sessionmaker()
+    try:
+        active = session.query(PaiMemory).filter(
+            PaiMemory.workspace_id == pg_workspace,
+            PaiMemory.status == "active",
+        ).count()
+    finally:
+        session.close()
+    assert active == 1, f"expected one active memory, found {active}"
+
+
+def test_concurrent_identical_episodes_collapse_to_one(pg_sessionmaker, pg_workspace):
+    import threading
+
+    from app.memory.episodic import EpisodicMemoryService
+    from app.models import PaiEpisode
+
+    errors: list[Exception] = []
+    barrier = threading.Barrier(4)
+
+    def record(worker: int):
+        session = pg_sessionmaker()
+        try:
+            barrier.wait(timeout=10)
+            EpisodicMemoryService(session).record(
+                workspace_id=pg_workspace,
+                event_type="decision_made",
+                summary="Decided to target Fall 2027.",
+            )
+            session.commit()
+        except Exception as exc:          # noqa: BLE001
+            errors.append(exc)
+            session.rollback()
+        finally:
+            session.close()
+
+    threads = [threading.Thread(target=record, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"concurrent record raised: {errors}"
+
+    session = pg_sessionmaker()
+    try:
+        active = session.query(PaiEpisode).filter(
+            PaiEpisode.workspace_id == pg_workspace,
+            PaiEpisode.status == "active",
+        ).count()
+    finally:
+        session.close()
+    assert active == 1, f"expected one active episode, found {active}"
+
+
+def test_concurrent_distinct_memories_all_persist(pg_sessionmaker, pg_workspace):
+    """The index must not over-collapse genuinely different memories."""
+    import threading
+
+    from app.memory.semantic import MemoryService
+    from app.models import PaiMemory
+
+    barrier = threading.Barrier(4)
+    errors: list[Exception] = []
+
+    def create(worker: int):
+        session = pg_sessionmaker()
+        try:
+            barrier.wait(timeout=10)
+            MemoryService(session).create(
+                workspace_id=pg_workspace,
+                content=f"Distinct preference number {worker}.",
+                memory_type="preference",
+            )
+            session.commit()
+        except Exception as exc:          # noqa: BLE001
+            errors.append(exc)
+            session.rollback()
+        finally:
+            session.close()
+
+    threads = [threading.Thread(target=create, args=(i,)) for i in range(4)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=30)
+
+    assert not errors, f"concurrent create raised: {errors}"
+
+    session = pg_sessionmaker()
+    try:
+        active = session.query(PaiMemory).filter(
+            PaiMemory.workspace_id == pg_workspace,
+            PaiMemory.status == "active",
+        ).count()
+    finally:
+        session.close()
+    assert active == 4

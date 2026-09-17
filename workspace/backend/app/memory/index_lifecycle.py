@@ -11,10 +11,24 @@ garbage. They therefore never raise into their caller: a student's "forget
 Canada" must succeed even if the queue is unavailable.
 """
 
+import hashlib
 import logging
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+
+def unindex_key(workspace_id: str, ids: list[str]) -> str:
+    """Stable idempotency key for an unindex job.
+
+    hashlib, not `hash()`: Python randomises string hashing per process
+    (PYTHONHASHSEED), so the previous key differed between the web process and
+    the worker, and between restarts — the exact situations idempotency is for.
+    """
+    digest = hashlib.sha256(
+        "\x1f".join([workspace_id, *sorted(ids)]).encode("utf-8")
+    ).hexdigest()[:32]
+    return f"unindex:{workspace_id}:{digest}"
 
 
 def enqueue_unindex(db, workspace_id: str, ids: list[str]) -> Optional[str]:
@@ -29,8 +43,7 @@ def enqueue_unindex(db, workspace_id: str, ids: list[str]) -> Optional[str]:
             job_type=JOB_UNINDEX,
             workspace_id=workspace_id,
             payload={"ids": sorted(ids)},
-            # Same set of ids -> same job. A repeated "forget" is a no-op.
-            idempotency_key=f"unindex:{workspace_id}:{hash(tuple(sorted(ids))) & 0xFFFFFFFF}",
+            idempotency_key=unindex_key(workspace_id, ids),
         )
         return job.id
     except Exception:

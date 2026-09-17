@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.models import PaiEpisode
 
@@ -57,8 +58,27 @@ class EpisodicMemoryService:
             fingerprint=episode_fingerprint(event_type, summary.strip()),
             status="active",
         )
-        self.db.add(episode)
-        self.db.flush()
+        # Savepoint — see MemoryService.create for why a lost race must not
+        # roll back the caller's whole transaction.
+        try:
+            with self.db.begin_nested():
+                self.db.add(episode)
+                self.db.flush()
+        except IntegrityError:
+            existing = self.db.execute(
+                select(PaiEpisode).where(
+                    PaiEpisode.workspace_id == workspace_id,
+                    PaiEpisode.status == "active",
+                    PaiEpisode.fingerprint == episode.fingerprint,
+                ).limit(1)
+            ).scalar_one_or_none()
+            if existing is None:
+                raise
+            logger.info(
+                "memory: concurrent duplicate episode collapsed workspace=%s type=%s",
+                workspace_id, event_type,
+            )
+            return existing
         return episode
 
     def get(self, workspace_id: str, episode_id: str) -> Optional[PaiEpisode]:

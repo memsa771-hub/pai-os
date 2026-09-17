@@ -110,7 +110,10 @@ class QdrantMemoryIndex(MemoryIndex):
 
         client = self._get_client()
         try:
-            if not await client.collection_exists(self._collection):
+            exists = await client.collection_exists(self._collection)
+            if exists:
+                await self._assert_compatible_dimensions(client)
+            else:
                 await client.create_collection(
                     collection_name=self._collection,
                     vectors_config={
@@ -132,6 +135,11 @@ class QdrantMemoryIndex(MemoryIndex):
                     ("kind", models.PayloadSchemaType.KEYWORD),
                     ("status", models.PayloadSchemaType.KEYWORD),
                     ("memory_type", models.PayloadSchemaType.KEYWORD),
+                    ("event_type", models.PayloadSchemaType.KEYWORD),
+                    # On every dense/sparse prefetch filter — must be indexed.
+                    ("embedding_model", models.PayloadSchemaType.KEYWORD),
+                    ("embedding_dim", models.PayloadSchemaType.INTEGER),
+                    ("sparse_model", models.PayloadSchemaType.KEYWORD),
                 ):
                     await client.create_payload_index(
                         collection_name=self._collection,
@@ -142,11 +150,46 @@ class QdrantMemoryIndex(MemoryIndex):
         except Exception as exc:
             raise QdrantUnavailable(f"could not ensure collection: {exc}") from exc
 
+    async def _assert_compatible_dimensions(self, client) -> None:
+        """Refuse to use a collection built for a different vector size.
+
+        Qdrant rejects a wrongly-sized upsert anyway, but the error is opaque
+        and arrives once per job. Failing here says exactly what happened and
+        what to do about it.
+        """
+        expected = int(self.embeddings.dimensions or config.MEMORY_EMBEDDING_DIM)
+        if not expected:
+            return
+        try:
+            info = await client.get_collection(self._collection)
+            vectors = info.config.params.vectors
+            actual = (
+                vectors.get(DENSE_VECTOR).size
+                if isinstance(vectors, dict) else getattr(vectors, "size", None)
+            )
+        except Exception:
+            logger.debug("qdrant: could not read collection config", exc_info=True)
+            return
+
+        if actual is not None and int(actual) != expected:
+            raise QdrantUnavailable(
+                f"collection '{self._collection}' has dense dimension {actual} but the "
+                f"configured embedding model ({self.embeddings.model_id}) produces "
+                f"{expected}. Recreate the collection and run memory.reindex "
+                f"(or point MEMORY_EMBEDDING_* back at the original model)."
+            )
+
     # -- filters -----------------------------------------------------------
 
     @staticmethod
-    def _workspace_filter(workspace_id: str, kinds=None, filters=None):
-        """Mandatory pre-ranking filter. Workspace is never optional."""
+    def _workspace_filter(workspace_id: str, kinds=None, filters=None, extra=None):
+        """Mandatory pre-ranking filter. Workspace is never optional.
+
+        `filters` with a list value becomes MatchAny, so per-kind type filters
+        (`memory_type` for memories, `event_type` for episodes) must be OR'd
+        across kinds by the caller rather than AND'd here — an episode has no
+        `memory_type` and would be excluded by a bare AND.
+        """
         from qdrant_client import models
 
         must = [models.FieldCondition(
@@ -165,7 +208,39 @@ class QdrantMemoryIndex(MemoryIndex):
                 else models.MatchValue(value=value)
             )
             must.append(models.FieldCondition(key=key, match=match))
+        for condition in (extra or []):
+            must.append(condition)
         return models.Filter(must=must)
+
+    def _dense_version_conditions(self):
+        """Restrict dense search to points from the CURRENT embedding model.
+
+        Cosine distance between vectors from two different models is
+        meaningless — the spaces are unrelated. Without this, a model change
+        silently degrades every ranking until a reindex happens to finish,
+        with no error anywhere. Filtering means a half-reindexed collection
+        returns fewer results rather than wrong ones.
+        """
+        from qdrant_client import models
+
+        return [
+            models.FieldCondition(
+                key="embedding_model",
+                match=models.MatchValue(value=self.embeddings.model_id),
+            ),
+            models.FieldCondition(
+                key="embedding_dim",
+                match=models.MatchValue(value=int(self.embeddings.dimensions)),
+            ),
+        ]
+
+    def _sparse_version_conditions(self):
+        """Same, for the sparse encoder's term-id space."""
+        from qdrant_client import models
+
+        return [models.FieldCondition(
+            key="sparse_model", match=models.MatchValue(value=self.sparse.model_id),
+        )]
 
     # -- write -------------------------------------------------------------
 
@@ -296,6 +371,8 @@ class QdrantMemoryIndex(MemoryIndex):
 
         from qdrant_client import models
 
+        # Base filter (no version conditions): used for the fusion stage, which
+        # only reorders what the arms already returned.
         query_filter = self._workspace_filter(workspace_id, kinds, filters)
         prefetch: list = []
         stages: list[str] = []
@@ -305,7 +382,12 @@ class QdrantMemoryIndex(MemoryIndex):
             if dense_vector:
                 prefetch.append(models.Prefetch(
                     query=dense_vector, using=DENSE_VECTOR,
-                    filter=query_filter, limit=limit,
+                    # Each arm additionally restricts to ITS model version.
+                    filter=self._workspace_filter(
+                        workspace_id, kinds, filters,
+                        extra=self._dense_version_conditions(),
+                    ),
+                    limit=limit,
                 ))
                 stages.append("dense")
 
@@ -317,7 +399,12 @@ class QdrantMemoryIndex(MemoryIndex):
                         query=models.SparseVector(
                             indices=sparse_vector.indices, values=sparse_vector.values,
                         ),
-                        using=SPARSE_VECTOR, filter=query_filter, limit=limit,
+                        using=SPARSE_VECTOR,
+                        filter=self._workspace_filter(
+                            workspace_id, kinds, filters,
+                            extra=self._sparse_version_conditions(),
+                        ),
+                        limit=limit,
                     ))
                     stages.append("sparse")
             except Exception:
