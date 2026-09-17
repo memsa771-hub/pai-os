@@ -333,9 +333,28 @@ async def _invoke_assistant_agent(
             "I've done what I can for now — let me know if you'd like anything else!"
         )
 
-    await _post_response(
+    assistant_event_id = await _post_response(
         db, workspace_id, channel_target, agent_name, final_text, depth,
     )
+
+    # The turn is now committed and the student has their reply. Only now do we
+    # queue memory formation — enqueue is a single INSERT, and the actual
+    # extraction (LLM call, reconciliation) happens in the durable worker, so
+    # nothing above this line waited on it.
+    #
+    # Restricted to the built-in counsellor: a user-added assistant agent is
+    # not the student's adviser and its conversations are not student truth.
+    if assistant_event_id and agent_name == pai.PAI_AGENT_NAME:
+        from app.memory.turn_hook import enqueue_turn_extraction
+
+        enqueue_turn_extraction(
+            db=db,
+            workspace_id=workspace_id,
+            channel_target=channel_target,
+            user_event_id=event_data.get("id"),
+            assistant_event_id=assistant_event_id,
+            agent_name=agent_name,
+        )
 
 
 async def _invoke_image_agent(
@@ -686,8 +705,13 @@ async def _post_response(
     db, workspace_id: str, channel_target: str, agent_name: str,
     content: str, depth: int,
     attachments: Optional[list] = None,
-) -> None:
-    """Post the cloud agent's response back through the event pipeline."""
+) -> Optional[str]:
+    """Post the cloud agent's response back through the event pipeline.
+
+    Returns the persisted event id (None if the post was rejected), so callers
+    that need to reference the committed turn — e.g. memory extraction — can
+    do so without re-querying for it.
+    """
     from app.models import Workspace
     from app.pipeline_factory import pipeline
     from openagents.core.onm_events import Event
@@ -699,7 +723,7 @@ async def _post_response(
 
     if not workspace:
         logger.error("cloud_agent: workspace %s not found", workspace_id)
-        return
+        return None
 
     payload: dict = {
         "content": content,
@@ -730,7 +754,7 @@ async def _post_response(
         await pipeline.process(event, context)
     except EventRejected as exc:
         logger.warning("cloud_agent: response event rejected: %s", exc.reason)
-        return
+        return None
 
     db.commit()
 
@@ -757,6 +781,8 @@ async def _post_response(
         })
     except Exception:
         logger.exception("cloud_agent: push fan-out failed for %s", agent_name)
+
+    return event.id
 
     # Publish to Redis so SSE clients receive the event in real-time
     try:

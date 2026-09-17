@@ -137,6 +137,14 @@ class Config:
     PAI_MODEL: str = os.environ.get("PAI_MODEL", "gpt-5.4-mini")
     # Safety cap on the tool-calling loop per user message.
     PAI_MAX_TOOL_ITERATIONS: int = int(os.environ.get("PAI_MAX_TOOL_ITERATIONS", "6"))
+    # Memory extraction (app/memory/extractor.py). Each falls back to the
+    # matching PAI_* value, so extraction works with no extra configuration —
+    # but extraction is a cheap structured-output task that runs on every turn,
+    # so it can be moved to a smaller/faster model independently of Counselor.
+    MEMORY_EXTRACTOR_PROVIDER: str = os.environ.get("MEMORY_EXTRACTOR_PROVIDER", "")
+    MEMORY_EXTRACTOR_MODEL: str = os.environ.get("MEMORY_EXTRACTOR_MODEL", "")
+    MEMORY_EXTRACTOR_API_KEY: str = os.environ.get("MEMORY_EXTRACTOR_API_KEY", "")
+    MEMORY_EXTRACTOR_BASE_URL: str = os.environ.get("MEMORY_EXTRACTOR_BASE_URL", "")
     # Provider-neutral web search. Disabled unless both fields are configured;
     # credentials remain backend-only and are never included in tool results.
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")

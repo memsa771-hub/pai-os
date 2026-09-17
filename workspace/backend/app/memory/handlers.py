@@ -30,6 +30,30 @@ JOB_RECONCILE = "memory.reconcile"
 JOB_EMBED = "memory.embed"
 
 
+def _is_duplicate(db, workspace_id: str, item) -> bool:
+    """Already-known memory/episode? Vault handles its own conflicts.
+
+    A Vault fact is never skipped here: "my CGPA is 3.52" restated is harmless
+    (the reconciler retains the existing row), and a *correction* must always
+    reach the reconciler.
+    """
+    from app.memory.dedupe import is_duplicate_episode, is_duplicate_memory
+
+    if item.candidate_type == "semantic_memory":
+        return is_duplicate_memory(
+            db, workspace_id,
+            (item.entities or {}).get("memory_type", "context"),
+            item.content or "",
+        )
+    if item.candidate_type == "episode":
+        return is_duplicate_episode(
+            db, workspace_id,
+            (item.entities or {}).get("event_type", ""),
+            item.content or "",
+        )
+    return False
+
+
 async def extract_memory(job, db) -> dict:
     """Propose memory candidates from a conversation slice.
 
@@ -58,8 +82,8 @@ async def extract_memory(job, db) -> dict:
     if source_type not in ("conversation", "document", "agent", "system"):
         raise ValueError(f"memory.extract: untrusted source_type {source_type!r}")
 
-    # Explicit pre-parsed proposals (used by tests, and by any caller that has
-    # already decided what to propose). LLM extraction lands here in Phase 2.
+    # Path A — pre-parsed proposals. Used by tests and by any caller that has
+    # already decided what to propose.
     for spec in payload.get("candidates") or []:
         candidate = candidates.propose(
             workspace_id=workspace_id,
@@ -76,10 +100,67 @@ async def extract_memory(job, db) -> dict:
         )
         proposed.append(candidate.id)
 
-    if not proposed:
-        logger.info(
-            "memory.extract: no extractor configured (Phase 2) workspace=%s", workspace_id
+    # Path B — extract from a persisted conversational turn. The payload holds
+    # only IDs; the source events are read back from PostgreSQL here.
+    user_event_id = payload.get("user_event_id")
+    types_proposed: list[str] = []
+    if not proposed and user_event_id:
+        from app.memory.extraction_context import build_turn_context
+        from app.memory.extractor import extract_candidates
+        from app.memory.field_definitions import VaultFieldDefinitionService
+
+        turn = build_turn_context(
+            db, workspace_id=workspace_id, user_event_id=user_event_id,
+            assistant_event_id=payload.get("assistant_event_id"),
+            channel=payload.get("channel"),
         )
+        if turn is None:
+            # The source event is gone (workspace deleted, event purged).
+            # Nothing to extract and nothing to retry — succeed quietly.
+            logger.info(
+                "memory.extract: source turn missing job=%s workspace=%s user_event=%s",
+                job.id, workspace_id, user_event_id,
+            )
+            return {"candidates_proposed": 0, "reason": "source_turn_missing"}
+
+        allowed_keys = set(VaultFieldDefinitionService(db).keys())
+        # ExtractionError propagates: malformed model output fails the job so
+        # the durable worker retries it, rather than writing half-trusted rows.
+        extracted = await extract_candidates(turn, allowed_keys)
+
+        for item in extracted:
+            if _is_duplicate(db, workspace_id, item):
+                logger.info(
+                    "memory.extract: skipped duplicate %s job=%s", item.candidate_type, job.id
+                )
+                continue
+            candidate = candidates.propose(
+                workspace_id=workspace_id,
+                candidate_type=item.candidate_type,
+                operation=item.operation,
+                key=item.key,
+                proposed_value=item.proposed_value,
+                content=item.content,
+                entities=item.entities,
+                confidence=item.confidence,
+                # Server-assigned. The extractor has no field for this and
+                # cannot reach `user_explicit` — `propose()` refuses it without
+                # `allow_user_explicit`, which this path never passes.
+                source_type=source_type,
+                source_event_ids=[
+                    e for e in (turn.user_event_id, turn.assistant_event_id) if e
+                ],
+                evidence=item.evidence,
+            )
+            proposed.append(candidate.id)
+            types_proposed.append(item.candidate_type)
+
+    logger.info(
+        "memory.extract: job=%s workspace=%s user_event=%s assistant_event=%s "
+        "proposed=%d types=%s",
+        job.id, workspace_id, user_event_id, payload.get("assistant_event_id"),
+        len(proposed), sorted(set(types_proposed)) or None,
+    )
 
     # Chain reconciliation as its own durable job rather than calling it here:
     # if reconciliation fails it retries on its own schedule without re-running
