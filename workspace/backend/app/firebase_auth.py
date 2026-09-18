@@ -20,6 +20,9 @@ different feature that happens to share the same Admin SDK app.
 import json
 import logging
 import threading
+import time
+
+from app.identity_errors import IdentityUnavailable
 from typing import Optional
 
 from app.config import config
@@ -39,7 +42,18 @@ _apple_jwk_lock = threading.Lock()
 # has no JWKS endpoint at all, in which case we fall back to introspection.
 _supabase_jwk_client = None
 _supabase_jwk_lock = threading.Lock()
-_supabase_jwks_unavailable = False
+# When the JWKS fetch last failed. Used as a COOLDOWN, not a permanent latch:
+# this was a plain boolean that, once set, was never cleared, so a single
+# Supabase blip while the backend was starting demoted token verification to a
+# per-request network call to Supabase for the lifetime of the process.
+_supabase_jwks_failed_at = 0.0
+_SUPABASE_JWKS_RETRY_SECONDS = 300.0
+
+
+# Re-exported so `from app.firebase_auth import IdentityUnavailable` keeps
+# working; defined in app/identity_errors.py so that reloading THIS module does
+# not mint a new class and unbind main.py's handler for it.
+IdentityUnavailable = IdentityUnavailable
 
 
 def _make_noop_credential():
@@ -116,19 +130,27 @@ def _get_supabase_jwk_client():
     """Lazily build (and cache) a PyJWKClient for the Supabase project's
     signing keys. Returns None if the project has no JWKS endpoint (legacy
     HS256-only signing) — cached so we don't retry every request."""
-    global _supabase_jwk_client, _supabase_jwks_unavailable
-    if _supabase_jwk_client is not None or _supabase_jwks_unavailable:
+    global _supabase_jwk_client, _supabase_jwks_failed_at
+    if _supabase_jwk_client is not None:
         return _supabase_jwk_client
+    if time.monotonic() - _supabase_jwks_failed_at < _SUPABASE_JWKS_RETRY_SECONDS:
+        return None
     with _supabase_jwk_lock:
-        if _supabase_jwk_client is None and not _supabase_jwks_unavailable:
+        if _supabase_jwk_client is None:
             from jwt import PyJWKClient
 
             try:
                 client = PyJWKClient(f"{config.SUPABASE_URL}/auth/v1/.well-known/jwks.json")
                 client.get_signing_keys()  # force a fetch now to detect 404s
                 _supabase_jwk_client = client
-            except Exception:
-                _supabase_jwks_unavailable = True
+                _supabase_jwks_failed_at = 0.0
+            except Exception as e:
+                # A project with no JWKS endpoint and a project we merely could
+                # not reach look the same here, so back off and try again later
+                # rather than deciding permanently.
+                logger.warning("firebase_auth: Supabase JWKS unavailable (%s) — retrying in %ss",
+                               e, int(_SUPABASE_JWKS_RETRY_SECONDS))
+                _supabase_jwks_failed_at = time.monotonic()
     return _supabase_jwk_client
 
 
@@ -147,12 +169,20 @@ def _verify_supabase_via_introspection(token: str) -> Optional[dict]:
             },
             timeout=10.0,
         )
-        if resp.status_code != 200:
+        if resp.status_code == 200:
+            return resp.json()
+        # Supabase looked at the token and said no. That is a real refusal.
+        if resp.status_code in (400, 401, 403):
             return None
-        return resp.json()
+        # Anything else (429, 5xx) is Supabase failing, not the token failing.
+        raise IdentityUnavailable(f"Supabase introspection returned {resp.status_code}")
+    except IdentityUnavailable:
+        raise
     except Exception as e:
-        logger.warning("firebase_auth: Supabase introspection failed: %s", e)
-        return None
+        # Never reached it at all: DNS, timeout, TLS, proxy. Says nothing about
+        # the token, so it must not be reported as a bad token.
+        logger.warning("firebase_auth: Supabase introspection unreachable: %s", e)
+        raise IdentityUnavailable(str(e)) from e
 
 
 def verify_supabase_claims(token: str) -> Optional[dict]:
@@ -183,10 +213,13 @@ def verify_supabase_claims(token: str) -> Optional[dict]:
                 options={"require": ["exp", "iss", "aud"]},
             )
         except Exception as e:
+            # Could be a bad signature, an expired token, or a key we do not
+            # have yet after a rotation. Introspection below tells them apart.
             logger.warning("firebase_auth: Supabase JWKS verification failed: %s", e)
             claims = None
 
     if claims is None:
+        # Raises IdentityUnavailable when Supabase could not be asked.
         claims = _verify_supabase_via_introspection(token)
 
     if not claims:

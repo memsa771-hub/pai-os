@@ -17,6 +17,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import config
+from app.identity_errors import IdentityUnavailable
+from app.response import ResponseCode, json_response
 from app.routers import account, app_version, auth, browser, cloud_agents, devices, events, feedback, fetch, files, integrations, knowledge, model_access, network, notifications, operator, routines, search, shares, tasks, timers, todos, workflows, workspaces
 
 logging.basicConfig(level=logging.INFO)
@@ -512,6 +514,25 @@ def _redacted_validation_errors(exc: RequestValidationError) -> list[dict]:
             "msg": error.get("msg"),
         })
     return redacted
+
+
+@app.exception_handler(IdentityUnavailable)
+async def _identity_unavailable(request: Request, exc: IdentityUnavailable):
+    """We could not verify the caller, as distinct from refusing them.
+
+    This must NOT be a 401. A client that receives 401 is right to conclude its
+    session is over and sign the user out — that is exactly what both of our
+    clients do. Answering 401 because Supabase was briefly unreachable would
+    therefore sign a student out for our outage, mid-session, with nothing on
+    screen to explain it. 503 says "ask again", which is the truth, and both
+    clients treat it as retryable.
+    """
+    logger.warning("identity provider unavailable on %s: %s", request.url.path, exc)
+    return json_response(
+        ResponseCode.INTERNAL_ERROR,
+        "Sign-in is temporarily unavailable. Please try again.",
+        status_code=503,
+    )
 
 
 @app.exception_handler(RequestValidationError)

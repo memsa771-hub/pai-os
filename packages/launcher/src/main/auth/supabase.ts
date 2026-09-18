@@ -23,6 +23,43 @@ const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY || ""
 
 const TIMEOUT_MS = 15_000
 
+/**
+ * Why an auth call failed, which decides whether the session survives it.
+ *
+ * `AuthRejected`  the identity provider answered, and the answer was no. The
+ *                 credential is genuinely bad; ending the session is correct.
+ * `AuthUnreachable` we could not ask. Offline, DNS, a proxy, a timeout, rate
+ *                 limiting, or the provider itself failing. This is NOT
+ *                 evidence that the session is invalid, and treating it as
+ *                 such signs a student out because their wifi dropped.
+ *
+ * authFetch's own comment already says a `net::ERR_` "is the proxy or the
+ * network, not the account" — this is that distinction made actionable rather
+ * than only logged.
+ */
+export class AuthRejected extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "AuthRejected"
+  }
+}
+
+export class AuthUnreachable extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = "AuthUnreachable"
+  }
+}
+
+/**
+ * A status is a refusal only when it is about the credential. A timeout, a
+ * rate limit and a provider 5xx are all "ask again later".
+ */
+function fromStatus(status: number, message: string): Error {
+  if (status === 408 || status === 429 || status >= 500) return new AuthUnreachable(message)
+  return new AuthRejected(message)
+}
+
 export interface SupabaseSession {
   accessToken: string
   refreshToken: string
@@ -45,12 +82,19 @@ async function post(path: string, body: Record<string, unknown>): Promise<Record
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS)
   try {
-    const res = await authFetch(authUrl(path), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
-      body: JSON.stringify(body),
-      signal: controller.signal,
-    })
+    let res: Response
+    try {
+      res = await authFetch(authUrl(path), {
+        method: "POST",
+        headers: { "Content-Type": "application/json", apikey: SUPABASE_ANON_KEY },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      })
+    } catch (err) {
+      // Never reached the provider: transport, proxy, DNS, or our own timeout
+      // aborting the request. Says nothing about the credential.
+      throw new AuthUnreachable((err as Error).message)
+    }
     const json = (await res.json().catch(() => null)) as Record<string, unknown> | null
     if (!res.ok || !json) {
       const message =
@@ -58,7 +102,7 @@ async function post(path: string, body: Record<string, unknown>): Promise<Record
         (json?.error_description as string | undefined) ||
         (json?.error as string | undefined) ||
         `HTTP ${res.status}`
-      throw new Error(message)
+      throw fromStatus(res.status, message)
     }
     return json
   } finally {
@@ -109,7 +153,8 @@ export async function signUpWithPassword(
 export async function refreshSession(refreshToken: string): Promise<SupabaseSession> {
   const data = await post("/token?grant_type=refresh_token", { refresh_token: refreshToken })
   const session = sessionFrom(data)
-  if (!session.accessToken) throw new Error("REFRESH_REJECTED")
+  // The provider answered with no token: the refresh token is spent or revoked.
+  if (!session.accessToken) throw new AuthRejected("REFRESH_REJECTED")
   return session
 }
 

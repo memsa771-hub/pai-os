@@ -20,7 +20,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { capture, identify } from './analytics';
 import { desktopHost } from './desktop-host';
 import { clearAuthSession, loadAuthSession, saveAuthSession } from './auth-session';
-import { refreshSession, signOut as supabaseSignOut, type AuthSession } from './supabase-auth';
+import { AuthUnreachable, refreshSession, signOut as supabaseSignOut, type AuthSession } from './supabase-auth';
 
 interface PaiUser {
   email: string;
@@ -76,6 +76,10 @@ export function isPaiHostname(hostname: string): boolean {
 // Refresh well before expiry so a page load never races a lapsed token.
 const REFRESH_MARGIN_SECONDS = 60;
 
+// How soon to try again when Supabase could not be reached. Short enough that
+// a brief outage costs nothing, long enough not to spin while offline.
+const REFRESH_RETRY_MS = 30_000;
+
 const PaiAuthContext = createContext<PaiAuthContextValue | null>(null);
 
 export function usePaiAuth() {
@@ -98,6 +102,15 @@ export function PaiAuthProvider({ children }: { children: React.ReactNode }) {
     setIdToken(null);
   }, []);
 
+  /**
+   * Renew before the token lapses, and keep the session when we cannot.
+   *
+   * `applySession` re-enters this on success, so the chain continues for as
+   * long as the tab lives. Split out of applySession so the unreachable branch
+   * can reschedule itself without recursing through it.
+   */
+  const scheduleRefresh = useRef<(session: AuthSession, delayMs: number) => void>(() => {});
+
   const applySession = useCallback((session: AuthSession) => {
     saveAuthSession(session);
     const displayName = session.user.username || session.user.email;
@@ -107,16 +120,32 @@ export function PaiAuthProvider({ children }: { children: React.ReactNode }) {
     // so sign-ins on different clients are attributed to the same person.
     identify(session.user.email, { email: session.user.email, display_name: displayName });
 
-    if (refreshTimer.current) clearTimeout(refreshTimer.current);
     const delayMs = Math.max(0, (session.expiresAt - REFRESH_MARGIN_SECONDS) * 1000 - Date.now());
+    scheduleRefresh.current(session, delayMs);
+  }, []);
+
+  scheduleRefresh.current = (session: AuthSession, delayMs: number) => {
+    if (refreshTimer.current) clearTimeout(refreshTimer.current);
     refreshTimer.current = setTimeout(async () => {
       try {
         applySession(await refreshSession(session.refreshToken));
-      } catch {
+      } catch (err) {
+        if (err instanceof AuthUnreachable) {
+          // We could not ask, so we do not know. Keep the session and try
+          // again shortly: a dropped wifi, a captive portal or a Supabase blip
+          // used to sign the student out here, mid-session, for no reason they
+          // could see. The token may lapse before we succeed — requests fail
+          // meanwhile and recover on the next good refresh, which is far
+          // better than being thrown back to /sign-in.
+          scheduleRefresh.current(session, REFRESH_RETRY_MS);
+          return;
+        }
+        // Supabase answered and refused the refresh token: it is spent or
+        // revoked, and this session really is over.
         clearSession();
       }
     }, delayMs);
-  }, [clearSession]);
+  };
 
   useEffect(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';

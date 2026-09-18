@@ -79,6 +79,9 @@ const BROWSER_UNAVAILABLE = "SIGN_IN_BROWSER_UNAVAILABLE"
 /** workspace/backend's success code in its {code, message, data} envelope. */
 const API_SUCCESS = 0
 
+/** Could not reach the identity provider. The session is NOT ended for this. */
+export const AUTH_UNREACHABLE = "AUTH_UNREACHABLE"
+
 export class AccountManager {
   private _session: AccountSession | null = null
   private _loaded = false
@@ -312,7 +315,17 @@ export class AccountManager {
       const renewed = await supabase.refreshSession(session.refreshToken)
       this._set(this._fromSupabase(renewed))
       return renewed.accessToken
-    } catch {
+    } catch (err) {
+      if (err instanceof supabase.AuthUnreachable) {
+        // We could not ask, so we do not know. Keep the session: a dropped
+        // wifi, a proxy hiccup or a Supabase blip used to end it here, and the
+        // user found themselves back at sign-in for no reason they could see.
+        // The caller gets an error and can retry; the next call that reaches
+        // the provider settles it either way.
+        throw new Error(AUTH_UNREACHABLE)
+      }
+      // The provider answered and refused the refresh token. That is the one
+      // thing that genuinely invalidates this session.
       this._set(null)
       throw new Error("SESSION_EXPIRED")
     }
@@ -347,6 +360,8 @@ export class AccountManager {
     if (res.status === 401) {
       // The server has the last word on whether we are still someone: drop the
       // session rather than leave the UI showing an account that cannot act.
+      // Only a 401 does this. A 5xx or a network failure means the server did
+      // not get to have a word at all.
       this._set(null)
       throw new Error("SESSION_EXPIRED")
     }

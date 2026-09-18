@@ -399,3 +399,51 @@ describe("AccountManager.signInWithUsername envelope", () => {
     ).rejects.toThrow(/attempt/i)
   })
 })
+
+/**
+ * A session survives not being able to ask.
+ *
+ * bearer() renews a lapsed token, and used to `catch { this._set(null) }` —
+ * so a dropped wifi, a proxy hiccup or a Supabase outage during a routine
+ * refresh signed the account out, and on desktop that threw the user back to
+ * the sign-in screen with nothing on screen explaining why. Only the provider
+ * actually refusing the refresh token ends a session.
+ */
+describe("AccountManager.bearer when the provider cannot be reached", () => {
+  const EXPIRED = {
+    token: "old", refreshToken: "rt", email: "a@example.com",
+    displayName: "Abby", expiresAt: Math.floor(Date.now() / 1000) - 60,
+  }
+
+  function managerWithStoredSession(fetchImpl: (url: string) => Promise<unknown>) {
+    stored = EXPIRED as unknown as AccountSession
+    vi.stubGlobal("fetch", vi.fn(fetchImpl))
+    return new AccountManager({
+      endpoint: () => undefined, openExternal: () => {}, onChange: () => {},
+    })
+  }
+
+  it("keeps the account when the refresh cannot reach Supabase", async () => {
+    const manager = managerWithStoredSession(async () => {
+      throw new TypeError("net::ERR_INTERNET_DISCONNECTED")
+    })
+    await expect(manager.bearer()).rejects.toThrow("AUTH_UNREACHABLE")
+    expect(manager.getAccount()).not.toBeNull()
+  })
+
+  it("keeps the account when Supabase itself is failing", async () => {
+    const manager = managerWithStoredSession(async () => ({
+      ok: false, status: 503, json: async () => ({ msg: "unavailable" }),
+    }) as never)
+    await expect(manager.bearer()).rejects.toThrow("AUTH_UNREACHABLE")
+    expect(manager.getAccount()).not.toBeNull()
+  })
+
+  it("ends the account when Supabase refuses the refresh token", async () => {
+    const manager = managerWithStoredSession(async () => ({
+      ok: false, status: 400, json: async () => ({ error: "invalid_grant" }),
+    }) as never)
+    await expect(manager.bearer()).rejects.toThrow("SESSION_EXPIRED")
+    expect(manager.getAccount()).toBeNull()
+  })
+})

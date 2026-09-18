@@ -80,13 +80,57 @@ export async function signUpWithPassword(
   return { session: sessionFromSupabase(body), needsEmailConfirmation: false };
 }
 
+/**
+ * Why an auth call failed, which decides whether the session survives it.
+ *
+ * `AuthRejected`    Supabase answered, and the answer was no. The credential
+ *                   is genuinely bad; ending the session is correct.
+ * `AuthUnreachable` we could not ask — offline, DNS, a captive portal, a
+ *                   timeout, rate limiting, or Supabase itself failing. NOT
+ *                   evidence that the session is invalid. Signing out here
+ *                   logs a student out because their wifi dropped.
+ *
+ * Mirrors packages/launcher/src/main/auth/supabase.ts, which has the same two
+ * classes for the same reason — keep them in step.
+ */
+export class AuthRejected extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthRejected';
+  }
+}
+
+export class AuthUnreachable extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'AuthUnreachable';
+  }
+}
+
+/** A status is a refusal only when it is about the credential; a timeout, a
+ * rate limit and a 5xx are all "ask again later". */
+export function authErrorFromStatus(status: number, message: string): Error {
+  if (status === 408 || status === 429 || status >= 500) return new AuthUnreachable(message);
+  return new AuthRejected(message);
+}
+
+/** Refresh the access token. Throws AuthUnreachable when Supabase could not be
+ * reached, so callers can keep the session and try again. */
 export async function refreshSession(refreshToken: string): Promise<AuthSession> {
-  const res = await fetch(authUrl('/token?grant_type=refresh_token'), {
-    method: 'POST',
-    headers: authHeaders(),
-    body: JSON.stringify({ refresh_token: refreshToken }),
-  });
-  if (!res.ok) throw await parseAuthError(res);
+  let res: Response;
+  try {
+    res = await fetch(authUrl('/token?grant_type=refresh_token'), {
+      method: 'POST',
+      headers: authHeaders(),
+      body: JSON.stringify({ refresh_token: refreshToken }),
+    });
+  } catch (err) {
+    throw new AuthUnreachable((err as Error).message);
+  }
+  if (!res.ok) {
+    const parsed = await parseAuthError(res);
+    throw authErrorFromStatus(res.status, parsed.message);
+  }
   return sessionFromSupabase(await res.json());
 }
 
