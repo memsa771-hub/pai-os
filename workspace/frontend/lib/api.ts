@@ -36,7 +36,7 @@ import type {
 } from './types';
 import { eventToMessage } from './types';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from './config';
 
 /** Map a snake_case custom-skill entry from the backend to camelCase. */
 function mapCustomSkill(raw: Record<string, unknown>): WorkspaceCustomSkill {

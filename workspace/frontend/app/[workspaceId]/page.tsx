@@ -7,6 +7,7 @@ import { LayoutProvider } from '@/components/layout/layout-context';
 import { Wrapper } from '@/components/layout/wrapper';
 import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { goToCentralLogin } from '@/lib/auth-redirects';
+import { API_URL } from '@/lib/config';
 import { LogIn } from 'lucide-react';
 import { useT } from '@/lib/i18n';
 
@@ -52,13 +53,23 @@ function WorkspaceLoadingSplash() {
  * the browser a workspace machine token: a 30-day JS-readable cookie holding
  * a never-expiring, full-write, workspace-wide credential was the single
  * worst place that token could live.
+ *
+ * HOST-ONLY. This carried `domain=.openagents.org`, which a browser rejects
+ * outright anywhere off that domain — so on placement-ai.com, on localhost and
+ * on every self-hosted deployment the cookie was never actually written, and
+ * the self-hosted `?token=` it exists to remember never persisted. Scoping it
+ * to whatever host serves the app is both correct for Placement AI's own
+ * origin and the only way the self-hosted case works at all.
+ *
+ * `oa_has_workspace` is gone with it: nothing in this product ever read it. It
+ * existed for the OpenAgents marketing site to detect a returning user across
+ * subdomains, which is not a relationship Placement AI has.
  */
 function setWorkspaceCookie(slug: string, token?: string) {
   const maxAge = 30 * 24 * 60 * 60;
-  const shared = `path=/;max-age=${maxAge};secure;samesite=lax;domain=.openagents.org`;
+  const attrs = `path=/;max-age=${maxAge};samesite=lax${location.protocol === 'https:' ? ';secure' : ''}`;
   const payload = token ? { slug, token } : { slug };
-  document.cookie = `oa_workspace=${encodeURIComponent(JSON.stringify(payload))};${shared}`;
-  document.cookie = `oa_has_workspace=1;${shared}`;
+  document.cookie = `oa_workspace=${encodeURIComponent(JSON.stringify(payload))};${attrs}`;
 }
 
 function IdentityGate({ children }: { children: React.ReactNode }) {
@@ -113,8 +124,7 @@ function BearerWorkspace({ workspaceId, idToken }: { workspaceId: string; idToke
         // slug looked like a working (empty) workspace. Probe existence so
         // a typo'd link and "this isn't your workspace" get distinct,
         // explicit error screens instead.
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
-        const res = await fetch(`${apiUrl}/v1/workspaces/${encodeURIComponent(workspaceId)}`, { cache: 'no-store' });
+        const res = await fetch(`${API_URL}/v1/workspaces/${encodeURIComponent(workspaceId)}`, { cache: 'no-store' });
         if (cancelled) return;
         setState(res.status === 404 ? { kind: 'not_found' } : { kind: 'no_access' });
       } catch {
@@ -223,9 +233,9 @@ function WorkspaceContent({ workspaceId }: { workspaceId: string }) {
             {t('workspaceGate.signInBody')}
           </p>
         </div>
-        {/* Redirects to the central login page (openagents.org/login), which
-            offers all supported methods — not just Google — so the label/icon
-            stay method-neutral. */}
+        {/* Goes to this app's own /sign-in, which offers every supported
+            method — not just Google — so the label and icon stay
+            method-neutral. */}
         <button
           onClick={() => goToCentralLogin(signIn)}
           className="flex items-center gap-3 px-6 py-3 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"

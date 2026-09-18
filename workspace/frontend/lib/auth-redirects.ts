@@ -1,8 +1,10 @@
+import { SIGN_IN_PATH } from './config';
 import { desktopHost } from './desktop-host';
 
 // Sign-in / sign-out entry points for the workspace app.
 //
-// Placement AI serves its own login at /sign-in on this origin (email or
+// Placement AI serves its own login at /sign-in on this origin — on hosted
+// web that is https://app.placement-ai.com/sign-in (email or
 // username + password, plus Google/GitHub OAuth — see app/sign-in/page.tsx).
 // These helpers used to bounce to a central openagents.org/login instead, a
 // leftover from the OpenAgents product: on localhost that path fell through to
@@ -14,7 +16,8 @@ import { desktopHost } from './desktop-host';
 // own native sign-in UI, so the embedded view asks the host instead of
 // navigating itself.
 
-const SIGN_IN_PATH = '/sign-in';
+// SIGN_IN_PATH is a path, never an absolute origin: hosted web, localhost and
+// every self-hosted deployment each serve their own. See lib/config.ts.
 
 /**
  * Send the user to the sign-in page.
@@ -35,13 +38,18 @@ export function goToCentralLogin(fallbackSignIn?: () => void): void {
 }
 
 /** Forget which workspace this browser last opened (see setWorkspaceCookie in
- * app/[workspaceId]/page.tsx). Signing out should not leave "this browser has
- * a workspace" behind for another 30 days. */
+ * app/[workspaceId]/page.tsx). Signing out should not leave that behind for
+ * another 30 days.
+ *
+ * Both spellings are expired: the host-only cookie this app writes now, and
+ * the `.openagents.org` one older builds wrote, so a browser that still has
+ * the old one is cleaned up rather than carrying it until it lapses.
+ * `oa_has_workspace` is likewise expired but no longer written — see
+ * setWorkspaceCookie. */
 function clearWorkspaceCookies(): void {
-  const expire = 'path=/;max-age=0;secure;samesite=lax;domain=.openagents.org';
   for (const name of ['oa_workspace', 'oa_has_workspace']) {
-    document.cookie = `${name}=;${expire}`;
-    document.cookie = `${name}=;path=/;max-age=0`;   // host-only copy
+    document.cookie = `${name}=;path=/;max-age=0`;
+    document.cookie = `${name}=;path=/;max-age=0;samesite=lax;domain=.openagents.org`;
   }
 }
 

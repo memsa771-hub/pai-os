@@ -1,6 +1,14 @@
 import type { Workspace } from "@renderer/types"
 
-const DEFAULT_WORKSPACE_WEB_BASE_URL = "https://workspace.openagents.org"
+/**
+ * The renderer's copy of the api -> web origin mapping. Main has the same rule
+ * in main/auth/endpoints.ts and cannot be imported from here (different
+ * tsconfig root), so it is spelled out rather than reached for across the
+ * boundary — keep the two in step.
+ */
+const DEFAULT_WORKSPACE_WEB_BASE_URL = "https://app.placement-ai.com"
+const HOSTED_API_HOST = "api.placement-ai.com"
+const HOSTED_WEB_HOST = "app.placement-ai.com"
 
 /** Full workspace URL, including the access token when the workspace has one. */
 export function workspaceUrl(ws: Workspace): string {
@@ -19,7 +27,11 @@ export function workspacePageUrl(ws: Workspace): string {
 
 export function workspaceWebBaseUrl(endpoint?: string): string {
   const baseUrl = (endpoint || DEFAULT_WORKSPACE_WEB_BASE_URL).replace(/\/$/, "")
-  return baseUrl.replace("workspace-endpoint", "workspace").replace(/\/v1$/, "")
+  // Only the hosted deployment has two origins to map between. A self-hosted
+  // endpoint serves its API and its pages from one origin, so it is left as
+  // it is; the previous "workspace-endpoint" -> "workspace" substring swap was
+  // the OpenAgents naming convention and rewrote nothing for Placement AI.
+  return baseUrl.replace(HOSTED_API_HOST, HOSTED_WEB_HOST).replace(/\/v1$/, "")
 }
 
 /**

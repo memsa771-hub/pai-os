@@ -116,6 +116,6 @@ describe('shared workspace host', () => {
     fakes.bundle = false
     const host = makeHost()
     host.show('team', bounds)
-    expect(fakes.contents.loadURL).toHaveBeenCalledWith('https://placement-ai.com/team')
+    expect(fakes.contents.loadURL).toHaveBeenCalledWith('https://app.placement-ai.com/team')
   })
 })

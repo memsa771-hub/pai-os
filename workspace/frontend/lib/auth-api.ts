@@ -3,7 +3,7 @@
 // client ever learning the resolved email. See workspace/backend/app/routers/auth.py.
 import { SUPABASE_ANON_KEY, SUPABASE_URL, type AuthSession } from './supabase-auth';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from './config';
 
 async function parseError(res: Response): Promise<Error> {
   const body = await res.json().catch(() => null);

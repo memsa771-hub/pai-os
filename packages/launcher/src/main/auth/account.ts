@@ -18,7 +18,7 @@ import {
  *
  * Account identity lives here rather than in the renderer because two different
  * origins need it: the launcher's own UI (a file:// page) and the embedded
- * workspace view (https://workspace.openagents.org). Browser auth state is
+ * workspace view (https://app.placement-ai.com). Browser auth state is
  * per-origin and cannot be shared between them — only main can feed both.
  *
  * Signing in is a workspace-scoped gate, never an app-scoped one: everything

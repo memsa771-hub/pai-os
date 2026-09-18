@@ -22,8 +22,8 @@ vi.mock('electron', () => {
 vi.mock('./bootstrap/startup-log', () => ({ slog: vi.fn() }))
 import { allowBundleApiAccess } from './workspace-bundle'
 
-const API = 'https://workspace-endpoint.openagents.org'
-const WEB = 'https://workspace.openagents.org'
+const API = 'https://api.placement-ai.com'
+const WEB = 'https://app.placement-ai.com'
 
 function send(id: number, requestHeaders: Record<string, string>) {
   let result: Record<string, unknown> = {}

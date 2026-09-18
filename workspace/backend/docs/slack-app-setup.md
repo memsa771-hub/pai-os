@@ -27,7 +27,7 @@ features:
     always_online: true
 oauth_config:
   redirect_urls:
-    - https://workspace-endpoint.openagents.org/v1/integrations/slack/oauth/callback
+    - https://api.placement-ai.com/v1/integrations/slack/oauth/callback
   scopes:
     bot:
       - chat:write
@@ -38,7 +38,7 @@ oauth_config:
       - groups:history
 settings:
   event_subscriptions:
-    request_url: https://workspace-endpoint.openagents.org/v1/integrations/slack/events
+    request_url: https://api.placement-ai.com/v1/integrations/slack/events
     bot_events:
       - message.im
       - message.channels

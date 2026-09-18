@@ -10,7 +10,7 @@ import type { AddressInfo } from "net"
  *
  *   1. this server binds 127.0.0.1 on a random port and invents a `state`
  *   2. account.ts opens the system browser directly at Supabase's authorize
- *      URL, with redirect_to = workspace.openagents.org/auth/desktop?port=<port>&state=<state>
+ *      URL, with redirect_to = app.placement-ai.com/auth/desktop?port=<port>&state=<state>
  *   3. that page POSTs the `code` Supabase redirected back with to
  *      http://127.0.0.1:<port>/desktop-auth, unexchanged
  *   4. the state is checked, the promise resolves with that code, the server

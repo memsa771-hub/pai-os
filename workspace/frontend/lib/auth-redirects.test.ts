@@ -31,7 +31,7 @@ describe('web sign-in', () => {
   it.each([
     ['localhost', 'http://localhost:3000/fb2fa89c'],
     ['placement-ai.com', 'https://placement-ai.com/fb2fa89c'],
-    ['workspace.openagents.org', 'https://workspace.openagents.org/team'],
+    ['app.placement-ai.com', 'https://app.placement-ai.com/team'],
   ])('sends %s to the sign-in page on this origin', (hostname, href) => {
     const location = { hostname, href };
     vi.stubGlobal('window', { location });

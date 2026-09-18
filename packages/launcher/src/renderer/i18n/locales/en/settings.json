@@ -251,7 +251,7 @@
     "workspaceGroup": "Workspace endpoint",
     "workspaceUrl": "Workspace backend URL",
     "workspaceUrlDesc": "Optional self-hosted workspace server. Leave empty to use $t(common.brandName)-hosted workspaces.",
-    "workspaceUrlPlaceholder": "https://workspace.openagents.org or http://localhost:8000",
+    "workspaceUrlPlaceholder": "https://api.placement-ai.com or http://localhost:8000",
     "proxyGroup": "Proxy",
     "httpProxy": "HTTP proxy",
     "httpProxyDesc": "Used for outbound HTTP by agents and $t(common.appName)",

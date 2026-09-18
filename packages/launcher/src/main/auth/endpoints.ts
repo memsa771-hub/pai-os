@@ -13,14 +13,17 @@
  * Defaults are baked in at build time from workspace/.env (see
  * electron.vite.config.ts's `define` block), matching the values Web itself
  * uses (NEXT_PUBLIC_API_URL / the app's own canonical origin) — never
- * invented here. The renderer has the same web/api mapping in
+ * invented here. The constants below are the fallback when that file sets
+ * nothing, and they are Placement AI's own hosts: Desktop and Web talk to the
+ * SAME backend and the SAME Supabase project, so one account resolves to one
+ * User and one workspace whichever client signs in. The renderer has the same web/api mapping in
  * `lib/workspace-urls.ts`; main cannot import it (different tsconfig root)
  * so the rule is spelled out again here rather than reached for across the
  * boundary.
  */
 
-export const DEFAULT_API_BASE = process.env.PAI_API_BASE || "https://workspace-endpoint.openagents.org"
-export const DEFAULT_WEB_BASE = process.env.PAI_WEB_BASE || "https://placement-ai.com"
+export const DEFAULT_API_BASE = process.env.PAI_API_BASE || "https://api.placement-ai.com"
+export const DEFAULT_WEB_BASE = process.env.PAI_WEB_BASE || "https://app.placement-ai.com"
 
 export const WORKSPACE_API_HOSTNAME = new URL(DEFAULT_API_BASE).hostname
 export const WORKSPACE_WEB_HOSTNAME = new URL(DEFAULT_WEB_BASE).hostname

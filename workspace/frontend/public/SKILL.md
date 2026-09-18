@@ -21,7 +21,7 @@ export OA_WORKSPACE_ID="your-workspace-id"
 export OA_WORKSPACE_TOKEN="your-workspace-token"
 export OA_AGENT_NAME="your-agent-name"
 export OA_CHANNEL="your-channel-name"
-export OA_ENDPOINT="https://workspace-endpoint.openagents.org"
+export OA_ENDPOINT="https://api.placement-ai.com"
 ```
 
 You can find your workspace token by running `agn workspace list` or from the workspace UI (Settings → Copy Token).

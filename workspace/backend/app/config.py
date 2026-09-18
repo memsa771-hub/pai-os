@@ -244,20 +244,23 @@ class Config:
     GOOGLE_OAUTH_CLIENT_SECRET: str = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
     GOOGLE_OAUTH_REDIRECT_URI: str = os.environ.get(
         "GOOGLE_OAUTH_REDIRECT_URI",
-        "https://workspace-endpoint.openagents.org/v1/cloud-agents/google/callback",
+        "https://api.placement-ai.com/v1/cloud-agents/google/callback",
     )
 
     # Transactional email. Delivery goes through Resend when a key is
     # configured (otherwise sends are logged no-ops).
-    FRONTEND_BASE_URL: str = os.environ.get("FRONTEND_BASE_URL", "https://workspace.openagents.org")
+    # The application origin, for links the backend puts in email and in
+    # integration redirects. Placement AI's canonical hosted app.
+    FRONTEND_BASE_URL: str = os.environ.get("FRONTEND_BASE_URL", "https://app.placement-ai.com")
     RESEND_API_KEY: str = os.environ.get("RESEND_API_KEY", "")
-    EMAIL_FROM: str = os.environ.get("EMAIL_FROM", "OpenAgents <noreply@openagents.org>")
+    # Must be a domain verified in Resend, or delivery fails.
+    EMAIL_FROM: str = os.environ.get("EMAIL_FROM", "Placement AI <noreply@placement-ai.com>")
 
     # Chat-platform integrations (Slack / Telegram bridges). The public base
     # URL is what external platforms call back to — Telegram setWebhook and
     # the Slack Events API URL both derive from it.
     PUBLIC_API_BASE: str = os.environ.get(
-        "PUBLIC_API_BASE", "https://workspace-endpoint.openagents.org"
+        "PUBLIC_API_BASE", "https://api.placement-ai.com"
     )
     # The official "OpenAgents" Slack app (one-click Add to Slack). All three
     # come from the app's Basic Information page; when unset, the UI falls

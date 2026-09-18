@@ -225,8 +225,8 @@ function FeatureCard({ icon, title, description }: { icon: React.ReactNode; titl
 }
 
 // ---------------------------------------------------------------------------
-// Membership Home (v1.0) — the signed-in workspace picker on
-// workspace.openagents.org. Overleaf/Canva-style: pick a workspace or create one.
+// Home — the app's front door on app.placement-ai.com. Signed out it leads to
+// /sign-in; signed in it resolves the student's one workspace and goes there.
 // ---------------------------------------------------------------------------
 
 // Brand palette + neo-brutalist primitives, mirroring the openagents.org

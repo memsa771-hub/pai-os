@@ -16,7 +16,7 @@ import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
 import { useT } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from '@/lib/config';
 
 export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const t = useT();

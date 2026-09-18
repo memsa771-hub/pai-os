@@ -251,7 +251,7 @@
     "workspaceGroup": "工作区访问端点",
     "workspaceUrl": "工作区后端地址",
     "workspaceUrlDesc": "可选的自托管工作区服务器。留空则使用 $t(common.brandName) 官方托管的工作区。",
-    "workspaceUrlPlaceholder": "https://workspace.openagents.org 或 http://localhost:8000",
+    "workspaceUrlPlaceholder": "https://api.placement-ai.com 或 http://localhost:8000",
     "proxyGroup": "代理设置",
     "httpProxy": "HTTP 代理",
     "httpProxyDesc": "智能体与 $t(common.appName) 进行出站 HTTP 时使用",

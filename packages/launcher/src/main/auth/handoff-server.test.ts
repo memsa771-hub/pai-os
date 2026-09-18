@@ -8,7 +8,7 @@ import { startHandoffServer, type Handoff } from "./handoff-server"
  * what it accepts.
  */
 
-const ORIGIN = "https://workspace.openagents.org"
+const ORIGIN = "https://app.placement-ai.com"
 
 let open: Handoff | null = null
 

@@ -1,3 +1,19 @@
+> **[SUPERSEDED / 已作废 — 2026-09-18]**
+>
+> This document describes the retired design in which desktop sign-in depended
+> on a central `openagents.org/login` and a `workspace.openagents.org` session
+> cookie. None of that exists any more.
+>
+> Placement AI is its own product. Desktop now authenticates against the same
+> Supabase project the web app uses, through the launcher's own native sign-in
+> and a loopback handoff server — see `src/main/auth/account.ts`,
+> `src/main/auth/supabase.ts` and `src/main/auth/handoff-server.ts`. The
+> canonical origins are `https://app.placement-ai.com` (app, `/auth/desktop`
+> handoff) and `https://api.placement-ai.com` (backend).
+>
+> 本文描述的是已废弃的方案（依赖 openagents.org 中央登录）。现在桌面端直接使用
+> 与 Web 相同的 Supabase 项目，见上述源码文件。保留此文件仅为记录当时的取舍。
+
 # 桌面端登录：需要协助的事项
 
 > 面向：openagents.org 网站侧、workspace 前端部署、workspace 后端配置

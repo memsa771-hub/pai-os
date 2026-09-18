@@ -7,7 +7,7 @@ describe("opensInApp", () => {
   it("opens a workspace on the configured deployment in the app when signed in", () => {
     expect(opensInApp(ws, undefined, true)).toBe(true)
     // The device records the API endpoint; the setting may be empty for the default.
-    expect(opensInApp({ ...ws, endpoint: "https://workspace-endpoint.openagents.org/v1" }, "", true)).toBe(true)
+    expect(opensInApp({ ...ws, endpoint: "https://api.placement-ai.com/v1" }, "", true)).toBe(true)
   })
 
   it("uses the browser while signed out", () => {

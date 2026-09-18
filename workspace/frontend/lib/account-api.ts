@@ -5,7 +5,7 @@
 // for a given user, and returns the same one on every call after that —
 // there is no picker, no "create another workspace", no membership list.
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'https://workspace-endpoint.openagents.org';
+import { API_URL } from './config';
 
 export interface AccountWorkspace {
   workspaceId: string;

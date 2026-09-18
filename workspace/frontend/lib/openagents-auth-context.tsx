@@ -24,11 +24,22 @@ interface OpenAgentsAuthContextValue {
   applySession: (session: AuthSession) => void;
 }
 
-// `workspace` is the desktop build: PAI Desktop serves the bundle from
-// pai://workspace/, so that is this app's own host there — the same way
-// placement-ai.com is on the web. Without it the desktop app would decide it
-// was a third-party deployment and show the marketing landing page.
-const PAI_HOSTNAMES = ['placement-ai.com', 'workspace.openagents.org', 'localhost', 'workspace'];
+// The hosts this app is served from as ITSELF, rather than as a third-party
+// self-hosted deployment.
+//
+//   app.placement-ai.com  the canonical hosted application origin
+//   placement-ai.com      the apex, which serves/redirects to the app
+//   localhost             development
+//   workspace             the desktop build — PAI Desktop serves the bundle
+//                         from pai://workspace/, so that is this app's own
+//                         host there. Without it the desktop app would decide
+//                         it was a third-party deployment and show the
+//                         marketing landing page.
+//
+// workspace.openagents.org is deliberately NOT here. Placement AI is its own
+// product with its own auth origin; hosted sign-in no longer involves an
+// OpenAgents host in any form.
+const PAI_HOSTNAMES = ['app.placement-ai.com', 'placement-ai.com', 'localhost', 'workspace'];
 
 /**
  * Whether this page is Placement AI's own deployment rather than a third-party

@@ -30,9 +30,20 @@ services:
       WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
       WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
       WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
-      # openagents://workspace is the Workspace bundled into the desktop
-      # launcher (packages/launcher/src/main/workspace-bundle.ts).
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://workspace.openagents.org,openagents://workspace}
+      # The canonical hosted application origin, and nothing else. Never "*":
+      # this API is credentialed.
+      #
+      # The desktop launcher does NOT need an entry. Its bundle is served from
+      # pai://workspace, and the launcher rewrites that Origin to the
+      # configured web origin before the request leaves the process, then
+      # rewrites the reply header back — see
+      # packages/launcher/src/main/workspace-bundle.ts (allowBundleApiAccess).
+      # So desktop arrives as https://app.placement-ai.com, which is listed.
+      #
+      # Add https://placement-ai.com or https://www.placement-ai.com here only
+      # if those origins actually call the API, rather than redirecting to the
+      # app origin.
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.placement-ai.com}
     depends_on:
       db:
         condition: service_healthy
@@ -41,7 +52,7 @@ services:
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${API_URL:-https://workspace-endpoint.openagents.org}
+        NEXT_PUBLIC_API_URL: ${API_URL:-https://api.placement-ai.com}
         NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL:-}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
     depends_on:

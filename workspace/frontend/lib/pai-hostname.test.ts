@@ -9,8 +9,6 @@ describe('isPaiHostname', () => {
     'placement-ai.com',
     'www.placement-ai.com',
     'WWW.Placement-AI.com',
-    'workspace.openagents.org',
-    'www.workspace.openagents.org',
     'localhost',
     '127.0.0.1',
     '[::1]',
@@ -20,6 +18,9 @@ describe('isPaiHostname', () => {
   });
 
   it.each([
+    // Placement AI is its own product: no OpenAgents host is a PAI auth origin.
+    'workspace.openagents.org',
+    'openagents.org',
     'evil.com',
     'placement-ai.com.evil.com',
     'notplacement-ai.com',
