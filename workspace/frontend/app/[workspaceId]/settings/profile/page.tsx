@@ -10,8 +10,8 @@ import { SectionHeader } from '@/components/settings/section-chrome';
 import {
   getAccountProfile, updateAccountProfile, type AccountProfile,
 } from '@/lib/account-api';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
-import { goToCentralLogin } from '@/lib/auth-redirects';
+import { usePaiAuth } from '@/lib/pai-auth-context';
+import { goToSignIn } from '@/lib/auth-redirects';
 import { useT } from '@/lib/i18n';
 
 const AVATAR_SIZE = 256;
@@ -44,7 +44,7 @@ function fileToAvatarDataUrl(file: File): Promise<string> {
 
 export default function ProfileSettingsPage() {
   const t = useT();
-  const { user, idToken, loading: authLoading, signIn } = useOpenAgentsAuth();
+  const { user, idToken, loading: authLoading, signIn } = usePaiAuth();
   const fileInput = useRef<HTMLInputElement>(null);
 
   const [profile, setProfile] = useState<AccountProfile | null>(null);
@@ -73,7 +73,7 @@ export default function ProfileSettingsPage() {
         <SectionHeader title={t('profile.title')} description={t('profile.description')} />
         <div className="flex flex-col items-start gap-3 rounded-lg border p-4">
           <p className="text-sm text-muted-foreground">{t('profile.signInPrompt')}</p>
-          <Button size="sm" onClick={() => goToCentralLogin(signIn)}>
+          <Button size="sm" onClick={() => goToSignIn()}>
             <LogIn className="size-4" />
             {t('userMenu.signIn')}
           </Button>

@@ -3,7 +3,7 @@ import { ThemeProvider, useTheme } from 'next-themes';
 
 import { Toaster } from '@/components/ui/sonner';
 import { DialogsProvider } from '@/components/ui/dialogs-provider';
-import { OpenAgentsAuthProvider } from '@/lib/openagents-auth-context';
+import { PaiAuthProvider } from '@/lib/pai-auth-context';
 import { DEFAULT_LOCALE, I18nProvider } from '@/lib/i18n';
 
 import Home from '@/app/page';
@@ -149,11 +149,11 @@ export default function App(): React.JSX.Element {
     <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
       <I18nProvider>
         <AppearanceSync />
-        <OpenAgentsAuthProvider>
+        <PaiAuthProvider>
           <DialogsProvider>
             <DesktopRouter routes={ROUTES} notFound={<NotFound />} />
           </DialogsProvider>
-        </OpenAgentsAuthProvider>
+        </PaiAuthProvider>
         <Toaster />
         <HostNotices />
       </I18nProvider>

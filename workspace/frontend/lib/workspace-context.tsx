@@ -3,7 +3,7 @@
 import React, { createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { workspaceApi } from './api';
 import { capture, group } from './analytics';
-import { useOpenAgentsAuth } from './openagents-auth-context';
+import { usePaiAuth } from './pai-auth-context';
 import { generateUserId, getStoredIdentity, storeIdentity } from './identity';
 import { networkAgentToWorkspaceAgent, networkChannelToSession } from './types';
 import { defaultWorkspaceConversation } from './primary-conversation';
@@ -12,7 +12,7 @@ import type { PendingUpload } from '@/hooks/use-upload-queue';
 import type { BrowserPersistentContext, BrowserTab, DMConversation, KanbanTask, Workflow, WorkflowStep, KnowledgeEntry, NotificationItem, OnlineUser, RoutineItem, TodoItem, TrashEntry, Workspace, WorkspaceAgent, WorkspaceFile, WorkspaceIdentity, WorkspaceSession } from './types';
 
 function useWorkspaceIdentity() {
-  const { user } = useOpenAgentsAuth();
+  const { user } = usePaiAuth();
   const [localIdentity, setLocalIdentity] = useState<WorkspaceIdentity>(() => {
     const stored = typeof window !== 'undefined' ? getStoredIdentity() : null;
     const id = stored?.id || (typeof window !== 'undefined' ? generateUserId() : '');

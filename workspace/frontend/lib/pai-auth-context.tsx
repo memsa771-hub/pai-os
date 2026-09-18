@@ -1,22 +1,38 @@
 'use client';
 
+/**
+ * Placement AI's authentication context — the only one there is.
+ *
+ * Placement AI owns login; Supabase owns authentication; OpenAgents owns
+ * nothing in this flow. The file was called openagents-auth-context and
+ * exported useOpenAgentsAuth / isOpenAgentsDomain, which made the flag that
+ * decides whether to show PAI's OWN login button read as an OpenAgents check.
+ * The behaviour was already Placement AI's; the names now say so.
+ *
+ * Web and Desktop share this: web restores a Supabase session from
+ * localStorage and refreshes it here, while in Desktop the launcher owns the
+ * session and pushes it in over the host bridge (see desktopHost below).
+ * Either way the same Supabase user resolves to the same owner_user_id and the
+ * same workspace.
+ */
+
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { capture, identify } from './analytics';
 import { desktopHost } from './desktop-host';
 import { clearAuthSession, loadAuthSession, saveAuthSession } from './auth-session';
 import { refreshSession, signOut as supabaseSignOut, type AuthSession } from './supabase-auth';
 
-interface OpenAgentsUser {
+interface PaiUser {
   email: string;
   displayName: string;
   photoURL: string | null;
 }
 
-interface OpenAgentsAuthContextValue {
-  user: OpenAgentsUser | null;
+interface PaiAuthContextValue {
+  user: PaiUser | null;
   idToken: string | null;
   loading: boolean;
-  isOpenAgentsDomain: boolean;
+  isPaiDeployment: boolean;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
   /** Adopt a freshly obtained Supabase session (from /sign-in, /sign-up, or
@@ -60,19 +76,19 @@ export function isPaiHostname(hostname: string): boolean {
 // Refresh well before expiry so a page load never races a lapsed token.
 const REFRESH_MARGIN_SECONDS = 60;
 
-const OpenAgentsAuthContext = createContext<OpenAgentsAuthContextValue | null>(null);
+const PaiAuthContext = createContext<PaiAuthContextValue | null>(null);
 
-export function useOpenAgentsAuth() {
-  const ctx = useContext(OpenAgentsAuthContext);
-  if (!ctx) throw new Error('useOpenAgentsAuth must be used within OpenAgentsAuthProvider');
+export function usePaiAuth() {
+  const ctx = useContext(PaiAuthContext);
+  if (!ctx) throw new Error('usePaiAuth must be used within PaiAuthProvider');
   return ctx;
 }
 
-export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode }) {
-  const [user, setUser] = useState<OpenAgentsUser | null>(null);
+export function PaiAuthProvider({ children }: { children: React.ReactNode }) {
+  const [user, setUser] = useState<PaiUser | null>(null);
   const [idToken, setIdToken] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [isOpenAgentsDomain, setIsOpenAgentsDomain] = useState(false);
+  const [isPaiDeployment, setIsOpenAgentsDomain] = useState(false);
   const refreshTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const clearSession = useCallback(() => {
@@ -155,10 +171,10 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
   }, [idToken, clearSession]);
 
   return (
-    <OpenAgentsAuthContext.Provider
-      value={{ user, idToken, loading, isOpenAgentsDomain, signIn, signOut, applySession }}
+    <PaiAuthContext.Provider
+      value={{ user, idToken, loading, isPaiDeployment, signIn, signOut, applySession }}
     >
       {children}
-    </OpenAgentsAuthContext.Provider>
+    </PaiAuthContext.Provider>
   );
 }

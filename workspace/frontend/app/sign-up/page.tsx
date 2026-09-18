@@ -7,7 +7,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { signUpWithPassword, startOAuthRedirect } from '@/lib/supabase-auth';
 import { claimUsername, isUsernameAvailable } from '@/lib/auth-api';
 import { registrationPasswordError } from '@/lib/password-policy';
@@ -15,7 +15,7 @@ import { desktopHost } from '@/lib/desktop-host';
 
 export default function SignUpPage() {
   const router = useRouter();
-  const { applySession, idToken } = useOpenAgentsAuth();
+  const { applySession, idToken } = usePaiAuth();
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

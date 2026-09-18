@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { API_URL, DEFAULT_API_URL, DEFAULT_APP_URL, SIGN_IN_PATH } from './config';
-import { isPaiHostname } from './openagents-auth-context';
-import { goToCentralLogin, goToCentralLogout } from './auth-redirects';
+import { isPaiHostname } from './pai-auth-context';
+import { goToSignIn, signOutAndReturnToSignIn } from './auth-redirects';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -47,14 +47,14 @@ describe('hosted auth never leaves Placement AI', () => {
 
   it('sends login to /sign-in on this origin', () => {
     const location = onPaiApp();
-    goToCentralLogin();
+    goToSignIn();
     expect(location.href).toBe(SIGN_IN_PATH);
     expect(location.href).not.toContain('openagents');
   });
 
   it('sends logout to /sign-in on this origin', async () => {
     const location = onPaiApp();
-    await goToCentralLogout(async () => {});
+    await signOutAndReturnToSignIn(async () => {});
     expect(location.href).toBe(SIGN_IN_PATH);
     expect(location.href).not.toContain('openagents');
   });
@@ -63,7 +63,7 @@ describe('hosted auth never leaves Placement AI', () => {
     const location = { hostname: 'localhost', href: 'http://localhost:3000/x' };
     vi.stubGlobal('window', { location });
     vi.stubGlobal('document', { set cookie(_v: string) {} });
-    goToCentralLogin();
+    goToSignIn();
     expect(location.href).toBe(SIGN_IN_PATH);
   });
 });

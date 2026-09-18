@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { AdminSettingsContext, type AdminSettingsValue } from '@/components/settings/admin-context';
 import { workspaceApi } from '@/lib/api';
 import type { Workspace, WorkspaceMe } from '@/lib/types';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
-import { goToCentralLogin } from '@/lib/auth-redirects';
+import { usePaiAuth } from '@/lib/pai-auth-context';
+import { goToSignIn } from '@/lib/auth-redirects';
 import { useT } from '@/lib/i18n';
 
 /** Read a self-hosted workspace token persisted by the main workspace view
@@ -44,7 +44,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
   const t = useT();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const { user, idToken, loading: authLoading, isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
+  const { user, idToken, loading: authLoading, isPaiDeployment, signIn } = usePaiAuth();
 
   const urlToken = searchParams.get('token');
   const query = urlToken ? `?token=${encodeURIComponent(urlToken)}` : '';
@@ -97,7 +97,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
 
   if (error === 'denied') {
     // A signed-out visitor on the hosted domain may simply need to log in.
-    if (isOpenAgentsDomain && !user && !authLoading) {
+    if (isPaiDeployment && !user && !authLoading) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-6 bg-background p-8">
           <div className="flex flex-col items-center gap-2 text-center">
@@ -105,7 +105,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
             <p className="max-w-md text-sm text-muted-foreground">{t('workspaceGate.signInBody')}</p>
           </div>
           <button
-            onClick={() => goToCentralLogin(signIn)}
+            onClick={() => goToSignIn()}
             className="flex items-center gap-3 rounded-lg bg-primary px-6 py-3 font-medium text-primary-foreground transition-colors hover:bg-primary/90"
           >
             <LogIn className="size-5" />

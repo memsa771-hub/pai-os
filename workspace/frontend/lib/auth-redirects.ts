@@ -20,20 +20,20 @@ import { desktopHost } from './desktop-host';
 // every self-hosted deployment each serve their own. See lib/config.ts.
 
 /**
- * Send the user to the sign-in page.
+ * Send the user to Placement AI's sign-in.
+ *
+ * Web goes to /sign-in on this origin. Desktop asks the launcher to bring up
+ * its own native sign-in instead, because the embedded view is loaded from
+ * pai://workspace and has no page of its own to navigate to.
  *
  * After a successful sign-in, /sign-in lands on `/`, which resolves the
- * student's one workspace and redirects to it — so there is nothing to
- * preserve in a returnTo.
- *
- * @param fallbackSignIn legacy parameter, kept so existing call sites compile;
- *   the desktop host is consulted directly and the web path needs no callback.
+ * student's one workspace and goes there — so there is nothing to preserve in
+ * a returnTo.
  */
-export function goToCentralLogin(fallbackSignIn?: () => void): void {
+export function goToSignIn(): void {
   if (typeof window === 'undefined') return;
   const host = desktopHost();
   if (host) { host.signIn(); return; }
-  void fallbackSignIn;
   window.location.href = SIGN_IN_PATH;
 }
 
@@ -57,7 +57,7 @@ function clearWorkspaceCookies(): void {
  * Sign out on this origin and land on the sign-in page, so signing back in is
  * one click rather than a dead end.
  */
-export async function goToCentralLogout(signOut: () => Promise<void>): Promise<void> {
+export async function signOutAndReturnToSignIn(signOut: () => Promise<void>): Promise<void> {
   try {
     await signOut();
   } catch {

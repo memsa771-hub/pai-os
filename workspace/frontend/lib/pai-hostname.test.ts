@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isPaiHostname } from './openagents-auth-context';
+import { isPaiHostname } from './pai-auth-context';
 
 // Returning false here is not cosmetic: the app then renders the third-party
 // "add a token to the URL" screen with no login button, so a student on that

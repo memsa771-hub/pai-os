@@ -12,7 +12,7 @@ import { Bug, Lightbulb, Loader2, Send } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { useWorkspace } from '@/lib/workspace-context';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { useT } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 
@@ -21,7 +21,7 @@ import { API_URL } from '@/lib/config';
 export function FeedbackDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
   const { workspace } = useWorkspace();
-  const { idToken } = useOpenAgentsAuth();
+  const { idToken } = usePaiAuth();
   const [kind, setKind] = useState<'bug' | 'feature'>('feature');
   const [message, setMessage] = useState('');
   const [sending, setSending] = useState(false);

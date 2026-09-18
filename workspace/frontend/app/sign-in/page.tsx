@@ -7,14 +7,14 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { signInWithPassword, startOAuthRedirect } from '@/lib/supabase-auth';
 import { signInWithUsername } from '@/lib/auth-api';
 import { desktopHost } from '@/lib/desktop-host';
 
 export default function SignInPage() {
   const router = useRouter();
-  const { applySession } = useOpenAgentsAuth();
+  const { applySession } = usePaiAuth();
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);

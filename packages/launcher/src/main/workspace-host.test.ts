@@ -60,7 +60,7 @@ describe('shared workspace host', () => {
     const host = makeHost(); host.show(null, bounds)
     expect(host.isWorkspaceSender(fakes.contents as never)).toBe(true)
     expect(host.isWorkspaceSender({ getURL:() => fakes.contents.url } as never)).toBe(false)
-    fakes.contents.url = 'https://openagents.org/login'
+    fakes.contents.url = 'https://not-our-origin.example.invalid/login'
     expect(host.isWorkspaceSender(fakes.contents as never)).toBe(false)
   })
   it('destroys the view and clears its stored session on sign-out', async () => {

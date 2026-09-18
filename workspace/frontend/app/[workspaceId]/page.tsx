@@ -5,8 +5,8 @@ import { useSearchParams } from 'next/navigation';
 import { WorkspaceProvider, useWorkspace } from '@/lib/workspace-context';
 import { LayoutProvider } from '@/components/layout/layout-context';
 import { Wrapper } from '@/components/layout/wrapper';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
-import { goToCentralLogin } from '@/lib/auth-redirects';
+import { usePaiAuth } from '@/lib/pai-auth-context';
+import { goToSignIn } from '@/lib/auth-redirects';
 import { API_URL } from '@/lib/config';
 import { LogIn } from 'lucide-react';
 import { useT } from '@/lib/i18n';
@@ -190,7 +190,7 @@ function WorkspaceContent({ workspaceId }: { workspaceId: string }) {
   const t = useT();
   const searchParams = useSearchParams();
   const token = searchParams.get('token');
-  const { user, idToken, loading: authLoading, isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
+  const { user, idToken, loading: authLoading, isPaiDeployment, signIn } = usePaiAuth();
 
   useEffect(() => {
     if (token) {
@@ -212,7 +212,7 @@ function WorkspaceContent({ workspaceId }: { workspaceId: string }) {
   }
 
   // No token — check if user is logged in via OpenAgents
-  if (isOpenAgentsDomain) {
+  if (isPaiDeployment) {
     if (authLoading) {
       return <WorkspaceLoadingSplash />;
     }
@@ -237,7 +237,7 @@ function WorkspaceContent({ workspaceId }: { workspaceId: string }) {
             method — not just Google — so the label and icon stay
             method-neutral. */}
         <button
-          onClick={() => goToCentralLogin(signIn)}
+          onClick={() => goToSignIn()}
           className="flex items-center gap-3 px-6 py-3 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors"
         >
           <LogIn className="size-5" />

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { goToCentralLogin, goToCentralLogout } from './auth-redirects';
+import { goToSignIn, signOutAndReturnToSignIn } from './auth-redirects';
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -8,7 +8,7 @@ describe('desktop account boundaries', () => {
     const signIn = vi.fn();
     const location = { hostname: 'workspace', href: 'pai://workspace/index.html#/team' };
     vi.stubGlobal('window', { location, __paiHost__: { signIn } });
-    goToCentralLogin();
+    goToSignIn();
     expect(signIn).toHaveBeenCalledOnce();
     expect(location.href).toBe('pai://workspace/index.html#/team');
   });
@@ -17,7 +17,7 @@ describe('desktop account boundaries', () => {
     const signOut = vi.fn().mockResolvedValue(undefined);
     const location = { hostname: 'workspace', href: 'pai://workspace/index.html#/team' };
     vi.stubGlobal('window', { location, __paiHost__: {} });
-    await goToCentralLogout(signOut);
+    await signOutAndReturnToSignIn(signOut);
     expect(signOut).toHaveBeenCalledOnce();
     expect(location.href).toBe('pai://workspace/index.html#/team');
   });
@@ -35,15 +35,16 @@ describe('web sign-in', () => {
   ])('sends %s to the sign-in page on this origin', (hostname, href) => {
     const location = { hostname, href };
     vi.stubGlobal('window', { location });
-    goToCentralLogin();
+    goToSignIn();
     expect(location.href).toBe('/sign-in');
   });
 
-  it('does not depend on the fallback callback', () => {
-    const fallback = vi.fn();
+  it('takes no callback: the web path just navigates', () => {
+    // There used to be a `fallbackSignIn` argument that was a no-op outside
+    // the desktop app, which is what made the button do nothing on localhost.
     const location = { hostname: 'localhost', href: 'http://localhost:3000/x' };
     vi.stubGlobal('window', { location });
-    goToCentralLogin(fallback);
+    goToSignIn();
     expect(location.href).toBe('/sign-in');
   });
 
@@ -54,7 +55,7 @@ describe('web sign-in', () => {
     vi.stubGlobal('window', { location });
     vi.stubGlobal('document', { set cookie(v: string) { written.push(v); } });
 
-    await goToCentralLogout(signOut);
+    await signOutAndReturnToSignIn(signOut);
 
     expect(signOut).toHaveBeenCalledOnce();
     expect(location.href).toBe('/sign-in');
@@ -68,7 +69,7 @@ describe('web sign-in', () => {
     const location = { hostname: 'localhost', href: 'http://localhost:3000/x' };
     vi.stubGlobal('window', { location });
     vi.stubGlobal('document', { set cookie(_v: string) {} });
-    await goToCentralLogout(signOut);
+    await signOutAndReturnToSignIn(signOut);
     expect(location.href).toBe('/sign-in');
   });
 });

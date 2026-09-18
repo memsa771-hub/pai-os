@@ -22,8 +22,8 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { useConfirm } from '@/components/ui/dialogs-provider';
 import { useWorkspace } from '@/lib/workspace-context';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
-import { goToCentralLogin, goToCentralLogout } from '@/lib/auth-redirects';
+import { usePaiAuth } from '@/lib/pai-auth-context';
+import { goToSignIn, signOutAndReturnToSignIn } from '@/lib/auth-redirects';
 import { useT } from '@/lib/i18n';
 import { FeedbackDialog } from '@/components/feedback/feedback-dialog';
 
@@ -41,7 +41,7 @@ const THEME_OPTIONS = [
 
 export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
   const { workspace, token } = useWorkspace();
-  const { user, isOpenAgentsDomain, signIn, signOut } = useOpenAgentsAuth();
+  const { user, isPaiDeployment, signIn, signOut } = usePaiAuth();
   const [showFeedback, setShowFeedback] = useState(false);
   const { theme, setTheme } = useTheme();
   const confirm = useConfirm();
@@ -106,7 +106,7 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
       confirmText: t('userMenu.signOut'),
       destructive: true,
     });
-    if (ok) goToCentralLogout(signOut);
+    if (ok) signOutAndReturnToSignIn(signOut);
   };
 
   return (
@@ -192,7 +192,7 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
             {t('userMenu.workspaceSettings')}
           </DropdownMenuItem>
 
-          {isOpenAgentsDomain && (
+          {isPaiDeployment && (
             <>
               <DropdownMenuSeparator />
               {user ? (
@@ -201,7 +201,7 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
                   {t('userMenu.signOut')}
                 </DropdownMenuItem>
               ) : (
-                <DropdownMenuItem onClick={() => goToCentralLogin(signIn)}>
+                <DropdownMenuItem onClick={() => goToSignIn()}>
                   <LogIn />
                   {t('userMenu.signIn')}
                 </DropdownMenuItem>

@@ -3,7 +3,7 @@ import { Inter } from 'next/font/google';
 import Script from 'next/script';
 import { ThemeProvider } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
-import { OpenAgentsAuthProvider } from '@/lib/openagents-auth-context';
+import { PaiAuthProvider } from '@/lib/pai-auth-context';
 import { DialogsProvider } from '@/components/ui/dialogs-provider';
 import { DEFAULT_LOCALE, I18nProvider } from '@/lib/i18n';
 import { getServerTranslations } from '@/lib/i18n/server';
@@ -93,12 +93,12 @@ export default async function RootLayout({
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           <I18nProvider>
             {/* Legacy email/password AuthProvider was removed in v1.0 —
-                OpenAgentsAuthProvider supplies the canonical identity path. */}
-            <OpenAgentsAuthProvider>
+                PaiAuthProvider supplies the canonical identity path. */}
+            <PaiAuthProvider>
               <DialogsProvider>
                 {children}
               </DialogsProvider>
-            </OpenAgentsAuthProvider>
+            </PaiAuthProvider>
             <Toaster />
           </I18nProvider>
         </ThemeProvider>

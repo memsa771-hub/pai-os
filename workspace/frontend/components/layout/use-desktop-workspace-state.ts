@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { desktopHost } from '@/lib/desktop-host';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout, type ViewMode } from './layout-context';
 
@@ -12,7 +12,7 @@ const VIEWS: ViewMode[] = ['threads', 'files', 'knowledge', 'browser', 'tasks', 
 /** Desktop restore state only; web layout, data loading, and UI stay shared. */
 export function useDesktopWorkspaceState(): void {
   const { workspaceId } = useParams<{ workspaceId: string }>();
-  const { user } = useOpenAgentsAuth();
+  const { user } = usePaiAuth();
   const { loading, sessions, currentSessionId, setCurrentSessionId } = useWorkspace();
   const { viewMode, openView } = useLayout();
   const [restored, setRestored] = useState('');

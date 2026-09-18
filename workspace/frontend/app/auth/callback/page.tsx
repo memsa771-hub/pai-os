@@ -2,13 +2,13 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { claimUsername } from '@/lib/auth-api';
 import { consumePkceVerifier, exchangeOAuthCode } from '@/lib/supabase-auth';
 
 function AuthCallback() {
   const router = useRouter();
-  const { applySession } = useOpenAgentsAuth();
+  const { applySession } = usePaiAuth();
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {

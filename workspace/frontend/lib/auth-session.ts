@@ -13,7 +13,7 @@ export function saveAuthSession(session: AuthSession): void {
 }
 
 /** The stored session, or null if absent or malformed. Does not check
- * expiry — callers refresh proactively (see openagents-auth-context.tsx). */
+ * expiry — callers refresh proactively (see pai-auth-context.tsx). */
 export function loadAuthSession(): AuthSession | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);

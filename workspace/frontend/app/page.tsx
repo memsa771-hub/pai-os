@@ -1,7 +1,7 @@
 'use client';
 
 import { desktopHost } from '@/lib/desktop-host';
-import { goToCentralLogout } from '@/lib/auth-redirects';
+import { signOutAndReturnToSignIn } from '@/lib/auth-redirects';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -11,7 +11,7 @@ import {
   Network, Compass, Shield, MonitorSmartphone,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useOpenAgentsAuth } from '@/lib/openagents-auth-context';
+import { usePaiAuth } from '@/lib/pai-auth-context';
 import { getAccountWorkspace } from '@/lib/account-api';
 import { capture, group } from '@/lib/analytics';
 
@@ -20,7 +20,7 @@ import { capture, group } from '@/lib/analytics';
 // ---------------------------------------------------------------------------
 
 function LandingPage() {
-  const { isOpenAgentsDomain, signIn } = useOpenAgentsAuth();
+  const { isPaiDeployment, signIn } = usePaiAuth();
 
   return (
     <div className="min-h-screen bg-background">
@@ -51,7 +51,7 @@ function LandingPage() {
             >
               Discord
             </a>
-            {isOpenAgentsDomain && (
+            {isPaiDeployment && (
               <Button size="sm" variant="outline" onClick={signIn}>
                 Sign In
               </Button>
@@ -342,7 +342,7 @@ function ResolvingWorkspace({
   // One logout path for the whole app. This used to be a second, hand-rolled
   // copy that redirected to openagents.org/logout — a leftover from the
   // OpenAgents product that threw students off Placement AI entirely.
-  const handleSignOut = () => goToCentralLogout(onSignOut);
+  const handleSignOut = () => signOutAndReturnToSignIn(onSignOut);
 
   if (error) {
     return (
@@ -399,10 +399,10 @@ function SignInGate({ signIn }: { signIn: () => Promise<void> }) {
 // ---------------------------------------------------------------------------
 
 export default function HomePage() {
-  const oa = useOpenAgentsAuth();
+  const oa = usePaiAuth();
 
   // Wait for auth/domain to resolve before deciding what to render. Both
-  // `loading` and `isOpenAgentsDomain` start at their defaults and are set in a
+  // `loading` and `isPaiDeployment` start at their defaults and are set in a
   // mount effect; gating on `loading` first avoids a first-paint flash of the
   // marketing LandingPage (with its install curl commands) on the workspace
   // domain before the effect runs.
@@ -410,7 +410,7 @@ export default function HomePage() {
 
   // On the OpenAgents-hosted app, `/` resolves the signed-in student's one
   // canonical workspace and redirects straight in.
-  if (oa.isOpenAgentsDomain) {
+  if (oa.isPaiDeployment) {
     if (!oa.user || !oa.idToken) return <SignInGate signIn={oa.signIn} />;
     return <ResolvingWorkspace idToken={oa.idToken} onSignOut={oa.signOut} />;
   }
