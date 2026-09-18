@@ -60,8 +60,9 @@ let config: HostConfig | null = null
 try {
   config = ipcRenderer.sendSync("workspace-view:config") as HostConfig
 
-  // Only when configured: the bundle's own default is the hosted endpoint, and
-  // overriding it with the same value would just be noise.
+  // Always, when main gave us one. Main sends the RESOLVED base now, so this
+  // is the origin main itself talks to — which is the whole point, since the
+  // bundle's own baked-in default differs from it in development.
   if (config?.apiUrl) contextBridge.exposeInMainWorld("__OA_API_URL__", config.apiUrl)
 
   // Main destroys this view and wipes its storage whenever the account ends,

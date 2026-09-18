@@ -8,6 +8,7 @@ import {
 } from "../../shared/appearance-bridge"
 
 import { openExternalSafely } from "../web-security"
+import { apiBase } from "./endpoints"
 import { WorkspaceHost, type ViewBounds } from "../workspace-host"
 import { AccountManager, type AccountWorkspace } from "./account"
 import type { AccountInfo } from "./session-store"
@@ -143,7 +144,19 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
     const { theme, language } = deps.appearance()
     event.returnValue = {
       session: host.currentSession(),
-      apiUrl: deps.endpoint(),
+      // The RESOLVED base, not the raw setting. `deps.endpoint()` is undefined
+      // whenever the user has not overridden it — which is the normal case —
+      // and the page then fell back to the origin baked into its own bundle.
+      // That was harmless only while the bundle's default and main's default
+      // were the same string. They are not: a dev run resolves to
+      // http://localhost:8000 here while the bundle still says
+      // https://api.placement-ai.com, so the embedded view talked to a host
+      // that does not resolve and showed "Can't reach the Placement AI
+      // server" on top of a perfectly healthy local backend.
+      //
+      // Sending what main itself uses keeps the two halves of one window
+      // talking to one backend, in every configuration.
+      apiUrl: apiBase(deps.endpoint()),
       theme,
       locale: toWorkspaceLocale(language),
     }
