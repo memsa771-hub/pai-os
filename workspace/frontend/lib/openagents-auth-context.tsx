@@ -30,6 +30,22 @@ interface OpenAgentsAuthContextValue {
 // was a third-party deployment and show the marketing landing page.
 const PAI_HOSTNAMES = ['placement-ai.com', 'workspace.openagents.org', 'localhost', 'workspace'];
 
+/**
+ * Whether this page is Placement AI's own deployment rather than a third-party
+ * self-hosted one. Getting this wrong is not cosmetic: `false` means the app
+ * never offers a login button at all, only the "add a token to the URL"
+ * screen, so a student on that host simply cannot get in.
+ *
+ * `www.` is stripped rather than listed, so the www host of every domain here
+ * works and a future domain does not have to remember to add both. Loopback IPs
+ * are matched too — dev machines and phones on a LAN reach the dev server by
+ * address, not by the name "localhost".
+ */
+export function isPaiHostname(hostname: string): boolean {
+  const host = (hostname || '').toLowerCase().replace(/^www\./, '');
+  return PAI_HOSTNAMES.includes(host) || host === '127.0.0.1' || host === '[::1]';
+}
+
 // Refresh well before expiry so a page load never races a lapsed token.
 const REFRESH_MARGIN_SECONDS = 60;
 
@@ -77,7 +93,7 @@ export function OpenAgentsAuthProvider({ children }: { children: React.ReactNode
 
   useEffect(() => {
     const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
-    const isDomain = PAI_HOSTNAMES.includes(hostname);
+    const isDomain = isPaiHostname(hostname);
     setIsOpenAgentsDomain(isDomain);
 
     if (!isDomain) {

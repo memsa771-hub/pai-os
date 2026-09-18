@@ -8,6 +8,7 @@ GET  /v1/events    Poll events (filter by after, target, channel, type)
 
 import asyncio
 import hashlib
+import hmac
 import json as _json
 import logging
 from typing import Optional
@@ -160,9 +161,20 @@ def _resolve_and_auth_cached(db, network, token, authorization):
 
     Returns ``(workspace_id, error_response)`` — exactly one is non-None.
 
-    Only the workspace-token path (the one agents use, `token ==
-    password_hash`) is cache-served. Bearer/collaborator auth, cache misses,
-    and token mismatches fall through to the DB and repopulate the cache.
+    Only one thing is ever cache-served: a POSITIVE match between the presented
+    token and the workspace's own. Bearer auth, cache misses, token mismatches
+    and workspaces with no token all fall through to the DB, where
+    `app.access.verify_workspace_access` is the single authority. A cache may
+    make an authorized caller faster; it must never make an unauthorized one
+    authorized.
+
+    That last case used to be a fail-open. A workspace with `password_hash IS
+    NULL` cached `ph_sha: None`, and this function read that as "public
+    workspace" and returned access to ANY caller — no token, no bearer, nothing
+    — while `verify_workspace_access` denies exactly that. Open workspaces were
+    removed from the access model; this was the last place still implementing
+    them, and it was the more permissive of the two.
+
     We store a SHA-256 of the token (not the token itself) and a short TTL so
     a rotated/revoked token is honored within the window; freshness of *events*
     is unaffected because the head/at-head caches are still invalidated on every
@@ -177,12 +189,12 @@ def _resolve_and_auth_cached(db, network, token, authorization):
             meta = None
         if meta and meta.get("id"):
             ph_sha = meta.get("ph_sha")
-            if ph_sha is None:
-                # Public workspace (no password) — token path grants access.
+            if ph_sha and token and hmac.compare_digest(
+                hashlib.sha256(token.encode("utf-8")).hexdigest(), ph_sha
+            ):
                 return meta["id"], None
-            if token and hashlib.sha256(token.encode("utf-8")).hexdigest() == ph_sha:
-                return meta["id"], None
-            # token missing/mismatch → fall through for bearer/collaborator auth
+            # No token, wrong token, or a workspace with no token at all:
+            # fall through to the DB and let the real access check decide.
 
     workspace = db.execute(
         select(Workspace).where(_workspace_filter(network))

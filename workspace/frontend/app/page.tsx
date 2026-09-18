@@ -1,6 +1,7 @@
 'use client';
 
 import { desktopHost } from '@/lib/desktop-host';
+import { goToCentralLogout } from '@/lib/auth-redirects';
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -292,7 +293,7 @@ function ResolvingWorkspace({
   onSignOut,
 }: {
   idToken: string;
-  onSignOut: () => void;
+  onSignOut: () => Promise<void>;
 }) {
   const router = useRouter();
   const [error, setError] = useState('');
@@ -338,19 +339,10 @@ function ResolvingWorkspace({
     load();
   }, [load]);
 
-  const handleSignOut = async () => {
-    try {
-      await onSignOut();
-    } catch {
-      /* already signed out */
-    }
-    // Also end the central openagents.org session — otherwise the login
-    // redirect immediately re-authenticates and bounces back here. On localhost
-    // there's no central login, so just fall through to the inline sign-in gate.
-    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && !desktopHost()) {
-      window.location.href = 'https://openagents.org/logout';
-    }
-  };
+  // One logout path for the whole app. This used to be a second, hand-rolled
+  // copy that redirected to openagents.org/logout — a leftover from the
+  // OpenAgents product that threw students off Placement AI entirely.
+  const handleSignOut = () => goToCentralLogout(onSignOut);
 
   if (error) {
     return (

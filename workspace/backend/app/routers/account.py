@@ -36,10 +36,13 @@ from app.firebase_auth import verify_identity_token
 from app.models import (
     ChannelHumanMember,
     DeviceToken,
+    EventRecord,
+    FileRecord,
     User,
     Workspace,
 )
 from app.response import ResponseCode, json_response, success_response
+from app.storage import get_file_store
 from app.stream_ticket import TICKET_TTL_SECONDS
 from app.stream_ticket import mint as mint_stream_ticket
 from app.routers.network import _extract_bearer
@@ -248,23 +251,104 @@ def update_profile(
     return success_response(_profile_row(user))
 
 
+def _purge_workspace_vectors(workspace_id: str) -> None:
+    """Drop this workspace's points from the memory index.
+
+    Best effort, and deliberately so: the student's erasure must not be
+    blocked by the availability of a search index. If it fails the points are
+    already unreachable — every query filters by workspace_id and the
+    workspace no longer exists — but they are still bytes on disk, so the
+    failure is logged loudly enough to clean up by hand.
+    """
+    try:
+        import asyncio
+
+        from app.memory.index import get_memory_index
+
+        index = get_memory_index()
+        if index is None or not hasattr(index, "drop_workspace"):
+            return
+        asyncio.run(index.drop_workspace(workspace_id))
+    except Exception:
+        logger.warning(
+            "account: could not purge memory vectors for workspace %s — "
+            "orphaned points remain in the index",
+            workspace_id, exc_info=True,
+        )
+
+
+def _erase_workspace(db: Session, workspace: Workspace) -> dict:
+    """Destroy one workspace and everything in it. Not recoverable.
+
+    Order matters. File BYTES have to be removed before the rows naming them
+    are gone, and `events` has no foreign key to `workspaces` (only a plain
+    `network_id` column), so it does not cascade and has to be deleted by
+    hand. Everything else — memories, vault facts, episodes, knowledge,
+    tasks, browser contexts, notifications, integrations, model credentials —
+    hangs off `workspace_id` with `ondelete="CASCADE"`, so dropping the
+    workspace row takes all of it.
+    """
+    workspace_id = str(workspace.id)
+
+    store = get_file_store()
+    records = db.execute(
+        select(FileRecord).where(FileRecord.workspace_id == workspace_id)
+    ).scalars().all()
+    files_deleted, file_errors = 0, 0
+    for record in records:
+        try:
+            store.delete(record.storage_key)
+            files_deleted += 1
+        except FileNotFoundError:
+            files_deleted += 1          # already gone is the desired end state
+        except Exception:
+            file_errors += 1
+            logger.warning(
+                "account: could not delete stored file %s", record.storage_key,
+                exc_info=True,
+            )
+
+    _purge_workspace_vectors(workspace_id)
+
+    events_deleted = db.query(EventRecord).filter(
+        EventRecord.network_id == workspace_id
+    ).delete(synchronize_session=False)
+
+    db.delete(workspace)               # CASCADE does the rest
+    return {
+        "workspaceId": workspace_id,
+        "files": files_deleted,
+        "fileErrors": file_errors,
+        "events": events_deleted,
+    }
+
+
 @router.delete("/account")
 def delete_account(
     db: Session = Depends(get_db),
     authorization: Optional[str] = Header(None),
 ):
-    """Delete all data belonging to the calling user.
+    """Permanently erase the calling user's account and everything in it.
 
-    Identifies the user from the verified identity token's email. Placement AI
-    v2.0: the user's own personal workspace (`owner_user_id`) is private to
-    them — unlike the old multi-collaborator model, there is no one else who
-    could be relying on it — so it is soft-deleted (`status = "deleted"`) here
-    rather than left behind as orphaned, inaccessible-but-present data. Also
-    removes every email-keyed row from workspaces the user merely
-    collaborated in (legacy/self-hosted multi-user workspaces, not their own).
-    Idempotent: a second call (or a user with no stored data) succeeds with
-    zero deletions. Does not delete the Supabase auth record or the local
-    `users` row itself — only this app's data.
+    This used to only mark the workspace `status = "deleted"` and remove
+    device tokens. Everything that actually matters survived: the student's
+    memories and episodes, their vault facts (CGPA, test scores), every file
+    they had uploaded — transcripts, passports — their whole chat history, and
+    the index vectors built from all of it. "Delete my account" has to mean
+    the data is gone, not hidden behind a status column.
+
+    So it is now a hard delete, in one transaction: either every row goes or
+    none does. The `users` row goes too, which frees the email and the
+    username. Signing in again with the same Supabase account is a new start —
+    a fresh user, a fresh empty workspace — not a recovery.
+
+    What this does NOT delete, because it does not own them: the Supabase auth
+    record (the identity provider holds that), and `feedback` rows, whose
+    `user_id` is `ondelete="SET NULL"` so the text survives, detached, as
+    product feedback.
+
+    Idempotent: a second call, or one from a user with nothing stored,
+    succeeds with zero deletions.
     """
     bearer = _extract_bearer(authorization)
     if not bearer:
@@ -275,20 +359,21 @@ def delete_account(
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
 
     email_lower = email.strip().lower()
+    erased: list = []
 
-    owned_workspace_deleted = 0
     user = db.execute(select(User).where(User.email == email_lower)).scalar_one_or_none()
     if user is not None:
+        # Every workspace they own, not only the active one: a workspace left
+        # behind by an earlier soft delete holds exactly the same data.
         owned = db.execute(
-            select(Workspace).where(
-                Workspace.owner_user_id == user.id,
-                Workspace.status == "active",
-            )
+            select(Workspace).where(Workspace.owner_user_id == user.id)
         ).scalars().all()
         for ws in owned:
-            ws.status = "deleted"
-            owned_workspace_deleted += 1
+            erased.append(_erase_workspace(db, ws))
 
+    # Email-keyed rows in workspaces the user does not own (legacy/self-hosted
+    # multi-user deployments). Their own workspace's copies are already gone
+    # with the cascade above.
     channel_memberships_deleted = db.query(ChannelHumanMember).filter(
         ChannelHumanMember.user_email == email_lower
     ).delete(synchronize_session=False)
@@ -297,17 +382,25 @@ def delete_account(
         DeviceToken.user_email == email_lower
     ).delete(synchronize_session=False)
 
+    if user is not None:
+        db.flush()                     # let the workspace cascades land first
+        db.delete(user)
+
     db.commit()
 
     logger.info(
-        "account: deleted account for %s (owned_workspace=%s channel_members=%s devices=%s)",
-        email_lower, owned_workspace_deleted, channel_memberships_deleted, devices_deleted,
+        "account: erased %s (workspaces=%s files=%s events=%s channel_members=%s devices=%s)",
+        email_lower, len(erased),
+        sum(e["files"] for e in erased), sum(e["events"] for e in erased),
+        channel_memberships_deleted, devices_deleted,
     )
 
     return success_response({
         "email": email_lower,
         "deleted": {
-            "ownedWorkspace": owned_workspace_deleted,
+            "ownedWorkspace": len(erased),
+            "files": sum(e["files"] for e in erased),
+            "events": sum(e["events"] for e in erased),
             "channel_memberships": channel_memberships_deleted,
             "devices": devices_deleted,
         },

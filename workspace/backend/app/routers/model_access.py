@@ -25,6 +25,8 @@ from app.models import ModelAccess
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
+from app.event_identity import request_actor_source
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Model Access"])
@@ -82,7 +84,9 @@ class CreateModelAccessRequest(BaseModel):
     api_key: str
     label: Optional[str] = None
     base_url: Optional[str] = None
-    created_by: Optional[str] = None
+    # No `created_by`: who added a provider credential is derived from the
+    # caller's own credentials, not claimed in the body. See
+    # app/event_identity.request_actor_source.
 
 
 @router.post("/model-access")
@@ -91,12 +95,21 @@ def create_model_access(
     db: Session = Depends(get_db),
     x_workspace_token: Optional[str] = Header(None),
     authorization: Optional[str] = Header(None),
+    x_internal_actor: Optional[str] = Header(None),
+    x_session_id: Optional[str] = Header(None),
 ):
     from app.services.cloud_providers import PROVIDERS
 
     workspace, err = _get_workspace_or_error(db, body.network, x_workspace_token, authorization)
     if err:
         return err
+
+    actor_source = request_actor_source(
+        db, workspace, x_workspace_token, authorization, x_internal_actor,
+        session_id=x_session_id,
+    )
+    if not actor_source:
+        return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
 
     provider = body.provider.strip()
     # Two credential-only kinds live outside the provider catalog: "custom"
@@ -118,7 +131,7 @@ def create_model_access(
         provider=provider,
         base_url=(body.base_url or "").strip() or None,
         api_key=body.api_key.strip(),
-        created_by=body.created_by,
+        created_by=actor_source,
     )
     db.add(entry)
     db.commit()
