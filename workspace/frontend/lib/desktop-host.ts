@@ -10,6 +10,11 @@ export interface HostSession {
 
 /** Optional desktop capabilities. The web application has no host bridge. */
 export interface DesktopHost {
+  /**
+   * The session this view was opened with, present from the first script.
+   * Optional: an older preload can briefly coexist with a newer bundle in dev.
+   */
+  session?: HostSession | null;
   signIn(): void;
   signOut(): void;
   /**

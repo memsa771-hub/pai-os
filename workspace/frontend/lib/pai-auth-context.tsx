@@ -129,9 +129,27 @@ export function PaiAuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     // In the desktop app the launcher owns the session (native sign-in UI,
-    // main-process token refresh) and pushes it here — this page never signs
+    // main-process token refresh) and hands it over — this page never signs
     // itself in or manages a Supabase session of its own.
-    if (desktopHost()) {
+    //
+    // The session the view was OPENED with comes off the bridge synchronously.
+    // Without this the page had nothing on first load: `onSession` below only
+    // fires on a renewal, and the preload's localStorage copy is under the
+    // host's own key in the host's own shape, which the web app does not read.
+    // So the embedded view came up signed out and rendered its sign-in gate
+    // inside the desktop app, moments after the user had signed in.
+    const host = desktopHost();
+    if (host) {
+      const handoff = host.session;
+      if (handoff) {
+        setUser({
+          email: handoff.email,
+          displayName: handoff.displayName || handoff.email,
+          photoURL: null,
+        });
+        setIdToken(handoff.token);
+        identify(handoff.email, { email: handoff.email, display_name: handoff.displayName || handoff.email });
+      }
       setLoading(false);
       return;
     }

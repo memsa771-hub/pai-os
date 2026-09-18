@@ -76,6 +76,9 @@ const REJECTION_PATTERN = /invalid_grant|Invalid login credentials|invalid_crede
  */
 const BROWSER_UNAVAILABLE = "SIGN_IN_BROWSER_UNAVAILABLE"
 
+/** workspace/backend's success code in its {code, message, data} envelope. */
+const API_SUCCESS = 0
+
 export class AccountManager {
   private _session: AccountSession | null = null
   private _loaded = false
@@ -208,7 +211,12 @@ export class AccountManager {
       message?: string
     } | null
     if (res.status === 429 || json?.code === 429) throw new Error(TOO_MANY_ATTEMPTS)
-    if (!res.ok || json?.code !== 200 || !json.data) {
+    // workspace/backend's envelope is {code, message, data} where SUCCESS is
+    // ZERO, not 200 (app/response.py: ResponseCode.SUCCESS = 0). This checked
+    // for 200 and so rejected every successful sign-in as a bad credential.
+    // The unit test did not catch it because its fetch mock returned code: 200
+    // too — the mock encoded the same wrong assumption as the code.
+    if (!res.ok || json?.code !== API_SUCCESS || !json.data) {
       throw new Error(BAD_CREDENTIALS)
     }
     const session = await supabase.sessionFromTokens(json.data)

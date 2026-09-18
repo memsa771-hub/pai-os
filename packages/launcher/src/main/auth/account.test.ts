@@ -230,7 +230,11 @@ describe("AccountManager.signInWithUsername", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       if (url === `${API_BASE}/v1/auth/sign-in-username`) {
         expect(JSON.parse(String(init?.body))).toEqual({ username: "abby", password: "pw" })
-        return { ok: true, status: 200, json: async () => ({ code: 200, data: {
+        // code 0 is SUCCESS in workspace/backend's envelope — see
+        // app/response.py. This mock used to say 200, which no endpoint ever
+        // returns, so the test passed against a shape the server never sends
+        // while real sign-ins were rejected as bad credentials.
+        return { ok: true, status: 200, json: async () => ({ code: 0, data: {
           access_token: "access-1", refresh_token: "refresh-1", expires_in: 3600, token_type: "bearer",
         } }) }
       }
@@ -339,5 +343,59 @@ describe("AccountManager.signUpWithPassword", () => {
     const manager = new AccountManager({ endpoint: () => undefined, openExternal: vi.fn(), onChange: vi.fn() })
     await expect(manager.signUpWithPassword("not-an-email", "NewAccount1!", "abby")).rejects.toThrow("SIGN_UP_INVALID_EMAIL")
     expect(service.calls).toHaveLength(0)
+  })
+})
+
+/**
+ * The envelope workspace/backend actually sends.
+ *
+ * It answers {code, message, data} where SUCCESS is ZERO (app/response.py:
+ * ResponseCode.SUCCESS = 0). signInWithUsername checked for code === 200 and
+ * so threw "bad credentials" on every SUCCESSFUL response. The case above did
+ * not catch it because its mock returned 200 as well — the mock and the code
+ * shared one wrong assumption, so they agreed with each other and not with the
+ * server. These pin the real shape.
+ */
+describe("AccountManager.signInWithUsername envelope", () => {
+  function managerFor(body: unknown) {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (String(url).includes("/v1/auth/sign-in-username")) {
+        return { ok: true, status: 200, json: async () => body }
+      }
+      return { ok: true, status: 200, json: async () => SUPABASE_SESSION_BODY.user }
+    }))
+    return new AccountManager({
+      endpoint: () => undefined, openExternal: () => {}, onChange: () => {},
+    })
+  }
+
+  const TOKENS = {
+    access_token: "access-1", refresh_token: "refresh-1",
+    expires_in: 3600, token_type: "bearer",
+  }
+
+  it("accepts code 0, which is what SUCCESS is", async () => {
+    const account = await managerFor({ code: 0, message: "ok", data: TOKENS })
+      .signInWithUsername("abby", "pw")
+    expect(account.email).toBe("a@example.com")
+  })
+
+  it("rejects code 200, which no endpoint returns — the old bug cannot return", async () => {
+    await expect(managerFor({ code: 200, data: TOKENS }).signInWithUsername("abby", "pw"))
+      .rejects.toThrow()
+  })
+
+  it("still rejects a genuine failure envelope", async () => {
+    await expect(
+      managerFor({ code: 401, message: "Invalid username or password", data: null })
+        .signInWithUsername("abby", "wrong"),
+    ).rejects.toThrow()
+  })
+
+  it("reports rate limiting as itself, not as a bad password", async () => {
+    await expect(
+      managerFor({ code: 429, message: "Too many attempts.", data: null })
+        .signInWithUsername("abby", "pw"),
+    ).rejects.toThrow(/attempt/i)
   })
 })

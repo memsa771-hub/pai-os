@@ -105,6 +105,19 @@ function subscribe<T>(channel: string, callback: (value: T) => void): () => void
  * only when present; the web app keeps its own behavior.
  */
 contextBridge.exposeInMainWorld("__paiHost__", {
+  /**
+   * The session this view was opened with, available SYNCHRONOUSLY on the
+   * bridge before the page's first script.
+   *
+   * It is also written to localStorage above, but under this host's own key
+   * and in this host's own shape — deliberately, since the refresh token
+   * stays in main and the app's stored-session format requires one. Nothing in
+   * the app reads that key, so before this field existed the embedded view had
+   * no session at all on first load: `onSession` only fires on a RENEWAL, so
+   * the app came up signed out and rendered its sign-in gate INSIDE the
+   * desktop app, moments after the user had signed in.
+   */
+  session: config?.session ?? null,
   signIn: () => ipcRenderer.send("workspace-view:sign-in"),
   signOut: () => ipcRenderer.send("workspace-view:sign-out"),
   /** The account's session changed in main (a renewal). Returns an unsubscribe function. */
