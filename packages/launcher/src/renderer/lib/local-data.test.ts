@@ -29,7 +29,7 @@ describe("resetLocalPreferences", () => {
     }
   })
 
-  it("keeps the language, workspace favourites and onboarding progress", () => {
+  it("removes obsolete language state but keeps user content and onboarding", () => {
     localStorage.setItem("launcher:language", "zh")
     localStorage.setItem("workspace-prefs:v1", '{"favorites":["a"]}')
     localStorage.setItem("onboarding_completed", "true")
@@ -37,7 +37,7 @@ describe("resetLocalPreferences", () => {
 
     resetLocalPreferences()
 
-    expect(localStorage.getItem("launcher:language")).toBe("zh")
+    expect(localStorage.getItem("launcher:language")).toBeNull()
     expect(localStorage.getItem("workspace-prefs:v1")).toBe('{"favorites":["a"]}')
     expect(localStorage.getItem("onboarding_completed")).toBe("true")
     expect(localStorage.getItem("guided_tour_completed")).toBe("true")

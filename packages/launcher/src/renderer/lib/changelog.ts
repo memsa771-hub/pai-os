@@ -15,9 +15,8 @@ import { compareVersions } from "../../shared/version-compare"
 export type ReleaseEntryType = "feature" | "improvement" | "fix"
 
 /** A string in both shipped languages; `localized` picks one. */
-export interface Bilingual {
+export interface LocalizedText {
   en: string
-  zh: string
 }
 
 /**
@@ -27,8 +26,8 @@ export interface Bilingual {
  */
 export interface ReleaseEntry {
   type: ReleaseEntryType
-  title: Bilingual
-  description?: Bilingual
+  title: LocalizedText
+  description?: LocalizedText
 }
 
 export interface Release {
@@ -50,10 +49,10 @@ function isText(v: unknown): v is string {
  * never be able to stop the app from starting. CI is what refuses to ship one
  * (`scripts/check-changelog.mjs`), which is the right place to be strict.
  */
-function bilingual(raw: unknown): Bilingual | null {
+function localizedText(raw: unknown): LocalizedText | null {
   if (!raw || typeof raw !== "object") return null
-  const { en, zh } = raw as Record<string, unknown>
-  return isText(en) && isText(zh) ? { en, zh } : null
+  const { en } = raw as Record<string, unknown>
+  return isText(en) ? { en } : null
 }
 
 function parseRelease(raw: unknown): Release | null {
@@ -65,11 +64,11 @@ function parseRelease(raw: unknown): Release | null {
   const parsed = entries.flatMap((e): ReleaseEntry[] => {
     if (!e || typeof e !== "object") return []
     const { type, title, description } = e as Record<string, unknown>
-    const heading = bilingual(title)
+    const heading = localizedText(title)
     if (!heading) return []
     const kind = ENTRY_TYPES.find((k) => k === type) ?? "improvement"
     return [
-      { type: kind, title: heading, description: bilingual(description) ?? undefined },
+      { type: kind, title: heading, description: localizedText(description) ?? undefined },
     ]
   })
   if (parsed.length === 0) return null
@@ -97,6 +96,6 @@ export function releaseFor(version: string | null): Release | null {
 }
 
 /** Pick the language the user reads; en is the fallback, as in i18next. */
-export function localized(text: Bilingual, language: string): string {
-  return language.toLowerCase().startsWith("zh") ? text.zh : text.en
+export function localized(text: LocalizedText, _language?: string): string {
+  return text.en
 }

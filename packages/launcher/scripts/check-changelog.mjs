@@ -44,16 +44,11 @@ function checkFile(name) {
     if (!TYPES.has(entry?.type)) {
       fail(name, `${at}.type must be one of ${[...TYPES].join(", ")}`)
     }
-    // Both languages are required everywhere: a missing zh silently shows
-    // English to every Chinese user, which is the failure nobody notices.
-    for (const lang of ["en", "zh"]) {
-      if (!isText(entry?.title?.[lang])) {
-        fail(name, `${at}.title.${lang} is missing or empty`)
-      }
-      // description is optional, but half a translation is not.
-      if (entry?.description && !isText(entry.description[lang])) {
-        fail(name, `${at}.description.${lang} is missing or empty`)
-      }
+    if (!isText(entry?.title?.en)) {
+      fail(name, `${at}.title.en is missing or empty`)
+    }
+    if (entry?.description && !isText(entry.description.en)) {
+      fail(name, `${at}.description.en is missing or empty`)
     }
   })
 }

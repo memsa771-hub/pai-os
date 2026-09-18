@@ -19,19 +19,13 @@ import { useSettingsState } from "./use-settings-state"
 import { useSystemInfo } from "./use-system-info"
 import { GeneralSection } from "./sections/general-section"
 import { AppearanceSection } from "./sections/appearance-section"
-import { NotificationsSection } from "./sections/notifications-section"
-import { NetworkSection } from "./sections/network-section"
-import { DataSection } from "./sections/data-section"
-import { LanguageSection } from "./sections/language-section"
-import { UpdatesSection } from "./sections/updates-section"
+import { PrivacySection } from "./sections/privacy-section"
 import { AboutSection } from "./sections/about-section"
 
 // Which lines each confirmation spells out; the copy lives under the matching
 // `settings.*Dialog.affected/kept` i18n prefix.
-const SETTINGS_RESET_AFFECTED = ["startup", "network", "updates"]
-const SETTINGS_RESET_KEPT = ["prefs"]
 const LOCAL_RESET_AFFECTED = ["appearance", "layout", "history"]
-const LOCAL_RESET_KEPT = ["settings", "language"]
+const LOCAL_RESET_KEPT = ["settings"]
 
 interface SettingsProps {
   showToast: (msg: string, type?: ToastType) => void
@@ -42,12 +36,8 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
   const {
     values,
     update,
-    setLocal,
-    persist,
-    paths,
     runtimeInfo,
     launcherVersion,
-    loadSettings,
   } = useSettingsState()
   // null is the overview grid; a section id is that module's own controls.
   const [section, setSection] = useState<SectionId | null>(null)
@@ -86,30 +76,21 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
     check: checkUpdate,
     download: downloadUpdate,
     install: installUpdate,
-  } = useLauncherUpdater(section === "updates", showToast)
+  } = useLauncherUpdater(section === "about", showToast)
   const {
-    exportSettings,
-    importSettings,
-    resetOpen,
-    openReset,
-    closeReset,
-    resetting,
-    performReset,
     clearingCache,
     clearCache,
     localResetOpen,
     openLocalReset,
     closeLocalReset,
     performLocalReset,
-  } = useSettingsIO(loadSettings, showToast)
+  } = useSettingsIO(showToast)
 
   // About reads the host snapshot; polling stays scoped to it.
   const systemInfo = useSystemInfo(section === "about")
 
   const summaries = useSectionSummaries({
     values,
-    paths,
-    runtimeInfo,
     launcherVersion,
   })
 
@@ -132,7 +113,7 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
           search={search}
           onSearchChange={setSearch}
           onSelect={setSection}
-          onReset={openReset}
+          onReset={openLocalReset}
         />
       ) : (
         <>
@@ -145,43 +126,24 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
               <GeneralSection values={values} update={update} />
             )}
             {section === "appearance" && <AppearanceSection />}
-            {section === "notifications" && <NotificationsSection />}
-            {section === "network" && (
-              <NetworkSection
-                values={values}
-                update={update}
-                setLocal={setLocal}
-                persist={persist}
-              />
-            )}
-            {section === "data" && (
-              <DataSection
-                paths={paths}
-                exportSettings={exportSettings}
-                importSettings={importSettings}
-                openReset={openReset}
+            {section === "privacy" && (
+              <PrivacySection
                 clearingCache={clearingCache}
                 clearCache={clearCache}
                 openLocalReset={openLocalReset}
               />
             )}
-            {section === "language" && <LanguageSection />}
-            {section === "updates" && (
-              <UpdatesSection
+            {section === "about" && (
+              <AboutSection
                 values={values}
                 update={update}
                 launcherVersion={launcherVersion}
+                runtimeInfo={runtimeInfo}
+                systemInfo={systemInfo}
                 updater={updater}
                 checkUpdate={checkUpdate}
                 downloadUpdate={downloadUpdate}
                 installUpdate={installUpdate}
-              />
-            )}
-            {section === "about" && (
-              <AboutSection
-                launcherVersion={launcherVersion}
-                runtimeInfo={runtimeInfo}
-                systemInfo={systemInfo}
               />
             )}
 
@@ -192,23 +154,6 @@ export default function Settings({ showToast }: SettingsProps): React.JSX.Elemen
           </div>
         </>
       )}
-
-      <ConfirmDialog
-        open={resetOpen}
-        title={t("settings.resetDialog.title")}
-        description={t("settings.resetDialog.description")}
-        confirmLabel={t("settings.resetDialog.confirm")}
-        destructive
-        busy={resetting}
-        onCancel={closeReset}
-        onConfirm={performReset}
-      >
-        <ResetSummary
-          prefix="settings.resetDialog"
-          affected={SETTINGS_RESET_AFFECTED}
-          kept={SETTINGS_RESET_KEPT}
-        />
-      </ConfirmDialog>
 
       <ConfirmDialog
         open={localResetOpen}

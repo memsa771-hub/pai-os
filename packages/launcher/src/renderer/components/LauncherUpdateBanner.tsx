@@ -41,7 +41,7 @@ export function LauncherUpdateBanner({
   // would otherwise survive the click that was supposed to answer it. Leaving
   // the page brings it back, download still running or not: it is not
   // dismissed, just deferring to the page that outranks it.
-  const onUpdatesPage = useUiStore((s) => s.visibleSettingsSection === "updates")
+  const onUpdatesPage = useUiStore((s) => s.visibleSettingsSection === "about")
 
   const status = state?.status
   const version = state?.latestVersion ?? ""
@@ -55,7 +55,7 @@ export function LauncherUpdateBanner({
   if (!state || !isLive || !key || dismissed === key) return null
 
   const goToUpdates = (): void => {
-    openSettingsSection("updates")
+    openSettingsSection("about")
   }
 
   // The in-app installer already failed twice for this version (a non-ASCII

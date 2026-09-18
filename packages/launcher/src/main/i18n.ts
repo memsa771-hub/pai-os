@@ -1,91 +1,31 @@
-// ── Main-process strings ──
-//
-// The renderer's i18next bundle lives behind localStorage and Vite's glob
-// import, neither of which main can reach. Main only needs a handful of strings
-// (OS notifications, tray menu), so this is a deliberately tiny lookup rather
-// than a second i18next instance.
-//
-// Language resolution: the renderer pushes its active UI language here whenever
-// it changes (and once on startup) so an OS toast matches the language the user
-// picked in Settings. Before that arrives — e.g. a notification fired during
-// early startup — we fall back to the OS locale.
-import { app } from "electron"
+export type MainLanguage = "en"
 
-export type MainLanguage = "en" | "zh"
-
-const STRINGS: Record<MainLanguage, Record<string, string>> = {
-  en: {
-    // The desktop app is plain "OpenAgents" — never "Launcher" / "启动器".
-    appName: "OpenAgents",
-    updateReadyTitle: "Update ready",
-    updateReadyBody:
-      "OpenAgents v{{version}} is downloaded. Click “Restart & install” to apply it.",
-    updateAvailableTitle: "Update available",
-    updateAvailableBody:
-      "OpenAgents v{{version}} is available. Open Settings → Updates to download it.",
-    trayRestartToUpdate: "Restart to update (v{{version}})",
-    startupFailedTitle: "OpenAgents could not start",
-    startupFailedBody:
-      "{{message}}\n\nThe full log is at:\n{{log}}\n\nPlease send it to support if this keeps happening.",
-    trayTooltip: "OpenAgents",
-    trayOpenDashboard: "Open Dashboard",
-    trayNoAgents: "No agents configured",
-    trayQuit: "Quit OpenAgents",
-    quitTitle: "Quit OpenAgents",
-    quitMessage: "Quit OpenAgents?",
-    quitDetail: "The daemon will stop and all connected agents will go offline.",
-    quitConfirm: "Quit",
-    cancel: "Cancel",
-  },
-  zh: {
-    appName: "OpenAgents",
-    updateReadyTitle: "更新已就绪",
-    updateReadyBody:
-      "OpenAgents v{{version}} 已下载完成，点击「重启并安装」立即更新。",
-    updateAvailableTitle: "发现新版本",
-    updateAvailableBody:
-      "OpenAgents v{{version}} 可用，前往「设置 → 更新」下载。",
-    trayRestartToUpdate: "重启并更新（v{{version}}）",
-    startupFailedTitle: "OpenAgents无法启动",
-    startupFailedBody:
-      "{{message}}\n\n完整日志：\n{{log}}\n\n如果反复出现，请把日志发给我们。",
-    trayTooltip: "OpenAgents",
-    trayOpenDashboard: "打开主面板",
-    trayNoAgents: "尚未配置智能体",
-    trayQuit: "退出 OpenAgents",
-    quitTitle: "退出 OpenAgents",
-    quitMessage: "确定退出 OpenAgents？",
-    quitDetail: "守护进程会停止，所有已连接的智能体将离线。",
-    quitConfirm: "退出",
-    cancel: "取消",
-  },
+const STRINGS: Record<string, string> = {
+  appName: "Placement AI",
+  updateReadyTitle: "Update ready",
+  updateReadyBody: "Placement AI v{{version}} is downloaded. Click ‘Restart & install’ to apply it.",
+  updateAvailableTitle: "Update available",
+  updateAvailableBody: "Placement AI v{{version}} is available. Open Settings → About & Updates to download it.",
+  trayRestartToUpdate: "Restart to update (v{{version}})",
+  startupFailedTitle: "Placement AI could not start",
+  startupFailedBody: "{{message}}\n\nThe full log is at:\n{{log}}\n\nPlease send it to support if this keeps happening.",
+  trayTooltip: "Placement AI",
+  trayOpenDashboard: "Open Placement AI",
+  trayNoAgents: "No agents configured",
+  trayQuit: "Quit Placement AI",
+  quitTitle: "Quit Placement AI",
+  quitMessage: "Quit Placement AI?",
+  quitDetail: "The background service will stop and all connected agents will go offline.",
+  quitConfirm: "Quit",
+  cancel: "Cancel",
 }
 
-let _language: MainLanguage | null = null
+export function setMainLanguage(_language: unknown): void {}
+export function getMainLanguage(): MainLanguage { return "en" }
 
-function detectFromLocale(): MainLanguage {
-  try {
-    const locale = (app?.getLocale?.() || "").toLowerCase()
-    if (locale.startsWith("zh")) return "zh"
-  } catch {}
-  return "en"
-}
-
-/** Accepts any i18next code ("zh", "zh-CN", "en-US") and narrows it. */
-export function setMainLanguage(lng: unknown): void {
-  if (typeof lng !== "string" || !lng) return
-  _language = lng.toLowerCase().startsWith("zh") ? "zh" : "en"
-}
-
-export function getMainLanguage(): MainLanguage {
-  return _language ?? detectFromLocale()
-}
-
-/** Look up `key`, substituting {{name}} placeholders from `vars`. */
 export function t(key: string, vars: Record<string, string | number> = {}): string {
-  const lang = getMainLanguage()
-  const template = STRINGS[lang][key] ?? STRINGS.en[key] ?? key
-  return template.replace(/\{\{(\w+)\}\}/g, (_m, name: string) =>
+  const template = STRINGS[key] ?? key
+  return template.replace(/\{\{(\w+)\}\}/g, (_match, name: string) =>
     name in vars ? String(vars[name]) : `{{${name}}}`,
   )
 }

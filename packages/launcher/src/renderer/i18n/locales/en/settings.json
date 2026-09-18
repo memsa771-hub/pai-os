@@ -1,19 +1,13 @@
 {
   "title": "Settings overview",
-  "subtitle": "Manage $t(common.appName) preferences, connections and system configuration",
+  "subtitle": "Manage Placement AI desktop preferences, privacy and updates",
   "searchPlaceholder": "Search settings",
   "noSectionMatch": "No matching settings",
   "sections": {
     "general": "General",
     "appearance": "Appearance",
-    "agents": "Agents",
-    "notifications": "Notifications",
-    "network": "Network",
-    "data": "Data",
-    "language": "Language",
-    "updates": "Updates",
-    "runtime": "Runtime",
-    "about": "About"
+    "privacy": "Privacy & Storage",
+    "about": "About & Updates"
   },
   "overview": {
     "hint": "Pick a module to see its details",
@@ -26,9 +20,7 @@
   },
   "groups": {
     "preferences": "App preferences",
-    "assistants": "Agents & notifications",
-    "connectivity": "Connectivity & data",
-    "system": "System"
+    "system": "Privacy, support & updates"
   },
   "summary": {
     "startupPage": "Opens {{page}} at launch",
@@ -53,63 +45,27 @@
   "pages": {
     "general": {
       "title": "General",
-      "desc": "Basic application behaviour and startup preferences",
-      "keywords": "startup launch tray gpu performance",
-      "short": "Behaviour and startup"
+      "desc": "Startup and desktop behaviour",
+      "keywords": "startup launch tray",
+      "short": "Startup and tray behaviour"
     },
     "appearance": {
       "title": "Appearance",
-      "desc": "Customise how the interface looks",
-      "keywords": "theme dark light colour accent font scale zoom",
-      "short": "Theme, accent and text size"
+      "desc": "Theme, text size and accessibility",
+      "keywords": "theme dark light text scale motion contrast",
+      "short": "Theme, text size and accessibility"
     },
-    "agents": {
-      "title": "Agents",
-      "desc": "Defaults and run policy shared by every agent",
-      "keywords": "agent autostart credentials keys",
-      "short": "Agent defaults and credentials"
-    },
-    "notifications": {
-      "title": "Notifications",
-      "desc": "Choose how and when you get notified",
-      "keywords": "notification sound quiet hours events",
-      "short": "Delivery and alert rules"
-    },
-    "network": {
-      "title": "Network",
-      "desc": "Connectivity, mirrors and proxy settings",
-      "keywords": "network proxy mirror download workspace endpoint",
-      "short": "Mirrors, workspace and proxy"
-    },
-    "data": {
-      "title": "Data",
-      "desc": "Storage locations, backup and import / export",
-      "keywords": "data directory path backup import export reset",
-      "short": "Storage locations and backup"
-    },
-    "language": {
-      "title": "Language",
-      "desc": "Display language and regional formats",
-      "keywords": "language english chinese timezone date",
-      "short": "Interface language and formats"
-    },
-    "updates": {
-      "title": "Updates",
-      "desc": "App updates and version information",
-      "keywords": "update upgrade version release",
-      "short": "Updates and version"
-    },
-    "runtime": {
-      "title": "Runtime",
-      "desc": "Runtime environment and system health",
-      "keywords": "runtime node npm core system memory cpu diagnostics logs",
-      "short": "Environment and system health"
+    "privacy": {
+      "title": "Privacy & Storage",
+      "desc": "Privacy information and local app data",
+      "keywords": "privacy policy cache local data reset storage",
+      "short": "Privacy policy and local app data"
     },
     "about": {
-      "title": "About",
-      "desc": "About $t(common.appName) and where to get help",
-      "keywords": "about version docs github license",
-      "short": "Version and resources"
+      "title": "About & Updates",
+      "desc": "Version, updates and support resources",
+      "keywords": "about update version release support github license",
+      "short": "Version, updates and support"
     }
   },
   "toasts": {
@@ -133,16 +89,12 @@
     "description": "Every preference below goes back to its default. This cannot be undone.",
     "affectedTitle": "Back to defaults",
     "affected": {
-      "startup": "Startup, tray and GPU acceleration",
-      "agents": "Agent auto-start policy",
-      "network": "Proxy, workspace endpoint and download source",
+      "startup": "Startup and tray preferences",
       "updates": "Update preferences"
     },
     "keptTitle": "Left alone",
     "kept": {
-      "agents": "Installed agents and their configuration",
-      "workspaces": "Workspace and chat data",
-      "prefs": "Appearance, language and saved credentials"
+      "prefs": "Appearance, sign-in and workspace data"
     },
     "confirm": "Reset"
   },
@@ -394,7 +346,7 @@
     "description": "The window repaints immediately. Nothing installed or configured is touched.",
     "affectedTitle": "Back to defaults",
     "affected": {
-      "appearance": "Theme, accent colour, skin, text size",
+      "appearance": "Theme, text size and accessibility",
       "layout": "Sidebar state and the tab the app opens on",
       "history": "Command palette history and dismissed update notices",
       "marketplace": "Agent Marketplace view, sort and filters"
@@ -402,9 +354,20 @@
     "keptTitle": "Left alone",
     "kept": {
       "settings": "Everything in the other settings modules",
-      "language": "Interface language",
       "workspaces": "Agents, workspaces and starred items"
     },
     "confirm": "Reset"
+  },
+  "privacy": {
+    "policyGroup": "Privacy",
+    "policy": "Privacy policy",
+    "policyDesc": "Learn how Placement AI handles account and product data.",
+    "viewPolicy": "View policy",
+    "localGroup": "Local app data",
+    "localGroupDesc": "Cached files and interface preferences stored on this computer. Your account and workspace are not deleted.",
+    "clearCache": "Clear cache",
+    "clearCacheDesc": "Remove cached pages, icons and images. They are downloaded again when needed.",
+    "resetLocal": "Reset interface preferences",
+    "resetLocalDesc": "Reset theme, text size, sidebar state and dismissed notices."
   }
 }

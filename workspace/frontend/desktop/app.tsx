@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import { ThemeProvider, useTheme } from 'next-themes';
 
 import { Toaster } from '@/components/ui/sonner';
@@ -181,16 +181,28 @@ function HostNotices(): null {
 function AppearanceSync(): null {
   const host = useHostAppearance();
   const { theme, setTheme } = useTheme();
+  // Both effects run in the same commit. Remember a host-originated update so
+  // the workspace's still-stale value is not immediately sent back, creating
+  // an endless light/dark ping-pong that looks like a blinking window.
+  const applyingHostTheme = useRef<string | null>(null);
 
   // Host → app.
   useEffect(() => {
     if (!host) return;
-    if (host.theme && host.theme !== theme) setTheme(host.theme);
+    if (host.theme && host.theme !== theme) {
+      applyingHostTheme.current = host.theme;
+      setTheme(host.theme);
+    }
   }, [host, theme, setTheme]);
 
   // App → host. `theme` is undefined until next-themes has read storage.
   useEffect(() => {
-    if (!host || !theme || theme === host.theme) return;
+    if (!host || !theme) return;
+    if (applyingHostTheme.current) {
+      if (theme === applyingHostTheme.current) applyingHostTheme.current = null;
+      return;
+    }
+    if (theme === host.theme) return;
     reportTheme(theme);
   }, [host, theme]);
 

@@ -32,17 +32,17 @@ const origin = `http://localhost:${server.address().port}`;
 let browser;
 try {
   browser = await chromium.launch({ headless:true });
-  for (const locale of ['en','zh']) {
-    fixture = previewFixture(locale);
-    for (const theme of ['light','dark']) {
-      const context = await browser.newContext({viewport:{width:1120,height:780}, deviceScaleFactor:2, colorScheme:theme, locale:locale==='zh'?'zh-CN':'en-US'});
+  for (const theme of ['light','dark']) {
+      const locale = 'en';
+      fixture = previewFixture(locale);
+      const context = await browser.newContext({viewport:{width:1120,height:780}, deviceScaleFactor:2, colorScheme:theme, locale:'en-US'});
       // Block every external request, including analytics. All content is synthetic.
       await context.route('**/*', route=>new URL(route.request().url()).origin === origin ? route.continue() : route.abort());
       await context.addInitScript(({theme,locale})=>{
         window.__OA_API_URL__ = location.origin;
         localStorage.setItem('theme',theme);
-        localStorage.setItem('oa_locale',locale === 'zh'?'zh-CN':'en-US');
-        document.cookie = `oa_locale=${locale === 'zh'?'zh-CN':'en-US'};path=/`;
+        localStorage.setItem('oa_locale','en-US');
+        document.cookie = 'oa_locale=en-US;path=/';
         localStorage.setItem('oa_workspace_session',JSON.stringify({token:'preview-only',email:'alex@example.invalid',displayName:'Alex',expiresAt:Math.floor(Date.now()/1000)+3600}));
       },{theme,locale});
       const page = await context.newPage();
@@ -56,7 +56,6 @@ try {
       await page.screenshot({path:path.join(output,`workspace-${locale}-${theme}.png`),animations:'disabled'});
       console.log(`Rendered ${locale} ${theme} preview from shared Workspace components.`);
       await context.close();
-    }
   }
 } finally {
   await browser?.close();

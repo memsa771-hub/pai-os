@@ -6,19 +6,15 @@ import { useAccountStore } from "@renderer/store/account"
 import { useThemeStore } from "@renderer/store/theme"
 import previewEnLight from "./assets/workspace-en-light.png"
 import previewEnDark from "./assets/workspace-en-dark.png"
-import previewZhLight from "./assets/workspace-zh-light.png"
-import previewZhDark from "./assets/workspace-zh-dark.png"
 
 /**
  * The signed-out Workspace. Sign in to work in a workspace; local tools stay a
  * click away in This Computer.
  */
 export default function WelcomePage(): React.JSX.Element {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const theme = useThemeStore((s) => s.resolved)
-  const preview = i18n.language.startsWith("zh")
-    ? theme === "dark" ? previewZhDark : previewZhLight
-    : theme === "dark" ? previewEnDark : previewEnLight
+  const preview = theme === "dark" ? previewEnDark : previewEnLight
   const openSignIn = useAccountStore((s) => s.openSignIn)
   const openSignUp = useAccountStore((s) => s.openSignUp)
   const signingIn = useAccountStore((s) => s.signingIn)

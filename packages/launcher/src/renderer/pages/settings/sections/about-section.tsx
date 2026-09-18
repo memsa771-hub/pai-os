@@ -11,8 +11,12 @@ import { SettingsCard,
   InfoRow,
 } from "../components/settings-card"
 import type { RuntimeInfo, SystemInfo } from "@renderer/types"
+import type { UpdaterState } from "@renderer/types"
+import type { SettingsValues, Update } from "../use-settings-state"
+import { UpdatesSection } from "./updates-section"
+import { PRODUCT_LINKS } from "../../../../shared/product-links"
 
-const REPO = "https://github.com/memsa771-hub/pai-os"
+const REPO = PRODUCT_LINKS.repository
 
 const LINKS = [
   { id: "repo", url: REPO },
@@ -21,20 +25,42 @@ const LINKS = [
 ] as const
 
 interface Props {
+  values: SettingsValues
+  update: Update
   launcherVersion: string
   runtimeInfo: RuntimeInfo | null
   systemInfo: SystemInfo | null
+  updater: UpdaterState | null
+  checkUpdate: () => void | Promise<void>
+  downloadUpdate: () => void | Promise<void>
+  installUpdate: () => void | Promise<void>
 }
 
 export function AboutSection({
+  values,
+  update,
   launcherVersion,
   runtimeInfo,
   systemInfo,
+  updater,
+  checkUpdate,
+  downloadUpdate,
+  installUpdate,
 }: Props): React.JSX.Element {
   const { t } = useTranslation()
 
   return (
     <>
+      <UpdatesSection
+        values={values}
+        update={update}
+        launcherVersion={launcherVersion}
+        updater={updater}
+        checkUpdate={checkUpdate}
+        downloadUpdate={downloadUpdate}
+        installUpdate={installUpdate}
+      />
+
       <Card className="mb-5 flex-row items-center gap-5 px-6 py-6">
         <BrandMark className="size-14" />
         <div className="min-w-0">

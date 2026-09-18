@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest"
 
-import { SUPPORTED_LANGUAGES, resources } from "./index"
+import { resources } from "./index"
 
 /**
  * i18next nesting (`$t(other.key)`) fails silently: a mistyped reference does
@@ -35,7 +35,7 @@ function lookup(bundle: unknown, key: string): unknown {
 }
 
 describe("i18n nesting", () => {
-  for (const { value: lng } of SUPPORTED_LANGUAGES) {
+  for (const lng of Object.keys(resources) as Array<keyof typeof resources>) {
     it(`points every $t() reference at a real string in ${lng}`, () => {
       const bundle = resources[lng].translation
       const broken: string[] = []

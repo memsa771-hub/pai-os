@@ -11,7 +11,6 @@
  *
  * This module is the one place that knows how to throw it away.
  */
-import { STORAGE_KEY as LANGUAGE_KEY } from "@renderer/i18n"
 import { useAppearanceStore } from "@renderer/store/appearance"
 import { useThemeStore } from "@renderer/store/theme"
 
@@ -36,13 +35,11 @@ const OWNED_PREFIXES = [
  * - the onboarding/tour completion flags, since re-running the wizard is a
  *   different request than repainting the app.
  */
-const KEEP = new Set<string>([LANGUAGE_KEY])
-
 function ownedKeys(): string[] {
   const keys: string[] = []
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i)
-    if (!key || KEEP.has(key)) continue
+    if (!key) continue
     if (OWNED_PREFIXES.some((p) => key.startsWith(p))) keys.push(key)
   }
   return keys
