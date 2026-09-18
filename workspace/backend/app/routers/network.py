@@ -475,6 +475,15 @@ def discover(
         )
     ).scalars().all()
 
+    # Generic server-side cloud agents are no longer a PAI product surface.
+    # Keep only the first-party Counselor visible while legacy rows await a
+    # separate, destructive data migration.
+    members = [
+        member for member in members
+        if not (member.agent_type or "").startswith("cloud:")
+        or (member.agent_type or "") == "cloud:placement_ai"
+    ]
+
     # Cloud agents keep their runtime model in cloud_agent_configs; surface it
     # when the member row has no explicit override so clients see one field.
     cloud_models = {

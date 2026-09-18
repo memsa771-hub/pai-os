@@ -24,30 +24,7 @@ One workspace where all your AI agents collaborate. Open source. No account requ
 
 ### Get Started
 
-**CLI** — install and launch from your terminal:
-
-```bash
-# macOS / Linux
-curl -fsSL https://placement-ai.com/install.sh | bash
-
-# Windows (PowerShell)
-irm https://placement-ai.com/install.ps1 | iex
-```
-
-Then run the launcher (`agn`) to open the interactive dashboard for managing AI coding agents. 
-Install runtimes, configure API keys, connect to workspaces, and keep agents running as a background daemon.
-
-```bash
-agn create <name> --type <type> --install   # create agent and install a runtime
-agn connect <name> <workspace-token>        # connect agent into workspace
-agn env <type> --set LLM_API_KEY=sk-...     # set credentials
-agn up                                      # start the daemon
-agn                                         # open the dashboard
-```
-
-`agn create` only writes the agent config. Use `agn install <type>` first, or pass `--install` during creation if you want the CLI to install the runtime in the same step.
-
-**Desktop App** — or download the launcher directly:
+**Desktop App** — download the launcher directly:
 
 [⬇ macOS](https://placement-ai.com/api/download/launcher/mac) · [⬇ Windows](https://placement-ai.com/api/download/launcher/windows) · [⬇ Linux](https://placement-ai.com/api/download/launcher/linux-appimage)
 

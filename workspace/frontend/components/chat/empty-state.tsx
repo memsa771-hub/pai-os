@@ -1,11 +1,10 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Rocket, Copy, Check, ChevronRight, Key, Cloud, ExternalLink, Loader2, ArrowLeft } from 'lucide-react';
+import { Rocket, Copy, Check, ChevronRight, Key, ExternalLink, Loader2, ArrowLeft } from 'lucide-react';
 import { useWorkspace } from '@/lib/workspace-context';
 import { capture } from '@/lib/analytics';
 import { useLayout } from '@/components/layout/layout-context';
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { workspaceApi } from '@/lib/api';
 import { AgentIcon } from '@/components/icons/agent-icons';
 import { useT } from '@/lib/i18n';
@@ -15,7 +14,6 @@ import type { AgentCatalogEntry } from '@/lib/types';
 export function EmptyState() {
   const { agents, token } = useWorkspace();
   const { setViewMode } = useLayout();
-  const { isCopied, copyToClipboard } = useCopyToClipboard();
   const t = useT();
   const hasOnlineAgent = agents.some((a) => a.status === 'online');
 
@@ -166,11 +164,10 @@ export function EmptyState() {
             </div>
 
             <div className="p-5 space-y-5">
-              {/* Option A: Desktop App */}
+              {/* Desktop App */}
               <div>
                 <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-semibold">{t('onboarding.optionA')}</span>
-                  <span className="text-xs text-muted-foreground">{t('onboarding.optionADesktop')}</span>
+                  <span className="text-xs font-semibold">{t('onboarding.optionADesktop')}</span>
                 </div>
                 <p className="text-[11px] text-muted-foreground mb-2.5">
                   {t('onboarding.optionADescription')}
@@ -196,64 +193,6 @@ export function EmptyState() {
                       {dl.label}
                     </a>
                   ))}
-                </div>
-              </div>
-
-              <div className="flex items-center gap-3">
-                <div className="flex-1 border-t" />
-                <span className="text-[10px] text-muted-foreground">{t('onboarding.or')}</span>
-                <div className="flex-1 border-t" />
-              </div>
-
-              {/* Option B: CLI */}
-              <div>
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xs font-semibold">{t('onboarding.optionB')}</span>
-                  <span className="text-xs text-muted-foreground">{t('onboarding.optionBCli')}</span>
-                </div>
-                <div className="space-y-3">
-                  <CliStep
-                    step="1"
-                    label={t('onboarding.stepInstallCli')}
-                    command="curl -fsSL https://placement-ai.com/install.sh | bash"
-                    isCopied={isCopied}
-                    onCopy={(cmd) => {
-                      capture('cli_install_copied', {
-                        source: 'workspace_onboarding',
-                        agent_type: selectedEntry.name,
-                        os: 'unix',
-                      });
-                      copyToClipboard(cmd);
-                    }}
-                  />
-                  <CliStep
-                    label={t('onboarding.stepInstallCliWindows')}
-                    command="irm https://placement-ai.com/install.ps1 | iex"
-                    isCopied={isCopied}
-                    onCopy={(cmd) => {
-                      capture('cli_install_copied', {
-                        source: 'workspace_onboarding',
-                        agent_type: selectedEntry.name,
-                        os: 'windows',
-                      });
-                      copyToClipboard(cmd);
-                    }}
-                  />
-                  <CliStep
-                    step="2"
-                    label={t('onboarding.stepInstallRuntime', { agent: selectedEntry.label })}
-                    command={`agn install ${selectedEntry.name}`}
-                    isCopied={isCopied}
-                    onCopy={copyToClipboard}
-                  />
-                  <CliStep
-                    step="3"
-                    label={t('onboarding.stepConnect')}
-                    command={`agn connect my-${selectedEntry.name} ${token.slice(0, 8)}...`}
-                    copyCommand={`agn connect my-${selectedEntry.name} ${token}`}
-                    isCopied={isCopied}
-                    onCopy={copyToClipboard}
-                  />
                 </div>
               </div>
 
@@ -287,59 +226,6 @@ export function EmptyState() {
           </div>
         )}
 
-        {/* Cloud agents fallback */}
-        {!selectedEntry && (
-        <div className="text-center space-y-2 pt-2">
-          <div className="flex items-center gap-3 justify-center">
-            <div className="w-16 border-t" />
-            <span className="text-[11px] text-muted-foreground">{t('onboarding.or')}</span>
-            <div className="w-16 border-t" />
-          </div>
-          <button
-            onClick={() => setViewMode('connect')}
-            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border hover:bg-accent transition-colors text-sm group"
-          >
-            <Cloud className="size-4 text-muted-foreground" />
-            <span className="font-medium">{t('onboarding.tryCloudAgents')}</span>
-            <span className="text-xs text-muted-foreground">{t('onboarding.tryCloudAgentsHint')}</span>
-            <ChevronRight className="size-3.5 text-muted-foreground group-hover:translate-x-0.5 transition-transform" />
-          </button>
-        </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function CliStep({
-  step,
-  label,
-  command,
-  copyCommand,
-  isCopied,
-  onCopy,
-}: {
-  step?: string;
-  label: string;
-  command: string;
-  copyCommand?: string;
-  isCopied: boolean;
-  onCopy: (text: string) => void;
-}) {
-  return (
-    <div>
-      <span className="text-[11px] text-muted-foreground">{step ? `${step}. ` : ''}{label}</span>
-      <div className="relative group mt-1">
-        <pre className="bg-zinc-900 text-zinc-100 rounded-lg px-3.5 py-2.5 text-xs font-mono leading-relaxed overflow-x-auto">
-          <span className="text-zinc-500">$ </span>
-          <span className="text-emerald-400">{command}</span>
-        </pre>
-        <button
-          className="absolute top-1.5 right-1.5 size-6 flex items-center justify-center rounded bg-zinc-700/80 hover:bg-zinc-600 text-zinc-300 hover:text-white opacity-100 lg:opacity-0 lg:group-hover:opacity-100 transition-opacity"
-          onClick={() => onCopy(copyCommand || command)}
-        >
-          {isCopied ? <Check className="size-3" /> : <Copy className="size-3" />}
-        </button>
       </div>
     </div>
   );

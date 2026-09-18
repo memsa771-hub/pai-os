@@ -19,7 +19,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import config
 from app.identity_errors import IdentityUnavailable
 from app.response import ResponseCode, json_response
-from app.routers import account, app_version, auth, browser, cloud_agents, devices, events, feedback, fetch, files, integrations, knowledge, model_access, network, notifications, operator, routines, search, shares, tasks, timers, todos, workflows, workspaces
+from app.routers import account, app_version, auth, browser, devices, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, tasks, timers, todos, workflows, workspaces
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -499,9 +499,9 @@ def _redacted_validation_errors(exc: RequestValidationError) -> list[dict]:
 
     Pydantic attaches the offending value to each error as `input` — and for a
     missing-field error at the body root, `input` is the ENTIRE request body.
-    `POST /v1/auth/sign-in-username` carries a password, `POST /v1/model-access`
-    carries a provider API key, so a single malformed request used to put either
-    straight into the logs. `ctx` can quote values too.
+    `POST /v1/auth/sign-in-username` carries a password, so a single malformed
+    request used to put that secret straight into the logs. `ctx` can quote
+    values too.
 
     Keep the location and the failure type, which is all a developer needs to
     fix a client, and drop the payload.
@@ -554,7 +554,6 @@ app.include_router(account.router)
 app.include_router(app_version.router)
 app.include_router(auth.router)
 app.include_router(browser.router)
-app.include_router(cloud_agents.router)
 app.include_router(devices.router)
 app.include_router(events.router)
 app.include_router(feedback.router)
@@ -562,7 +561,6 @@ app.include_router(fetch.router)
 app.include_router(files.router)
 app.include_router(integrations.router)
 app.include_router(knowledge.router)
-app.include_router(model_access.router)
 app.include_router(network.router)
 app.include_router(notifications.router)
 app.include_router(operator.router)

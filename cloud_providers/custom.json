@@ -1,7 +1,0 @@
-{
-  "name": "custom",
-  "label": "Custom Endpoint",
-  "base_url": null,
-  "order": 220,
-  "models": []
-}

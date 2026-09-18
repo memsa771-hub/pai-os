@@ -14,8 +14,6 @@ import type {
   WorkflowStep,
   KnowledgeEntry,
   MessagePollResponse,
-  ModelAccessEntry,
-  ModelProbeResult,
   NetworkDiscovery,
   NetworkProfile,
   NotificationItem,
@@ -1066,60 +1064,6 @@ class WorkspaceApi {
     return this.request<AgentCatalogDetail>(`/v1/agent-catalog/${encodeURIComponent(agentType)}`);
   }
 
-  /**
-   * Interactive credential check for the add-agent form. Without `model`,
-   * lists the models the key can use; with `model`, runs a live one-shot
-   * completion so the form can show "verified" before the agent is added.
-   */
-  async modelProbe(params: { provider: string; apiKey: string; baseUrl?: string; model?: string }): Promise<ModelProbeResult> {
-    return this.request<ModelProbeResult>('/v1/model-probe', {
-      method: 'POST',
-      body: JSON.stringify({
-        network: this.requireWorkspace(),
-        provider: params.provider,
-        api_key: params.apiKey,
-        ...(params.baseUrl ? { base_url: params.baseUrl } : {}),
-        ...(params.model ? { model: params.model } : {}),
-      }),
-    });
-  }
-
-  // ---------------------------------------------------------------------------
-  // Model access — saved inference credentials (settings page)
-  // ---------------------------------------------------------------------------
-
-  async listModelAccess(): Promise<ModelAccessEntry[]> {
-    return this.request<ModelAccessEntry[]>(`/v1/model-access?network=${this.requireWorkspace()}`);
-  }
-
-  async createModelAccess(params: { provider: string; apiKey: string; label?: string; baseUrl?: string; createdBy?: string }): Promise<ModelAccessEntry> {
-    return this.request<ModelAccessEntry>('/v1/model-access', {
-      method: 'POST',
-      body: JSON.stringify({
-        network: this.requireWorkspace(),
-        provider: params.provider,
-        api_key: params.apiKey,
-        ...(params.label ? { label: params.label } : {}),
-        ...(params.baseUrl ? { base_url: params.baseUrl } : {}),
-        ...(params.createdBy ? { created_by: params.createdBy } : {}),
-      }),
-    });
-  }
-
-  async deleteModelAccess(accessId: string): Promise<void> {
-    await this.request<unknown>(`/v1/model-access/${encodeURIComponent(accessId)}?network=${this.requireWorkspace()}`, {
-      method: 'DELETE',
-    });
-  }
-
-  /** Probe a saved credential: no model → list models; with model → validate. */
-  async probeModelAccess(accessId: string, model?: string): Promise<ModelProbeResult> {
-    return this.request<ModelProbeResult>(`/v1/model-access/${encodeURIComponent(accessId)}/probe`, {
-      method: 'POST',
-      body: JSON.stringify({ network: this.requireWorkspace(), ...(model ? { model } : {}) }),
-    });
-  }
-
   async updateAgentRole(_agentName: string, _role: string): Promise<WorkspaceAgent> {
     throw new Error('Agent role management is not yet available in event-native mode');
   }
@@ -1131,83 +1075,31 @@ class WorkspaceApi {
     });
   }
 
-  // ---------------------------------------------------------------------------
-  // Cloud agents
-  // ---------------------------------------------------------------------------
-
+  /** Legacy compatibility for pre-PAI cloud-agent rows. The server no longer
+   * exposes these routes to students; remove with the legacy schema later. */
   async getCloudProviders(): Promise<CloudAgentProvider[]> {
     const res = await this.request<{ providers: CloudAgentProvider[] }>('/v1/cloud-agents/providers');
     return res.providers;
   }
 
   async listCloudAgents(): Promise<CloudAgentConfig[]> {
-    const res = await this.request<{ cloud_agents: CloudAgentConfig[] }>(
-      `/v1/cloud-agents?network=${this.workspaceId}`
-    );
+    const res = await this.request<{ cloud_agents: CloudAgentConfig[] }>(`/v1/cloud-agents?network=${this.workspaceId}`);
     return res.cloud_agents;
   }
 
-  async addCloudAgent(params: {
-    agentName: string;
-    provider: string;
-    model: string;
-    apiKey: string;
-    baseUrl?: string;
-    systemPrompt?: string;
-    maxTokens?: number;
-  }): Promise<CloudAgentConfig> {
-    return this.request<CloudAgentConfig>('/v1/cloud-agents', {
-      method: 'POST',
-      body: JSON.stringify({
-        network: this.workspaceId,
-        agent_name: params.agentName,
-        provider: params.provider,
-        model: params.model,
-        api_key: params.apiKey,
-        base_url: params.baseUrl || null,
-        system_prompt: params.systemPrompt || null,
-        max_tokens: params.maxTokens || null,
-      }),
-    });
-  }
-
-  async updateCloudAgent(agentName: string, updates: {
-    model?: string;
-    apiKey?: string;
-    systemPrompt?: string;
-    maxTokens?: number;
-    status?: string;
-  }): Promise<CloudAgentConfig> {
+  async updateCloudAgent(agentName: string, updates: { model?: string; apiKey?: string }): Promise<CloudAgentConfig> {
     return this.request<CloudAgentConfig>(`/v1/cloud-agents/${agentName}`, {
       method: 'PATCH',
       body: JSON.stringify({
         network: this.workspaceId,
-        ...updates.model !== undefined && { model: updates.model },
-        ...updates.apiKey !== undefined && { api_key: updates.apiKey },
-        ...updates.systemPrompt !== undefined && { system_prompt: updates.systemPrompt },
-        ...updates.maxTokens !== undefined && { max_tokens: updates.maxTokens },
-        ...updates.status !== undefined && { status: updates.status },
+        ...(updates.model !== undefined && { model: updates.model }),
+        ...(updates.apiKey !== undefined && { api_key: updates.apiKey }),
       }),
     });
   }
 
   async removeCloudAgent(agentName: string): Promise<void> {
-    await this.request<unknown>(`/v1/cloud-agents/${agentName}?network=${this.workspaceId}`, {
-      method: 'DELETE',
-    });
-  }
-
-  /** Mint a one-time Google OAuth consent URL. Authenticated via headers so
-   * the workspace token never appears in a URL (logs, browser history). */
-  async getGoogleOAuthUrl(agentName: string, model: string): Promise<{ url: string }> {
-    return this.request<{ url: string }>('/v1/cloud-agents/google/auth-url', {
-      method: 'POST',
-      body: JSON.stringify({
-        network: this.workspaceId,
-        agent_name: agentName,
-        model,
-      }),
-    });
+    await this.request<unknown>(`/v1/cloud-agents/${agentName}?network=${this.workspaceId}`, { method: 'DELETE' });
   }
 
   // ---------------------------------------------------------------------------

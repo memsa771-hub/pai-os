@@ -174,10 +174,3 @@ npx skills add https://placement-ai.com/SKILL.md
 
 # Or manually: copy this file to .claude/skills/openagents-workspace.md
 ```
-
-For automatic workspace integration with token injection, use the Placement AI launcher:
-
-```bash
-curl -fsSL https://placement-ai.com/install.sh | bash
-agn tool-mode my-agent skills
-```

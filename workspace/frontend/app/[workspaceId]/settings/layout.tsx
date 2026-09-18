@@ -35,7 +35,6 @@ const SECTIONS = [
   { slug: 'profile', labelKey: 'admin.navProfile', icon: CircleUser },
   { slug: 'general', labelKey: 'admin.navGeneral', icon: Settings2 },
   { slug: 'security', labelKey: 'admin.navSecurity', icon: ShieldCheck },
-  { slug: 'model-access', labelKey: 'admin.navModelAccess', icon: KeyRound },
   { slug: 'integrations', labelKey: 'admin.navIntegrations', icon: Globe },
   { slug: 'preferences', labelKey: 'admin.navPreferences', icon: SlidersHorizontal },
 ] as const;

@@ -128,6 +128,11 @@ def _mask_bf_key(key: str | None) -> str | None:
 
 
 def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
+    members = [
+        member for member in members
+        if not (member.agent_type or "").startswith("cloud:")
+        or (member.agent_type or "") == "cloud:placement_ai"
+    ]
     agents = []
     for m in members:
         status = m.status
@@ -1415,5 +1420,4 @@ def get_me(
         "isOwner": owner,
         "tokenAccess": token_access,
     })
-
 

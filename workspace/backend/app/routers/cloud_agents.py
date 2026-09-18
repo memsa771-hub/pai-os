@@ -64,51 +64,6 @@ async def list_providers():
 
 
 # ---------------------------------------------------------------------------
-# POST /v1/model-probe — interactive credential/model check for agent forms
-# ---------------------------------------------------------------------------
-
-class ModelProbeRequest(BaseModel):
-    network: str
-    provider: str                    # a PROVIDERS name, or "custom"
-    api_key: str
-    base_url: Optional[str] = None   # custom/relay endpoint (OpenAI-compatible)
-    model: Optional[str] = None      # when set, run a live completion check
-
-
-@router.post("/model-probe")
-async def model_probe(
-    body: ModelProbeRequest,
-    db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
-):
-    """Tell the user their credentials work *before* they add an agent.
-
-    Raw-key variant used while typing a new key; saved keys use
-    POST /v1/model-access/{id}/probe instead. Semantics in
-    app.services.model_probe.
-    """
-    from app.services.cloud_providers import PROVIDERS
-    from app.services.model_probe import probe
-
-    workspace = _resolve_workspace(db, body.network)
-    if not workspace:
-        return json_response(ResponseCode.NOT_FOUND, "Network not found")
-    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
-        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
-
-    provider = body.provider.strip()
-    if provider != "custom" and provider not in PROVIDERS:
-        return json_response(ResponseCode.BAD_REQUEST, f"Unknown provider '{provider}'")
-    if provider == "custom" and not (body.base_url or "").strip():
-        return json_response(ResponseCode.BAD_REQUEST, "base_url is required for a custom provider")
-    if not body.api_key.strip():
-        return json_response(ResponseCode.BAD_REQUEST, "api_key is required")
-
-    return success_response(await probe(provider, body.api_key, body.base_url, body.model))
-
-
-# ---------------------------------------------------------------------------
 # POST /v1/cloud-agents
 # ---------------------------------------------------------------------------
 

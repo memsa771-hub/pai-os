@@ -41,9 +41,17 @@ def _mask_key(key: str) -> str:
 
 
 async def invoke_cloud_agents(workspace_id: str, event_data: dict) -> None:
-    """Background task: invoke any cloud agents targeted by a message event."""
+    """Invoke the first-party PAI Counselor targeted by a message event.
+
+    Generic cloud agents are a retired product surface. Legacy configuration
+    rows may remain until a deliberate data migration, but they must not be
+    executable merely because a client knows an old agent name.
+    """
+    from app.services.pai import PAI_AGENT_NAME
+
     metadata = event_data.get("metadata") or {}
     target_agents = metadata.get("target_agents") or []
+    target_agents = [name for name in target_agents if name == PAI_AGENT_NAME]
 
     if not target_agents or target_agents == ["__no_response__"]:
         return

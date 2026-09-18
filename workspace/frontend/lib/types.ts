@@ -527,42 +527,12 @@ export interface AgentCatalogDetail extends AgentCatalogEntry {
   check_ready?: { login_command?: string } | null;
 }
 
-// ---------------------------------------------------------------------------
-// Cloud agents
-// ---------------------------------------------------------------------------
-
+/** Legacy transport types retained only while old cloud-agent rows can exist. */
 export interface CloudAgentProvider {
   name: string;
   label: string;
-  /** OpenAI-compatible endpoint, or null for the provider's SDK default. */
   base_url?: string | null;
   models: CloudAgentModel[];
-}
-
-/** A saved inference credential (provider + key), managed in settings. */
-export interface ModelAccessEntry {
-  id: string;
-  label: string;
-  provider: string;
-  baseUrl: string | null;
-  apiKeyMasked: string;
-  createdBy: string | null;
-  status: string;
-  createdAt: string | null;
-}
-
-/** Result of POST /v1/model-probe — list mode or validate mode. */
-export interface ModelProbeResult {
-  // list mode
-  models?: CloudAgentModel[];
-  source?: 'live' | 'catalog';
-  keyOk?: boolean | null;
-  // validate mode
-  ok?: boolean;
-  latencyMs?: number;
-  reply?: string;
-  // both
-  error?: string;
 }
 
 export interface CloudAgentModel {

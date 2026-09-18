@@ -13,7 +13,6 @@ import SettingsLayout from '@/app/[workspaceId]/settings/layout';
 import SettingsIndex from '@/app/[workspaceId]/settings/page';
 import SettingsGeneral from '@/app/[workspaceId]/settings/general/page';
 import SettingsIntegrations from '@/app/[workspaceId]/settings/integrations/page';
-import SettingsModelAccess from '@/app/[workspaceId]/settings/model-access/page';
 import SettingsPreferences from '@/app/[workspaceId]/settings/preferences/page';
 import SettingsProfile from '@/app/[workspaceId]/settings/profile/page';
 import SettingsSecurity from '@/app/[workspaceId]/settings/security/page';
@@ -128,7 +127,6 @@ const ROUTES: RouteTable = [
   settingsRoute('/:workspaceId/settings', SettingsIndex),
   settingsRoute('/:workspaceId/settings/general', SettingsGeneral),
   settingsRoute('/:workspaceId/settings/integrations', SettingsIntegrations),
-  settingsRoute('/:workspaceId/settings/model-access', SettingsModelAccess),
   settingsRoute('/:workspaceId/settings/preferences', SettingsPreferences),
   settingsRoute('/:workspaceId/settings/profile', SettingsProfile),
   settingsRoute('/:workspaceId/settings/security', SettingsSecurity),
