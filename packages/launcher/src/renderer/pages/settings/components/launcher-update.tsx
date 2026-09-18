@@ -16,7 +16,11 @@ import { Progress } from "@renderer/components/ui/progress"
 import { cn } from "@renderer/lib/utils"
 import type { UpdaterState } from "@renderer/types"
 
-const RELEASES_URL = "https://github.com/openagents-org/openagents/releases"
+// Fallback for the "download page" button when the updater has no URL of its
+// own. This was OpenAgents' GitHub releases page — a different product's
+// downloads, one click away in Settings. Placement AI's site until it has a
+// releases page; main/updater.ts resolves the same thing from PAI_DOWNLOAD_URL.
+const RELEASES_URL = "https://placement-ai.com"
 
 interface Props {
   state: UpdaterState | null

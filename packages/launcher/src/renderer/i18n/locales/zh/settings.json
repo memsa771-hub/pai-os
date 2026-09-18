@@ -209,7 +209,7 @@
       },
       "openagents": {
         "name": "$t(common.brandName)",
-        "desc": "对齐 openagents.org：粗描边、硬阴影与 Inter 字体"
+        "desc": "粗描边、硬阴影与 Inter 字体"
       }
     }
   },

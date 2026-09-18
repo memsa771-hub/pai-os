@@ -209,7 +209,7 @@
       },
       "openagents": {
         "name": "$t(common.brandName)",
-        "desc": "Matches openagents.org — bold frames, hard shadows and Inter"
+        "desc": "Bold frames, hard shadows and Inter"
       }
     }
   },

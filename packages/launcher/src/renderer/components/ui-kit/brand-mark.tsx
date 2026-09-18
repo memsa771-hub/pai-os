@@ -11,9 +11,9 @@ import { cn } from "@renderer/lib/utils"
  * referenced RELATIVELY: production loads index.html over file://, where a
  * leading slash resolves to the filesystem root.
  *
- * TODO: logo-black.png/logo-white.png are still the old OpenAgents cut-outs —
- * swap them for real Placement AI artwork in the same two-file black/white
- * format once it exists.
+ * Both cut-outs are generated from the brand emblem
+ * (workspace/frontend/public/pai-emblem.png) as flat silhouettes of its alpha
+ * channel, so the mark here and the mark in the web app cannot diverge.
  */
 export function BrandMark({
   className,
