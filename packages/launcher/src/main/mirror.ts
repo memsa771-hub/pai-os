@@ -32,7 +32,24 @@ const MIRROR_NPM = [
 
 // Launcher self-update feed (electron-updater generic provider). Mirrored here
 // so a region/user override can redirect it the same way Node and npm are.
-const OFFICIAL_LAUNCHER_FEED = "https://dl.openagents.org/launcher/stable"
+//
+// EMPTY BY DEFAULT, and that disables self-update (see updater.ts). This used
+// to point at dl.openagents.org/launcher/stable, which is a DIFFERENT
+// PRODUCT's release feed: Placement AI Desktop checked it on every launch,
+// downloaded OpenAgents-Launcher-<version>-win-x64.exe, and reported itself
+// "ready to install" — i.e. it would have replaced Placement AI with the
+// OpenAgents launcher on the user's machine. That is a supply-chain problem,
+// not a branding one, so the feed is gone rather than renamed.
+//
+// Placement AI has no release feed yet. Set PAI_LAUNCHER_FEED at build time
+// (or `updateFeedUrl` in settings.json) once one exists, and the whole update
+// flow switches back on with no other change.
+const OFFICIAL_LAUNCHER_FEED = process.env.PAI_LAUNCHER_FEED || ""
+
+/** Whether this build has a release feed to update from at all. */
+export function hasLauncherFeed(): boolean {
+  return OFFICIAL_LAUNCHER_FEED.trim() !== ""
+}
 
 export type RegionPref = "auto" | "global" | "cn"
 
@@ -186,6 +203,6 @@ export function launcherFeedUrl(override?: unknown): string | null {
   } catch {
     return null
   }
-  if (trimmed.replace(/\/+$/, "") === OFFICIAL_LAUNCHER_FEED) return null
+  if (OFFICIAL_LAUNCHER_FEED && trimmed.replace(/\/+$/, "") === OFFICIAL_LAUNCHER_FEED) return null
   return trimmed
 }

@@ -18,7 +18,7 @@ import electronUpdater, {
   type UpdateDownloadedEvent,
 } from "electron-updater"
 import { launchWindowsUpdateInstaller } from "./windows-update-installer"
-import { DEFAULT_LAUNCHER_FEED, launcherFeedUrl } from "./mirror"
+import { DEFAULT_LAUNCHER_FEED, hasLauncherFeed, launcherFeedUrl } from "./mirror"
 import {
   adoptDifferentialBaseFile,
   clearInstallAttempt,
@@ -64,21 +64,16 @@ export interface UpdaterState {
   installFailedVersion: string | null
 }
 
-// Where the download-page fallback points, per OS/arch. Linux has no dedicated
-// endpoint yet, so it keeps the GitHub Releases page.
-const GITHUB_RELEASES_URL =
-  "https://github.com/openagents-org/openagents/releases"
-
+/**
+ * Where to send someone who wants to download a build by hand.
+ *
+ * Per-platform OpenAgents download endpoints used to be returned here. They
+ * serve a different product's installer, so they are gone; Placement AI's own
+ * site is the honest answer until it has per-platform endpoints of its own.
+ * Only surfaced when self-update is supported, which it is not by default.
+ */
 function resolveDownloadUrl(): string {
-  if (process.platform === "win32") {
-    return "https://openagents.org/api/download/launcher/windows"
-  }
-  if (process.platform === "darwin") {
-    return process.arch === "arm64"
-      ? "https://openagents.org/api/download/launcher/mac"
-      : "https://openagents.org/api/download/launcher/mac-intel"
-  }
-  return GITHUB_RELEASES_URL
+  return process.env.PAI_DOWNLOAD_URL || "https://placement-ai.com"
 }
 
 let _state: UpdaterState = {
@@ -433,9 +428,21 @@ export function setupAutoUpdater(opts: {
   // Only check + download are meaningful here; quitAndInstall can't replace a
   // dev tree, which is fine — everything up to "ready to install" is what needs
   // verifying.
+  // No release feed, no self-update. Placement AI does not publish one yet,
+  // and the alternative is what used to happen here: the updater pointed at
+  // another product's feed and downloaded its installer. `supported: false`
+  // is already the guard every entry point checks (check, download, install,
+  // applyUpdateFeedUrl), so this switches the whole flow off cleanly rather
+  // than failing somewhere in the middle of it.
+  if (!hasLauncherFeed()) {
+    _log("[updater] no release feed configured (PAI_LAUNCHER_FEED) — self-update disabled")
+    emit({ supported: false })
+    return
+  }
+
   if (!app.isPackaged) {
     autoUpdater.forceDevUpdateConfig = true
-    _log("[updater] dev build: checking the real release feed via dev-app-update.yml")
+    _log("[updater] dev build: checking the release feed via dev-app-update.yml")
   }
 
   emit({ supported: true })

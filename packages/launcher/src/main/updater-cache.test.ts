@@ -89,9 +89,9 @@ describe("readUpdaterCacheDirName", () => {
     const cfg = path.join(dir, "app-update.yml")
     writeFileSync(
       cfg,
-      "provider: generic\nurl: https://dl.openagents.org/launcher/stable\nupdaterCacheDirName: openagents-launcher-updater\n",
+      "provider: generic\nurl: https://releases.example.invalid/stable\nupdaterCacheDirName: placement-ai-updater\n",
     )
-    expect(readUpdaterCacheDirName(cfg)).toBe("openagents-launcher-updater")
+    expect(readUpdaterCacheDirName(cfg)).toBe("placement-ai-updater")
   })
 
   it("reads dev-app-update.yml, which uses a separate cache dir", () => {
@@ -100,9 +100,9 @@ describe("readUpdaterCacheDirName", () => {
     const cfg = path.join(dir, "dev-app-update.yml")
     writeFileSync(
       cfg,
-      "provider: generic\nurl: https://dl.openagents.org/launcher/stable\nupdaterCacheDirName: openagents-launcher-updater-dev\n",
+      "provider: generic\nurl: https://releases.example.invalid/stable\nupdaterCacheDirName: placement-ai-updater-dev\n",
     )
-    expect(readUpdaterCacheDirName(cfg)).toBe("openagents-launcher-updater-dev")
+    expect(readUpdaterCacheDirName(cfg)).toBe("placement-ai-updater-dev")
   })
 
   it("strips quotes and returns null when absent", () => {
@@ -121,22 +121,22 @@ describe("readUpdaterCacheDirName", () => {
 
 describe("purgePendingUpdateCache", () => {
   it("removes the staged package so the next check re-downloads", () => {
-    const pending = path.join(dir, "openagents-launcher-updater", "pending")
+    const pending = path.join(dir, "placement-ai-updater", "pending")
     mkdirSync(pending, { recursive: true })
     writeFileSync(path.join(pending, "update-info.json"), "{}")
     writeFileSync(path.join(pending, "setup.exe"), "binary")
 
-    expect(purgePendingUpdateCache(dir, "openagents-launcher-updater")).toBe(true)
+    expect(purgePendingUpdateCache(dir, "placement-ai-updater")).toBe(true)
     expect(existsSync(pending)).toBe(false)
   })
 
   it("reports false when there is nothing staged", () => {
-    expect(purgePendingUpdateCache(dir, "openagents-launcher-updater")).toBe(false)
+    expect(purgePendingUpdateCache(dir, "placement-ai-updater")).toBe(false)
   })
 })
 
 describe("adoptDifferentialBaseFile", () => {
-  const NAME = "openagents-launcher-updater"
+  const NAME = "placement-ai-updater"
   // The move only ever happens on Windows; pass the platform explicitly so the
   // logic is covered on the macOS/Linux runners too.
   const adopt = (from: string, to: string) =>
