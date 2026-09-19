@@ -1,72 +1,146 @@
+x-backend-env: &backend-env
+  APP_ENV: production
+  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to AWS RDS}
+  AUTH_MODE: ${AUTH_MODE:-workspace_token}
+  IDENTITY_MODE: ${IDENTITY_MODE:-standalone}
+  CORS_ORIGINS: ${CORS_ORIGINS:-https://app.placement-ai.com}
+  WORKSPACE_ENDPOINT: ${WORKSPACE_ENDPOINT:-https://api.placement-ai.com}
+  FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-https://app.placement-ai.com}
+  PUBLIC_API_BASE: ${PUBLIC_API_BASE:-https://api.placement-ai.com}
+  WEB_CONCURRENCY: ${WEB_CONCURRENCY:-1}
+  THREADPOOL_TOKENS: ${THREADPOOL_TOKENS:-15}
+  DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+  DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+  DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
+  DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-300}
+  DB_PGBOUNCER: ${DB_PGBOUNCER:-false}
+  SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+  SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required}
+  PAI_ENABLED: ${PAI_ENABLED:-false}
+  PAI_API_KEY: ${PAI_API_KEY:-}
+  PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
+  PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
+  BROWSERFABRIC_API_KEY: ${BROWSERFABRIC_API_KEY:-}
+  BROWSERFABRIC_URL: ${BROWSERFABRIC_URL:-https://api.browserfabric.com}
+  BROWSERFABRIC_PROVISION_SECRET: ${BROWSERFABRIC_PROVISION_SECRET:-}
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  MEMORY_VECTOR_BACKEND: ${MEMORY_VECTOR_BACKEND:-qdrant}
+  QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
+  QDRANT_API_KEY: ${QDRANT_API_KEY:-}
+  QDRANT_COLLECTION: ${QDRANT_COLLECTION:-pai_memory}
+  MEMORY_EMBEDDING_PROVIDER: ${MEMORY_EMBEDDING_PROVIDER:-openai}
+  MEMORY_EMBEDDING_MODEL: ${MEMORY_EMBEDDING_MODEL:-text-embedding-3-small}
+  MEMORY_EMBEDDING_API_KEY: ${MEMORY_EMBEDDING_API_KEY:-}
+  MEMORY_EMBEDDING_BASE_URL: ${MEMORY_EMBEDDING_BASE_URL:-}
+  MEMORY_EMBEDDING_DIM: ${MEMORY_EMBEDDING_DIM:-1536}
+  FILE_STORAGE_BACKEND: ${FILE_STORAGE_BACKEND:-s3}
+  S3_BUCKET: ${S3_BUCKET:?S3_BUCKET is required for production S3 storage}
+  S3_REGION: ${S3_REGION:-eu-north-1}
+  JOB_WORKER_POLL_SECONDS: ${JOB_WORKER_POLL_SECONDS:-2}
+  JOB_WORKER_CONCURRENCY: ${JOB_WORKER_CONCURRENCY:-5}
+  RESEND_API_KEY: ${RESEND_API_KEY:-}
+  EMAIL_FROM: ${EMAIL_FROM:-Placement AI <noreply@placement-ai.com>}
+  FEEDBACK_EMAIL_TO: ${FEEDBACK_EMAIL_TO:-}
+  WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
+  WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
+  WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
+
+x-backend-image: &backend-image
+  image: placement-ai-backend:prod
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+
+x-logging: &default-logging
+  driver: json-file
+  options: {max-size: "10m", max-file: "5"}
+
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: openagents_workspace
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+  migrate:
+    <<: *backend-image
+    environment: *backend-env
+    entrypoint: ["alembic", "upgrade", "head"]
+    restart: "no"
+    networks: [private]
+    logging: *default-logging
 
   backend:
-    build:
-      context: ./backend
-      dockerfile: backend.Dockerfile
-    environment:
-      DATABASE_URL: postgresql://postgres:${DB_PASSWORD:-changeme}@db:5432/openagents_workspace
-      AUTH_MODE: workspace_token
-      IDENTITY_MODE: standalone
-      SUPABASE_URL: ${SUPABASE_URL:-}
-      SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
-      PAI_ENABLED: ${PAI_ENABLED:-false}
-      PAI_API_KEY: ${PAI_API_KEY:-}
-      PAI_MODEL: ${PAI_MODEL:-gpt-5.4-mini}
-      PAI_BASE_URL: ${PAI_BASE_URL:-https://api.openai.com/v1}
-      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-}
-      WEB_SEARCH_API_KEY: ${WEB_SEARCH_API_KEY:-}
-      WEB_SEARCH_BASE_URL: ${WEB_SEARCH_BASE_URL:-}
-      # The canonical hosted application origin, and nothing else. Never "*":
-      # this API is credentialed.
-      #
-      # The desktop launcher does NOT need an entry. Its bundle is served from
-      # pai://workspace, and the launcher rewrites that Origin to the
-      # configured web origin before the request leaves the process, then
-      # rewrites the reply header back — see
-      # packages/launcher/src/main/workspace-bundle.ts (allowBundleApiAccess).
-      # So desktop arrives as https://app.placement-ai.com, which is listed.
-      #
-      # Add https://placement-ai.com or https://www.placement-ai.com here only
-      # if those origins actually call the API, rather than redirecting to the
-      # app origin.
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://app.placement-ai.com}
+    <<: *backend-image
+    environment: *backend-env
     depends_on:
-      db:
-        condition: service_healthy
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    restart: unless-stopped
+    networks: [private]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    logging: *default-logging
+
+  worker:
+    <<: *backend-image
+    environment: *backend-env
+    entrypoint: ["python", "-m", "app.jobs.worker"]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      redis: {condition: service_healthy}
+      qdrant: {condition: service_started}
+    restart: unless-stopped
+    networks: [private]
+    logging: *default-logging
 
   frontend:
+    image: placement-ai-frontend:prod
     build:
       context: ./frontend
       args:
-        NEXT_PUBLIC_API_URL: ${API_URL:-https://api.placement-ai.com}
-        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL:-}
-        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://api.placement-ai.com}
+        NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL:?SUPABASE_URL is required}
+        NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:?SUPABASE_ANON_KEY is required}
+        NEXT_PUBLIC_ENABLE_DMS: ${NEXT_PUBLIC_ENABLE_DMS:-false}
+        NEXT_PUBLIC_ENABLE_INBOX: ${NEXT_PUBLIC_ENABLE_INBOX:-false}
     depends_on:
-      - backend
+      backend: {condition: service_healthy}
+    restart: unless-stopped
+    networks: [private]
+    logging: *default-logging
 
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-    volumes:
-      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    restart: unless-stopped
+    networks: [private]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging: *default-logging
+
+  qdrant:
+    image: qdrant/qdrant:v1.19.1
+    volumes: ["qdrant_data:/qdrant/storage"]
+    restart: unless-stopped
+    networks: [private]
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["127.0.0.1:8080:80"]
+    volumes: ["./Caddyfile:/etc/caddy/Caddyfile:ro"]
     depends_on:
-      - backend
-      - frontend
+      backend: {condition: service_healthy}
+      frontend: {condition: service_started}
+    restart: unless-stopped
+    networks: [private]
+    logging: *default-logging
+
+networks:
+  private:
 
 volumes:
-  pgdata:
+  qdrant_data:

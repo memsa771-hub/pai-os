@@ -80,7 +80,7 @@ services:
   backend:
     build:
       context: ./backend
-      dockerfile: backend.Dockerfile
+      dockerfile: Dockerfile
     environment:
       <<: *backend-env
     ports:
@@ -90,9 +90,8 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    # Migrate before serving. In production Railway runs this once as a
-    # preDeployCommand (see railway.toml) and entrypoint.sh deliberately does
-    # not, but locally nothing did — so a fresh pgdata volume produced an empty
+    # Migrate before serving locally. Production uses a dedicated one-shot
+    # migration service; a fresh local volume otherwise produces an empty
     # database and every request died on "relation users does not exist" while
     # the UI just said it could not reach the server. `alembic upgrade head` is
     # idempotent, so this is a no-op on an already-migrated volume.
@@ -110,7 +109,7 @@ services:
   worker:
     build:
       context: ./backend
-      dockerfile: backend.Dockerfile
+      dockerfile: Dockerfile
     environment:
       <<: *backend-env
       JOB_WORKER_POLL_SECONDS: ${JOB_WORKER_POLL_SECONDS:-2}

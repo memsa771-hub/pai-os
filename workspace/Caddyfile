@@ -1,0 +1,27 @@
+{
+	auto_https off
+	servers {
+		trusted_proxies static private_ranges
+		client_ip_headers CF-Connecting-IP X-Forwarded-For
+	}
+}
+
+:80 {
+	@app host app.placement-ai.com
+	handle @app {
+		reverse_proxy frontend:3000 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	@api host api.placement-ai.com
+	handle @api {
+		reverse_proxy backend:8000 {
+			header_up Host {host}
+			header_up X-Forwarded-Proto https
+		}
+	}
+
+	respond 404
+}

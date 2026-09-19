@@ -23,7 +23,7 @@ import app.database as database
 import app.main as main
 import app.models  # noqa: F401 — register models on Base
 from app.database import Base
-from app.models import Channel, Workspace
+from app.models import Channel, TimerRecord, Workspace
 
 
 @pytest.fixture
@@ -60,6 +60,42 @@ def test_run_maintenance_empty_db_ok(session_factory):
 def test_fire_due_empty_db_ok(session_factory):
     # No due timers/routines: runs the SELECTs, commits, closes — no pipeline.
     asyncio.run(main._fire_due())
+
+
+def test_due_timer_is_atomically_claimed_once(session_factory, monkeypatch):
+    """Two scheduler passes must produce one event, even before delivery commits."""
+    from datetime import datetime, timedelta, timezone
+    from app.pipeline_factory import pipeline
+
+    s = session_factory()
+    ws = Workspace(name="timer", slug="timer")
+    s.add(ws)
+    s.flush()
+    s.add(TimerRecord(
+        workspace_id=ws.id,
+        channel_name="general",
+        created_by="openagents:test-agent",
+        message="once",
+        delay_seconds=1,
+        fires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        status="active",
+    ))
+    s.commit()
+    s.close()
+
+    calls = []
+
+    async def capture(event, ctx):
+        calls.append(event)
+
+    monkeypatch.setattr(pipeline, "process", capture)
+    asyncio.run(main._fire_due())
+    asyncio.run(main._fire_due())
+
+    assert len(calls) == 1
+    s = session_factory()
+    assert s.query(TimerRecord).one().status == "fired"
+    s.close()
 
 
 def test_run_maintenance_archives_stale_thread(session_factory):

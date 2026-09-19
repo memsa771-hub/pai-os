@@ -1,37 +1,44 @@
-FROM node:20-alpine
-
+# syntax=docker/dockerfile:1.7
+FROM node:20-alpine AS deps
 WORKDIR /app
-
-ARG NEXT_PUBLIC_API_URL=https://api.placement-ai.com
-ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
-ARG NEXT_PUBLIC_SUPABASE_URL
-ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
-ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
-ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
-ARG NEXT_PUBLIC_ENABLE_DMS=false
-ENV NEXT_PUBLIC_ENABLE_DMS=${NEXT_PUBLIC_ENABLE_DMS}
-ARG NEXT_PUBLIC_ENABLE_INBOX=false
-ENV NEXT_PUBLIC_ENABLE_INBOX=${NEXT_PUBLIC_ENABLE_INBOX}
-
-# Install dependencies
 COPY package.json package-lock.json ./
 RUN npm ci
 
-# Copy application code
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# --webpack, not `npm run build` (Turbopack, Next 16's default): under
-# BuildKit's RUN specifically, Turbopack has reproducibly emitted a build that
-# "succeeds" but silently omits recent source changes from some client chunks
-# — confirmed by diffing this exact source built via BuildKit vs. via a plain
-# `docker run`/local `next build`, both Turbopack, same source, different
-# output. Running the build twice in the same RUN did not fix it either, so
-# this isn't a cold-cache issue — something about Turbopack's worker
-# processes under BuildKit's execution environment. webpack does not
-# reproduce it and is the same bundler `next dev`/local builds already work
-# with elsewhere in this repo.
+ARG NEXT_PUBLIC_API_URL=https://api.placement-ai.com
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_ENABLE_DMS=false
+ARG NEXT_PUBLIC_ENABLE_INBOX=false
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL} \
+    NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL} \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY} \
+    NEXT_PUBLIC_ENABLE_DMS=${NEXT_PUBLIC_ENABLE_DMS} \
+    NEXT_PUBLIC_ENABLE_INBOX=${NEXT_PUBLIC_ENABLE_INBOX} \
+    NEXT_TELEMETRY_DISABLED=1
+
+# webpack remains required because BuildKit/Turbopack has produced stale chunks
+# for this repository even when the build reports success.
 RUN npx next build --webpack
 
-# Run
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    HOSTNAME=0.0.0.0 \
+    PORT=3000
+
+RUN addgroup --system --gid 1001 nodejs \
+    && adduser --system --uid 1001 nextjs
+
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+USER nextjs
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["node", "server.js"]

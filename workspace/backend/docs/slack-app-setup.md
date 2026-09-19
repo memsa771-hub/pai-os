@@ -64,7 +64,7 @@ only the app's home Slack workspace can install it. A Slack Marketplace
 listing is NOT required — unlisted distributed apps install fine via our
 OAuth URL.
 
-## 3. Set the backend env vars (Railway `workspace-backend`)
+## 3. Set the backend environment variables
 
 From the app's **Basic Information** page:
 

@@ -16,6 +16,11 @@ class Config:
         "DATABASE_URL",
         "postgresql://postgres:dev@localhost:5432/openagents_workspace",
     )
+    DB_POOL_SIZE: int = int(os.environ.get("DB_POOL_SIZE", "10"))
+    DB_MAX_OVERFLOW: int = int(os.environ.get("DB_MAX_OVERFLOW", "5"))
+    DB_POOL_TIMEOUT: int = int(os.environ.get("DB_POOL_TIMEOUT", "5"))
+    DB_POOL_RECYCLE: int = int(os.environ.get("DB_POOL_RECYCLE", "300"))
+    APP_ENV: str = os.environ.get("APP_ENV", "development")
 
     # Auth mode: "workspace_token" (self-hosted) or "firebase" (hosted)
     AUTH_MODE: str = os.environ.get("AUTH_MODE", "workspace_token")
@@ -77,6 +82,7 @@ class Config:
 
     # Identity mode: "standalone" (own agent table) or "shared" (external agent_ids)
     IDENTITY_MODE: str = os.environ.get("IDENTITY_MODE", "standalone")
+    WORKSPACE_ENDPOINT: str = os.environ.get("WORKSPACE_ENDPOINT", "")
 
     # Agent offline timeout in seconds
     AGENT_TIMEOUT_SECONDS: int = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "60"))
@@ -276,6 +282,17 @@ class Config:
     # Server
     HOST: str = os.environ.get("HOST", "0.0.0.0")
     PORT: int = int(os.environ.get("PORT", "8000"))
+
+    def validate_startup(self) -> None:
+        """Reject incomplete production configuration before serving traffic."""
+        if self.APP_ENV.lower() != "production":
+            return
+        if not os.environ.get("DATABASE_URL", "").strip():
+            raise RuntimeError("DATABASE_URL is required in production")
+        if self.CORS_ORIGINS.strip() in ("", "*"):
+            raise RuntimeError("Production CORS_ORIGINS must be an explicit origin list")
+        if self.FILE_STORAGE_BACKEND == "s3" and not self.S3_BUCKET.strip():
+            raise RuntimeError("S3_BUCKET is required when FILE_STORAGE_BACKEND=s3")
 
 
 config = Config()

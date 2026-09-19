@@ -1,114 +1,94 @@
 # Placement AI Workspace
 
-A managed agent collaboration environment built on the [OpenAgents Network Model](../docs/openagents_network_model.md).
+Placement AI is a FastAPI/PostgreSQL backend with a standalone Next.js frontend.
 
-## Quick Start
+## Local development
+
+Development Compose intentionally includes local PostgreSQL, published localhost
+ports, source bind mounts, and local Playwright/Chromium support.
 
 ```bash
-# Start everything (PostgreSQL + backend + frontend)
 cd workspace
 make dev
-
-# Backend: http://localhost:8000
-# Frontend: http://localhost:3000
 ```
 
-## Architecture
+The backend is available at `http://localhost:8000` and the frontend at
+`http://localhost:3000`. Copy `.env.example` to `.env` for local credentials.
 
+## AWS production architecture
+
+Production runs on one AWS EC2 Ubuntu 24.04 host with Docker Compose:
+
+```text
+Internet -> Cloudflare -> host cloudflared systemd service
+         -> 127.0.0.1:8080 -> Caddy
+         -> app.placement-ai.com -> frontend:3000
+         -> api.placement-ai.com -> backend:8000
 ```
-workspace/
-├── backend/          FastAPI + SQLAlchemy (event-native API)
-├── frontend/         Next.js + React (workspace UI)
-└── docker-compose.yml
+
+- AWS RDS PostgreSQL is canonical and external to Compose.
+- AWS S3 stores uploaded files. boto3 uses the EC2 IAM Instance Role through
+  its standard credential provider chain; do not create static AWS access keys.
+- Redis is an internal, non-canonical cache/pub-sub service.
+- Qdrant is an internal, persisted but rebuildable derived memory index;
+  PostgreSQL remains the canonical memory store.
+- The durable job worker is a separate process using the backend image.
+- Cloudflare Tunnel runs on the host as an existing systemd service, not in
+  Compose. Caddy serves internal HTTP only; Cloudflare terminates public TLS.
+- Administration uses AWS Systems Manager Session Manager. The EC2 security
+  group has zero inbound rules: do not open 22, 80, 443, or application ports.
+- No Elastic IP or DNS A record pointing at EC2 is required.
+
+Cloudflare published application routes must be configured as:
+
+```text
+app.placement-ai.com -> http://127.0.0.1:8080
+api.placement-ai.com -> http://127.0.0.1:8080
 ```
 
-The workspace backend implements the ONM event protocol:
-- `POST /v1/events` — send events into the network pipeline
-- `GET /v1/events` — poll events from the network
-- `POST /v1/join` / `POST /v1/leave` — agent lifecycle
-- `GET /v1/discover` — discover agents, channels, resources
+Production Compose publishes exactly `127.0.0.1:8080:80`. Backend, frontend,
+Redis, Qdrant, and RDS are never published by Compose.
 
-Events flow through a mod pipeline: `mod/auth` → `mod/workspace` → `mod/persistence`.
+## Production deployment
 
-## Configuration
+Copy `.env.production.example` to an untracked `.env` on EC2 and replace every
+required placeholder. `DATABASE_URL` should be an RDS URL such as:
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | `postgresql://postgres:dev@localhost:5432/openagents_workspace` | PostgreSQL connection |
-| `AUTH_MODE` | `workspace_token` | Auth method: `workspace_token` or `firebase` |
-| `IDENTITY_MODE` | `standalone` | Agent identity: `standalone` or `shared` |
-| `CORS_ORIGINS` | `*` | Allowed CORS origins (comma-separated) |
-| `AGENT_TIMEOUT_SECONDS` | `60` | Seconds before agent is considered offline |
+```text
+postgresql://USER:PASSWORD@RDS_HOST:5432/openagents_workspace?sslmode=require
+```
 
-## Self-Hosting
+The S3 bucket must exist in `S3_REGION`, and the EC2 IAM role needs the required
+object permissions. Production expects Browser Fabric when
+`BROWSERFABRIC_API_KEY` is configured. The backend image retains local Chromium
+as a safe fallback; making Chromium an optional image layer can be considered
+later without risking a browserless deployment.
 
-### Run Backend Locally (with external PostgreSQL)
+Validate and deploy:
 
 ```bash
-cd workspace/backend
-pip install -r requirements.txt
-
-DATABASE_URL="postgresql://user:pass@host:5432/dbname?sslmode=require" \
-AUTH_MODE=workspace_token \
-PYTHONPATH=. \
-alembic upgrade head
-
-DATABASE_URL="postgresql://user:pass@host:5432/dbname?sslmode=require" \
-AUTH_MODE=workspace_token \
-PYTHONPATH=. \
-uvicorn app.main:app --host 0.0.0.0 --port 8000
+docker compose --env-file .env -f docker-compose.prod.yml config
+docker compose --env-file .env -f docker-compose.prod.yml build
+docker compose --env-file .env -f docker-compose.prod.yml up -d
 ```
 
-### Connect Agents
+The one-shot `migrate` service runs `alembic upgrade head`. Backend and worker
+start only after it succeeds. A failed migration therefore stops deployment.
+
+Timers use a conditional database update committed before event delivery. This
+makes claims safe across multiple Uvicorn processes and gives timer delivery
+at-most-once semantics: a process failure after claim may lose a timer event,
+but another process cannot deliver a duplicate.
+
+`NEXT_PUBLIC_*` variables are compiled into the frontend image. Rebuild the
+frontend when they change, and never put backend secrets into those variables.
+
+## Useful commands
 
 ```bash
-# Create a workspace
-curl -X POST https://your-endpoint/v1/workspaces \
-  -H "Content-Type: application/json" \
-  -d '{"name": "my-workspace"}'
-# Returns: { "data": { "token": "<TOKEN>", "slug": "<SLUG>" } }
-
-# Connect an agent
-openagents create claude --name my-agent \
-  --join-workspace <TOKEN> \
-  --endpoint https://your-endpoint \
-  --no-browser
-```
-
-### Run Frontend Locally
-
-```bash
-cd workspace/frontend
-npm install
-NEXT_PUBLIC_API_URL=https://your-endpoint npm run dev
-```
-
-### Deploy Frontend to Vercel / Insforge
-
-The frontend uses `output: 'standalone'` in `next.config.mjs` for Docker deployments.
-When deploying to Vercel or Insforge, remove that setting before deploying so the
-platform can handle the build natively:
-
-```js
-// next.config.mjs — for Vercel/Insforge deployment
-const nextConfig = {};
-export default nextConfig;
-```
-
-Set the environment variable `NEXT_PUBLIC_API_URL` to your backend URL (e.g. `https://your-backend.example.com`).
-
-## Development
-
-```bash
-# Run backend tests
+cd workspace
 make test
-
-# Run database migrations
 make migrate
-
-# Create new migration
 make migration msg="add_new_table"
-
-# Reset database
 make reset-db
 ```

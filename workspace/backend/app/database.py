@@ -35,7 +35,7 @@ if _is_sqlite:
 # lifts the ~100-connection Postgres ceiling that forced the app pool down.
 #
 # Detected by Supabase's pooler port (:6543) OR an explicit DB_PGBOUNCER
-# flag. A self-hosted/Railway pgbouncer listens on a different port (commonly
+# flag. A self-hosted PgBouncer may listen on a different port (commonly
 # 6432), so the port alone isn't a reliable signal — the flag is.
 _is_pgbouncer = (
     ":6543/" in config.DATABASE_URL
@@ -45,21 +45,19 @@ _is_pgbouncer = (
 _pool_kwargs = (
     {"poolclass": NullPool}
     if _is_serverless or _is_sqlite or _is_pgbouncer
-    # Direct-PG mode (port 5432): keep a bounded per-worker pool.
-    # Sized for Railway Postgres max_connections=400 (raised from 200 via
-    # ALTER SYSTEM on 2026-06-12) at 2 replicas × 2 workers
-    # (WEB_CONCURRENCY=2): 2 × 2 × (40 + 8) = 192 max DB conns steady-state,
-    # leaving headroom for a rolling deploy (old + new replicas briefly
-    # coexist → up to 384 conns, under 400 minus the 3 superuser-reserved).
-    # Keep THREADPOOL_TOKENS in app/main.py equal to pool_size+max_overflow
-    # so `def` handlers queue for a thread instead of stampeding the pool.
-    # pool_timeout stays short (2s): all DB-bound handlers run in the
-    # threadpool now, but a long queue wait would still tie up threads.
-    else {"pool_pre_ping": True, "pool_size": 40, "max_overflow": 8, "pool_recycle": 300, "pool_timeout": 2, "poolclass": QueuePool}
+    # Direct PostgreSQL mode: one conservative, configurable pool per process.
+    else {
+        "pool_pre_ping": True,
+        "pool_size": config.DB_POOL_SIZE,
+        "max_overflow": config.DB_MAX_OVERFLOW,
+        "pool_recycle": config.DB_POOL_RECYCLE,
+        "pool_timeout": config.DB_POOL_TIMEOUT,
+        "poolclass": QueuePool,
+    }
 )
 
 # Keep the TCP connection alive to survive NAT / firewall idle timeouts
-# between Railway egress and Supabase. Without these, idle connections
+# across NAT/firewall idle timeouts. Without these, idle connections
 # get silently FIN/RST'd and we see "SSL connection has been closed
 # unexpectedly" mid-query.
 # keepalives_idle=30: start probing after 30s of idle

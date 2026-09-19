@@ -134,27 +134,56 @@ async def _fire_due():
             ).limit(50)
         ).scalars().all()
 
-        for timer in due:
-            timer.status = "fired"
+        pending_timers = [
+            {
+                "id": timer.id,
+                "workspace_id": timer.workspace_id,
+                "channel_name": timer.channel_name,
+                "created_by": timer.created_by,
+                "message": timer.message,
+            }
+            for timer in due
+        ]
+
+        for timer in pending_timers:
+            # Atomically claim before delivery. Under PostgreSQL READ COMMITTED,
+            # concurrent workers serialize on this UPDATE and only one can
+            # change active -> fired. Commit immediately to release the lock.
+            # This intentionally gives timers at-most-once semantics: a crash
+            # after the claim can lose the event, but can never duplicate it.
+            claimed = db.execute(
+                update(TimerRecord)
+                .where(
+                    TimerRecord.id == timer["id"],
+                    TimerRecord.status == "active",
+                    TimerRecord.fires_at <= now,
+                )
+                .values(status="fired")
+                .execution_options(synchronize_session=False)
+            )
+            db.commit()
+            if claimed.rowcount == 0:
+                continue
+
             workspace = db.execute(
-                select(Workspace).where(Workspace.id == timer.workspace_id)
+                select(Workspace).where(Workspace.id == timer["workspace_id"])
             ).scalar_one_or_none()
             if not workspace:
                 continue
-            agent_name = timer.created_by.replace("openagents:", "")
+            agent_name = timer["created_by"].replace("openagents:", "")
             event = Event(
                 type="workspace.message.posted",
                 source="system:timer",
-                target=f"channel/{timer.channel_name}",
+                target=f"channel/{timer['channel_name']}",
                 payload={
-                    "content": f"⏰ Timer fired (set by @{agent_name}): {timer.message}",
+                    "content": f"⏰ Timer fired (set by @{agent_name}): {timer['message']}",
                     "message_type": "chat",
                 },
                 metadata={"target_agents": [agent_name]},
             )
             ctx = PipelineContext(
                 network_id=str(workspace.id),
-                agent_address=timer.created_by,
+                agent_address=timer["created_by"],
                 db=db,
                 workspace=workspace,
                 token=workspace.password_hash,
@@ -162,7 +191,7 @@ async def _fire_due():
             try:
                 await pipeline.process(event, ctx)
             except Exception:
-                logger.exception("Timer fire failed for %s", timer.id)
+                logger.exception("Timer fire failed for %s", timer["id"])
 
         # ── Fire due routines ──
         due_routines = db.execute(
@@ -351,6 +380,7 @@ async def _timer_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("LIFESPAN: starting")
+    config.validate_startup()
 
     # Human sign-in (Supabase) is core, not optional — warn loudly at boot
     # rather than let every login attempt fail with an obscure connection
@@ -374,7 +404,8 @@ async def lifespan(app: FastAPI):
     # bursts queue for a THREAD (cheap, unbounded wait) instead of stampeding
     # the pool. Env-overridable for ops.
     import anyio.to_thread
-    tokens = int(os.environ.get("THREADPOOL_TOKENS", "48"))
+    default_tokens = config.DB_POOL_SIZE + config.DB_MAX_OVERFLOW
+    tokens = int(os.environ.get("THREADPOOL_TOKENS", str(default_tokens)))
     anyio.to_thread.current_default_thread_limiter().total_tokens = tokens
     logger.info("LIFESPAN: threadpool capped at %d tokens (= DB pool capacity)", tokens)
 
@@ -438,13 +469,10 @@ app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=6)
 
 
 class NoTransformCompressionHeadersMiddleware(BaseHTTPMiddleware):
-    """Tell intermediate CDNs (Railway's Fastly layer) not to decompress
-    our gzipped responses.
+    """Tell intermediate proxies not to transform compressed responses.
 
-    Railway puts a Fastly CDN in front of the service by default. Without
-    these headers the CDN was decompressing /v1/events responses at the
-    edge, so clients received 21KB uncompressed JSON despite our origin
-    sending 3.7KB gzipped bodies — ~5x egress waste.
+    Without these headers a CDN or proxy may decompress /v1/events responses,
+    increasing bandwidth substantially.
 
     `no-transform` directs intermediaries not to modify the Content-Encoding
     (RFC 7234). `private` signals that the response is per-client (poll

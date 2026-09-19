@@ -85,6 +85,8 @@ class S3FileStore:
     """Store files in AWS S3."""
 
     def __init__(self, bucket: str, region: str = "us-east-1"):
+        if not bucket or not bucket.strip():
+            raise ValueError("S3_BUCKET is required when FILE_STORAGE_BACKEND=s3")
         import boto3
         self.bucket = bucket
         self.s3 = boto3.client("s3", region_name=region)

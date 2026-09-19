@@ -17,7 +17,7 @@ import { BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useT } from '@/lib/i18n';
 
-// Keep in sync with the backend's MAX_FILE_SIZE (app/config.py); nginx's
+// Keep in sync with the backend's MAX_FILE_SIZE (app/config.py); the proxy's
 // /v1/files client_max_body_size allows extra headroom for multipart
 // overhead. Oversized files would be rejected server-side anyway, so
 // reject them here with immediate feedback instead.
