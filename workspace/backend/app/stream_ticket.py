@@ -28,14 +28,17 @@ import base64
 import hashlib
 import hmac
 import time
-from typing import Optional
+from typing import Iterable, Optional
 
 # Long enough that a student reading one page doesn't get a dead image, short
 # enough that a leaked URL is worthless by the time it reaches a log reader.
 # Streams outlive this: the SSE connection is authorized once, at connect.
 TICKET_TTL_SECONDS = 15 * 60
 
-_SCOPE = b"pai.stream-ticket.v1"
+_SIGNING_CONTEXT = b"pai.stream-ticket.v2"
+EVENTS_SCOPE = "events"
+FILES_SCOPE = "files"
+_ALLOWED_SCOPES = frozenset({EVENTS_SCOPE, FILES_SCOPE})
 
 
 def _b64(raw: bytes) -> str:
@@ -47,20 +50,29 @@ def _unb64(text: str) -> bytes:
 
 
 def _sign(secret: str, payload: bytes) -> str:
-    return _b64(hmac.new(secret.encode(), _SCOPE + payload, hashlib.sha256).digest())
+    return _b64(hmac.new(secret.encode(), _SIGNING_CONTEXT + payload, hashlib.sha256).digest())
 
 
-def mint(workspace, user_id: str, ttl_seconds: int = TICKET_TTL_SECONDS) -> Optional[str]:
-    """A ticket for `user_id` to read `workspace`, or None if it has no secret."""
-    if not workspace.password_hash:
+def mint(
+    workspace,
+    user_id: str,
+    ttl_seconds: int = TICKET_TTL_SECONDS,
+    scopes: Iterable[str] = (EVENTS_SCOPE, FILES_SCOPE),
+) -> Optional[str]:
+    """Mint a bounded, signed ticket for one user, workspace, and route set."""
+    if not workspace.password_hash or not user_id or str(workspace.owner_user_id) != user_id:
         return None
+    requested_scopes = sorted(set(scopes) & _ALLOWED_SCOPES)
+    if not requested_scopes:
+        return None
+    ttl_seconds = min(max(int(ttl_seconds), 1), TICKET_TTL_SECONDS)
     expires = int(time.time()) + ttl_seconds
-    payload = f"{workspace.id}:{user_id}:{expires}".encode()
+    payload = f"{workspace.id}:{user_id}:{expires}:{','.join(requested_scopes)}".encode()
     return f"{_b64(payload)}.{_sign(workspace.password_hash, payload)}"
 
 
-def verify(workspace, ticket: Optional[str]) -> bool:
-    """True if `ticket` is a live, untampered ticket for THIS workspace.
+def verify(workspace, ticket: Optional[str], required_scope: str) -> bool:
+    """True for a live ticket bound to this workspace and route scope.
 
     The workspace is the caller's, resolved from the request before we get
     here, so a valid ticket for workspace A presented against workspace B
@@ -73,14 +85,17 @@ def verify(workspace, ticket: Optional[str]) -> bool:
         return False
     try:
         payload = _unb64(encoded)
-        workspace_id, _, rest = payload.decode().partition(":")
-        _user_id, _, expires = rest.rpartition(":")
+        workspace_id, user_id, expires, scopes_text = payload.decode().split(":", 3)
         expires_at = int(expires)
+        scopes = set(scopes_text.split(","))
     except Exception:
         return False
 
     if not hmac.compare_digest(signature, _sign(workspace.password_hash, payload)):
         return False
     if workspace_id != str(workspace.id):
+        return False
+    if (not user_id or str(workspace.owner_user_id) != user_id
+            or required_scope not in _ALLOWED_SCOPES or required_scope not in scopes):
         return False
     return time.time() < expires_at

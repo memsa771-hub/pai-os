@@ -64,6 +64,25 @@ INLINE_SAFE_CONTENT_TYPES = {
     "image/x-icon",
 }
 
+_UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
+
+
+async def _read_upload_limited(upload: UploadFile) -> Optional[bytes]:
+    """Read at most MAX_FILE_SIZE bytes, without an unbounded read()."""
+    declared_size = getattr(upload, "size", None)
+    if declared_size is not None and declared_size > config.MAX_FILE_SIZE:
+        return None
+    data = bytearray()
+    while True:
+        chunk = await upload.read(
+            min(_UPLOAD_READ_CHUNK_SIZE, config.MAX_FILE_SIZE + 1 - len(data))
+        )
+        if not chunk:
+            return bytes(data)
+        data.extend(chunk)
+        if len(data) > config.MAX_FILE_SIZE:
+            return None
+
 
 def _organize_filename(filename: str, content_type: str) -> str:
     """Put uploaded files into uploaded_files/ with a timestamped name."""
@@ -389,28 +408,13 @@ async def upload_file(
 
     Accepts multipart/form-data (UI uploads) or JSON body (agent uploads).
     """
-    # Determine if this is multipart or we need to parse JSON from body
-    if file and file.filename and network:
-        # Multipart upload
-        data = await file.read()
-        content_type = file.content_type or "application/octet-stream"
-        filename = _organize_filename(file.filename, content_type)
-        network_id = network
-    else:
+    if not (file and file.filename and network):
         return json_response(ResponseCode.BAD_REQUEST, "Missing required fields: file and network")
 
-    # Validate size
-    if len(data) > config.MAX_FILE_SIZE:
-        return json_response(
-            ResponseCode.BAD_REQUEST,
-            f"File too large. Maximum size: {config.MAX_FILE_SIZE // (1024*1024)}MB",
-        )
-
-    # Resolve workspace
-    workspace = _resolve_workspace(db, network_id)
+    # Authenticate before spending I/O or memory on the upload body.
+    workspace = _resolve_workspace(db, network)
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Network not found")
-
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
@@ -420,6 +424,15 @@ async def upload_file(
     )
     if not actor_source:
         return json_response(ResponseCode.UNAUTHORIZED, "Unidentified caller")
+
+    data = await _read_upload_limited(file)
+    if data is None:
+        return json_response(
+            ResponseCode.BAD_REQUEST,
+            f"File too large. Maximum size: {config.MAX_FILE_SIZE // (1024*1024)}MB",
+        )
+    content_type = file.content_type or "application/octet-stream"
+    filename = _organize_filename(file.filename, content_type)
     uploaded_by = actor_source
 
     # Save to storage backend (use basename for physical storage, full path for DB)
@@ -653,9 +666,13 @@ async def upload_file_from_url(
             )
         return json_response(ResponseCode.BAD_REQUEST, str(e), data={"error_code": code})
     except httpx.HTTPError as e:
+        logger.warning(
+            "file download failed error_type=%s",
+            type(e).__name__,
+        )
         return json_response(
             ResponseCode.BAD_REQUEST,
-            f"Download failed: {e}",
+            "Download failed",
             data={"error_code": "DOWNLOAD_FAILED"},
         )
 
@@ -856,8 +873,8 @@ async def upload_files_to_folder(
             skipped.append({"filename": upload.filename, "reason": "invalid_name"})
             continue
 
-        data = await upload.read()
-        if len(data) > config.MAX_FILE_SIZE:
+        data = await _read_upload_limited(upload)
+        if data is None:
             skipped.append({
                 "filename": name,
                 "reason": "too_large",
@@ -1692,7 +1709,7 @@ async def download_file(
     # that expires in minutes — see app/stream_ticket.py.
     if not (
         _verify_workspace_access(workspace, x_workspace_token, authorization)
-        or stream_ticket.verify(workspace, ticket)
+        or stream_ticket.verify(workspace, ticket, stream_ticket.FILES_SCOPE)
     ):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 

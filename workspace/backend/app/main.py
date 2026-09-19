@@ -8,6 +8,9 @@ A workspace is an ONM network with workspace-specific mods loaded.
 import asyncio
 import logging
 import os
+import re
+import time
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -443,17 +446,26 @@ async def lifespan(app: FastAPI):
     await BrowserManager.get().shutdown()
 
 
+IS_PRODUCTION = config.APP_ENV.strip().lower() == "production"
+
 app = FastAPI(
     title="Placement AI Workspace",
     description="Managed agent collaboration environment built on the OpenAgents Network Model",
     version="0.1.0",
     lifespan=lifespan,
+    docs_url=None if IS_PRODUCTION else "/docs",
+    redoc_url=None if IS_PRODUCTION else "/redoc",
+    openapi_url=None if IS_PRODUCTION else "/openapi.json",
 )
 
 # CORS — added FIRST so it's innermost in the stack. That way CORS
 # headers (and OPTIONS preflight handling) are applied BEFORE gzip, so
 # CORS-aware responses still work when compressed.
 origins = [o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()]
+if IS_PRODUCTION and origins != ["https://app.placement-ai.com"]:
+    raise RuntimeError(
+        "Production CORS_ORIGINS must be exactly https://app.placement-ai.com"
+    )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -493,27 +505,42 @@ class NoTransformCompressionHeadersMiddleware(BaseHTTPMiddleware):
 app.add_middleware(NoTransformCompressionHeadersMiddleware)
 
 
-class UserAgentLogMiddleware(BaseHTTPMiddleware):
-    """Log User-Agent on every POST so we can tell which client (iPhone
-    URLSession vs Mac vs Chrome) is calling each mutating endpoint.
-    GETs are excluded because /v1/events polling would drown the logs.
-    Temporary: paired with the validation logger to chase a missing
-    /v1/devices/register call from the iPhone.
-    """
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _safe_route_path(request: Request) -> str:
+    """Use the route template; raw paths can themselves contain credentials."""
+    route = request.scope.get("route")
+    return getattr(route, "path", "<unmatched>")
+
+
+class SafeAccessLogMiddleware(BaseHTTPMiddleware):
+    """Log request shape without query strings, credentials, or request bodies."""
 
     async def dispatch(self, request: Request, call_next):
+        supplied_id = request.headers.get("x-request-id", "")
+        request_id = supplied_id if _REQUEST_ID_RE.fullmatch(supplied_id) else uuid.uuid4().hex
+        started = time.monotonic()
         response = await call_next(request)
-        if request.method == "POST":
+        response.headers["x-request-id"] = request_id
+        response.headers["x-content-type-options"] = "nosniff"
+        response.headers["referrer-policy"] = "strict-origin-when-cross-origin"
+        response.headers["content-security-policy"] = "frame-ancestors 'none'"
+        response.headers["permissions-policy"] = "camera=(), microphone=(), geolocation=()"
+        # Successful GET event polls are frequent; retain errors and mutations.
+        if request.method != "GET" or response.status_code >= 400:
             logger.info(
-                "POST %s ua=%s status=%s",
-                request.url.path,
-                request.headers.get("user-agent", "<none>"),
+                "request method=%s path=%s status=%s request_id=%s ms=%d",
+                request.method,
+                _safe_route_path(request),
                 response.status_code,
+                request_id,
+                int((time.monotonic() - started) * 1000),
             )
         return response
 
 
-app.add_middleware(UserAgentLogMiddleware)
+app.add_middleware(SafeAccessLogMiddleware)
 
 
 # Log Pydantic validation failures with the offending body so we can
@@ -557,7 +584,7 @@ async def _identity_unavailable(request: Request, exc: IdentityUnavailable):
     screen to explain it. 503 says "ask again", which is the truth, and both
     clients treat it as retryable.
     """
-    logger.warning("identity provider unavailable on %s: %s", request.url.path, exc)
+    logger.warning("identity provider unavailable on %s", _safe_route_path(request))
     return json_response(
         ResponseCode.INTERNAL_ERROR,
         "Sign-in is temporarily unavailable. Please try again.",
@@ -569,7 +596,7 @@ async def _identity_unavailable(request: Request, exc: IdentityUnavailable):
 async def _log_validation_errors(request: Request, exc: RequestValidationError):
     safe_errors = _redacted_validation_errors(exc)
     logger.warning(
-        "validation 422 path=%s errors=%s", request.url.path, safe_errors,
+        "validation 422 path=%s errors=%s", _safe_route_path(request), safe_errors,
     )
     # The response is for the caller, who already knows what they sent — but it
     # is echoed into browser consoles and client logs, so it gets the same
@@ -577,6 +604,31 @@ async def _log_validation_errors(request: Request, exc: RequestValidationError):
     return _ValidationJSONResponse(
         status_code=422, content={"detail": safe_errors},
     )
+
+
+async def _unexpected_error(request: Request, exc: Exception):
+    """Keep internal exception details in server logs, never public responses."""
+    request_id = request.headers.get("x-request-id", "")
+    if not _REQUEST_ID_RE.fullmatch(request_id):
+        request_id = uuid.uuid4().hex
+    logger.error(
+        "unhandled exception method=%s path=%s request_id=%s error_type=%s",
+        request.method,
+        _safe_route_path(request),
+        request_id,
+        type(exc).__name__,
+    )
+    response = json_response(
+        ResponseCode.INTERNAL_ERROR,
+        "Internal server error",
+        status_code=500,
+    )
+    response.headers["x-request-id"] = request_id
+    return response
+
+
+if IS_PRODUCTION:
+    app.add_exception_handler(Exception, _unexpected_error)
 
 
 # Routers

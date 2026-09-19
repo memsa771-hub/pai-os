@@ -453,10 +453,11 @@ async def open_tab(
         result = await manager.open_tab(tab_id, body.url or "about:blank", bb_context_id=bb_context_id, api_key=bf_key)
     except UnsafeURLError as e:
         return json_response(ResponseCode.BAD_REQUEST, str(e), data={"error_code": e.code})
-    except RuntimeError as e:
-        return json_response(ResponseCode.BAD_REQUEST, str(e))
-    except Exception as e:
-        logger.error("Failed to open browser tab: %s", e)
+    except RuntimeError as exc:
+        logger.warning("Browser tab could not be opened error_type=%s", type(exc).__name__)
+        return json_response(ResponseCode.BAD_REQUEST, "Browser session could not be started")
+    except Exception as exc:
+        logger.error("Failed to open browser tab error_type=%s", type(exc).__name__)
         return json_response(ResponseCode.INTERNAL_ERROR, "Failed to open browser tab")
 
     # Update context last_used_at
@@ -628,8 +629,8 @@ async def navigate_tab(
 
     try:
         await _ensure_connected(tab, db, workspace)
-    except BrowserCredentialError as e:
-        return json_response(ResponseCode.BAD_REQUEST, str(e))
+    except BrowserCredentialError:
+        return json_response(ResponseCode.BAD_REQUEST, "Browser credentials unavailable")
     manager = BrowserManager.get()
     try:
         result = await manager.navigate(tab_id, body.url)
@@ -762,9 +763,9 @@ async def click_tab(
         result = await manager.click(tab_id, body.selector)
     except KeyError:
         return json_response(ResponseCode.NOT_FOUND, "Browser tab not found in browser")
-    except Exception as e:
-        logger.error("Click failed: %s", e)
-        return json_response(ResponseCode.INTERNAL_ERROR, f"Click failed: {e}")
+    except Exception as exc:
+        logger.error("Click failed error_type=%s", type(exc).__name__)
+        return json_response(ResponseCode.INTERNAL_ERROR, "Browser action failed")
 
     tab.url = result.get("url", tab.url)
     tab.title = result.get("title", tab.title)
@@ -798,16 +799,16 @@ async def type_in_tab(
 
     try:
         await _ensure_connected(tab, db, workspace)
-    except BrowserCredentialError as e:
-        return json_response(ResponseCode.BAD_REQUEST, str(e))
+    except BrowserCredentialError:
+        return json_response(ResponseCode.BAD_REQUEST, "Browser credentials unavailable")
     manager = BrowserManager.get()
     try:
         await manager.type_text(tab_id, body.selector, body.text, append=body.append)
     except KeyError:
         return json_response(ResponseCode.NOT_FOUND, "Browser tab not found in browser")
-    except Exception as e:
-        logger.error("Type failed: %s", e)
-        return json_response(ResponseCode.INTERNAL_ERROR, f"Type failed: {e}")
+    except Exception as exc:
+        logger.error("Type failed error_type=%s", type(exc).__name__)
+        return json_response(ResponseCode.INTERNAL_ERROR, "Browser action failed")
 
     _touch(tab)
     db.flush()
@@ -839,16 +840,16 @@ async def press_key_in_tab(
 
     try:
         await _ensure_connected(tab, db, workspace)
-    except BrowserCredentialError as e:
-        return json_response(ResponseCode.BAD_REQUEST, str(e))
+    except BrowserCredentialError:
+        return json_response(ResponseCode.BAD_REQUEST, "Browser credentials unavailable")
     manager = BrowserManager.get()
     try:
         await manager.press_key(tab_id, body.key)
     except KeyError:
         return json_response(ResponseCode.NOT_FOUND, "Browser tab not found in browser")
-    except Exception as e:
-        logger.error("Press key failed: %s", e)
-        return json_response(ResponseCode.INTERNAL_ERROR, f"Press key failed: {e}")
+    except Exception as exc:
+        logger.error("Press key failed error_type=%s", type(exc).__name__)
+        return json_response(ResponseCode.INTERNAL_ERROR, "Browser action failed")
 
     _touch(tab)
     db.flush()
@@ -880,16 +881,16 @@ async def evaluate_in_tab(
 
     try:
         await _ensure_connected(tab, db, workspace)
-    except BrowserCredentialError as e:
-        return json_response(ResponseCode.BAD_REQUEST, str(e))
+    except BrowserCredentialError:
+        return json_response(ResponseCode.BAD_REQUEST, "Browser credentials unavailable")
     manager = BrowserManager.get()
     try:
         result = await manager.evaluate(tab_id, body.expression)
     except KeyError:
         return json_response(ResponseCode.NOT_FOUND, "Browser tab not found in browser")
-    except Exception as e:
-        logger.error("Evaluate failed: %s", e)
-        return json_response(ResponseCode.INTERNAL_ERROR, f"Evaluate failed: {e}")
+    except Exception as exc:
+        logger.error("Evaluate failed error_type=%s", type(exc).__name__)
+        return json_response(ResponseCode.INTERNAL_ERROR, "Browser action failed")
 
     _touch(tab)
     db.flush()

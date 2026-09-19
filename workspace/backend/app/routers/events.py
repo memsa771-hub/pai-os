@@ -975,7 +975,7 @@ async def stream_events(
         # and expires in minutes (see app/stream_ticket.py).
         if not (
             _verify_workspace_access(workspace, x_workspace_token, authorization)
-            or stream_ticket.verify(workspace, ticket)
+            or stream_ticket.verify(workspace, ticket, stream_ticket.EVENTS_SCOPE)
         ):
             return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
         workspace_id = str(workspace.id)

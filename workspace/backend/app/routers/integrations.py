@@ -408,8 +408,9 @@ def slack_oauth_callback(
 
     try:
         grant = svc.slack_oauth_access(code)
-    except ValueError as exc:
-        return bounce(ws_ref, ok=False, detail=str(exc))
+    except ValueError:
+        logger.warning("integrations: Slack rejected the OAuth exchange")
+        return bounce(ws_ref, ok=False, detail="Slack authorization was rejected")
     except Exception:
         logger.exception("integrations: slack oauth exchange failed")
         return bounce(ws_ref, ok=False, detail="could not reach Slack")

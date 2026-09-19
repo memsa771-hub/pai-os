@@ -5,4 +5,4 @@ set -e
 # PORT remains a generic optional container override. Back-pressure is handled
 # by the bounded SQLAlchemy pool and AnyIO thread limiter.
 exec uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" \
-    --workers "${WEB_CONCURRENCY:-1}"
+    --workers "${WEB_CONCURRENCY:-1}" --no-access-log

@@ -570,8 +570,8 @@ async def google_oauth_callback(
             r.raise_for_status()
             tokens = r.json()
     except Exception as exc:
-        logger.exception("Google OAuth token exchange failed")
-        return _oauth_error_page(f"Token exchange failed: {exc}")
+        logger.error("Google OAuth token exchange failed error_type=%s", type(exc).__name__)
+        return _oauth_error_page("Token exchange failed. Please try again.")
 
     access_token = tokens.get("access_token", "")
     refresh_token = tokens.get("refresh_token", "")

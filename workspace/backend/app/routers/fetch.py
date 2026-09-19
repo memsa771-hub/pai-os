@@ -614,10 +614,10 @@ async def _run_fetch_chain(body: FetchRequest, workspace, db: Session, trace: di
             return fail(ResponseCode.BAD_REQUEST, str(e), e.code)
         except BrowserNavigationError as e:
             return fail(ResponseCode.BAD_REQUEST, str(e), e.code)
-        except httpx.TimeoutException as e:
-            static_error = ("NAV_TIMEOUT", f"Static fetch timed out after {STATIC_TIMEOUT_SECONDS}s: {e}")
+        except httpx.TimeoutException:
+            static_error = ("NAV_TIMEOUT", "Static fetch timed out")
         except httpx.HTTPError as e:
-            static_error = (classify_navigation_error(e), f"Static fetch failed: {e}")
+            static_error = (classify_navigation_error(e), "Static fetch failed")
 
     if static_result is not None:
         trace["status"] = static_result["status_code"]
@@ -669,9 +669,13 @@ async def _run_fetch_chain(body: FetchRequest, workspace, db: Session, trace: di
         return fail(ResponseCode.BAD_REQUEST, str(e), e.code)
     except BrowserNavigationError as e:
         code = "JS_RENDER_TIMEOUT" if e.code == "NAV_TIMEOUT" else e.code
-        return fail(ResponseCode.BAD_REQUEST, f"Browser render failed: {e}", code)
+        return fail(ResponseCode.BAD_REQUEST, "Browser render failed", code)
     except Exception as e:
-        logger.error("Ephemeral render failed for %s: %s", _redact_url(body.url), e)
+        logger.error(
+            "Ephemeral render failed for %s error_type=%s",
+            _redact_url(body.url),
+            type(e).__name__,
+        )
         # If the static tier had usable content, degrade gracefully to it
         if static_result is not None:
             extracted = _extract_text(static_result["html"], static_result["final_url"])

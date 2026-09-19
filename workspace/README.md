@@ -86,3 +86,29 @@ but another process cannot deliver a duplicate.
 
 `NEXT_PUBLIC_*` variables are compiled into the frontend image. Rebuild the
 frontend when they change, and never put backend secrets into those variables.
+
+## Production security operations
+
+FastAPI documentation and OpenAPI metadata are disabled when `APP_ENV` is
+`production`. Uvicorn's raw access log is also disabled because it includes the
+query string; the application emits method, route template, status, duration,
+and request ID for mutations and failed requests without query parameters.
+Keep cloudflared at normal informational logging:
+debug-level cloudflared or Cloudflare request logs may still record full URLs,
+including short-lived stream tickets, and cannot be redacted by this app.
+
+Use Cloudflare rate-limiting rules as the distributed abuse-control layer. At
+minimum, apply separate rules to `/v1/auth/sign-in-username`,
+`/v1/auth/username-available`, `/v1/account/stream-ticket`, `/v1/files`,
+`/v1/files/upload`, `/v1/fetch`, `/v1/search/images`, and `/v1/browser/*`.
+Start with monitored/challenge rules, account for campuses sharing one public
+IP, then tighten thresholds from observed legitimate traffic. The backend's
+existing sign-in and fetch counters are process-local safeguards, not a
+replacement for Cloudflare's distributed limits.
+
+The browser currently persists its Supabase session in `localStorage`. That is
+standard bearer-token behavior but makes prevention of same-origin XSS
+critical. This release sets clickjacking, referrer, MIME-sniffing, and browser
+capability headers. A full script/style CSP and an HttpOnly-cookie session
+design need a separately tested authentication change because a blind CSP or
+cookie migration could break Next.js, analytics, OAuth, and desktop sign-in.

@@ -9,6 +9,12 @@
 :80 {
 	@app host app.placement-ai.com
 	handle @app {
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			Content-Security-Policy "frame-ancestors 'none'"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		}
 		reverse_proxy frontend:3000 {
 			header_up Host {host}
 			header_up X-Forwarded-Proto https
@@ -17,6 +23,12 @@
 
 	@api host api.placement-ai.com
 	handle @api {
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+			Content-Security-Policy "frame-ancestors 'none'"
+			Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		}
 		reverse_proxy backend:8000 {
 			header_up Host {host}
 			header_up X-Forwarded-Proto https
