@@ -8,7 +8,7 @@ import {
 } from "../../shared/appearance-bridge"
 
 import { openExternalSafely } from "../web-security"
-import { apiBase } from "./endpoints"
+import { apiBase, webBase } from "./endpoints"
 import { WorkspaceHost, type ViewBounds } from "../workspace-host"
 import { AccountManager, type AccountWorkspace } from "./account"
 import type { AccountInfo } from "./session-store"
@@ -157,6 +157,9 @@ export function registerAccountIpc(deps: AccountIpcDeps): AccountManager {
       // Sending what main itself uses keeps the two halves of one window
       // talking to one backend, in every configuration.
       apiUrl: apiBase(deps.endpoint()),
+      // Public links must point at the browser-facing app, never at the
+      // embedded view's internal pai://workspace origin.
+      appUrl: webBase(deps.endpoint()),
       theme,
       locale: toWorkspaceLocale(language),
     }

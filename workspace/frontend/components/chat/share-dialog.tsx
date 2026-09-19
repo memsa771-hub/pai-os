@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { workspaceApi } from '@/lib/api';
+import { publicAppUrl } from '@/lib/desktop-host';
 import { useT } from '@/lib/i18n';
 
 interface ShareDialogProps {
@@ -36,7 +37,7 @@ export function ShareDialog({ open, onOpenChange, sessionId }: ShareDialogProps)
     setError(null);
     try {
       const result = await workspaceApi.createShare(sessionId);
-      const url = `${window.location.origin}/share/${result.shareToken}`;
+      const url = publicAppUrl(`/share/${encodeURIComponent(result.shareToken)}`);
       setShareUrl(url);
     } catch (err) {
       setError(err instanceof Error ? err.message : t('share.createFailed'));

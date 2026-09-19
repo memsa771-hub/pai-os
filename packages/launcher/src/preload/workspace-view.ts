@@ -51,6 +51,7 @@ interface EmbeddedSession {
 interface HostConfig {
   session: EmbeddedSession | null
   apiUrl?: string
+  appUrl?: string
   theme: "light" | "dark" | "system"
   locale: string
 }
@@ -119,6 +120,8 @@ contextBridge.exposeInMainWorld("__paiHost__", {
    * desktop app, moments after the user had signed in.
    */
   session: config?.session ?? null,
+  /** Browser-facing origin used for public links created in the desktop app. */
+  appUrl: config?.appUrl,
   signIn: () => ipcRenderer.send("workspace-view:sign-in"),
   signOut: () => ipcRenderer.send("workspace-view:sign-out"),
   /** The account's session changed in main (a renewal). Returns an unsubscribe function. */

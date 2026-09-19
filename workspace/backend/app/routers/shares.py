@@ -56,12 +56,6 @@ def _serialize_snapshot(s: ShareSnapshot) -> dict:
     }
 
 
-def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
-    if authorization and authorization.lower().startswith("bearer "):
-        return authorization[7:].strip()
-    return None
-
-
 # ---------------------------------------------------------------------------
 # POST /v1/shares — create a snapshot
 # ---------------------------------------------------------------------------
@@ -77,8 +71,10 @@ async def create_share(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
-    bearer = _extract_bearer(authorization)
-    if not _verify_workspace_access(workspace, x_workspace_token, bearer):
+    # Pass the complete Authorization header. The shared verifier owns bearer
+    # parsing; extracting here as well strips the "Bearer " prefix twice and
+    # rejects every valid web/desktop user with 401.
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Unauthorized")
 
     channel_target = f"channel/{body.channel}"
@@ -180,8 +176,7 @@ async def list_shares(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
-    bearer = _extract_bearer(authorization)
-    if not _verify_workspace_access(workspace, x_workspace_token, bearer):
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Unauthorized")
 
     snapshots = db.execute(
@@ -212,8 +207,7 @@ async def delete_share(
     if not workspace:
         return json_response(ResponseCode.NOT_FOUND, "Workspace not found")
 
-    bearer = _extract_bearer(authorization)
-    if not _verify_workspace_access(workspace, x_workspace_token, bearer):
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Unauthorized")
 
     snapshot = db.execute(
