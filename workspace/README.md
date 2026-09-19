@@ -17,7 +17,8 @@ Internet -> Cloudflare -> host cloudflared systemd service
          -> api.placement-ai.com -> backend:8000
 ```
 
-- AWS RDS PostgreSQL is canonical and external to Compose.
+- PostgreSQL 16 runs in Docker on the same EC2 host. Its `pgdata` volume is
+  canonical and persistent; PostgreSQL has no published host port.
 - AWS S3 stores uploaded files. boto3 uses the EC2 IAM Instance Role through
   its standard credential provider chain; do not create static AWS access keys.
 - Redis is an internal, non-canonical cache/PubSub service. It stores only
@@ -39,17 +40,16 @@ app.placement-ai.com -> http://127.0.0.1:8080
 api.placement-ai.com -> http://127.0.0.1:8080
 ```
 
-Production Compose publishes exactly `127.0.0.1:8080:80`. Backend, frontend,
-Redis, Qdrant, and RDS are never published by Compose.
+Production Compose publishes exactly `127.0.0.1:8080:80`. PostgreSQL, backend,
+frontend, Redis, and Qdrant are reachable only on the private Docker network.
 
 ## Production deployment
 
 Copy `.env.production.example` to an untracked `.env` on EC2 and replace every
-required placeholder. `DATABASE_URL` should be an RDS URL such as:
-
-```text
-postgresql://USER:PASSWORD@RDS_HOST:5432/openagents_workspace?sslmode=require
-```
+required placeholder. Set `DB_PASSWORD` to a strong URL-safe random value (for
+example, `openssl rand -hex 32`). Compose builds the internal `DATABASE_URL`
+from `DB_USER`, `DB_PASSWORD`, and the private `postgres` service unless an
+explicit `DATABASE_URL` override is set.
 
 The S3 bucket must exist in `S3_REGION`, and the EC2 IAM role needs the required
 object permissions. Production expects Browser Fabric when
@@ -66,7 +66,18 @@ docker compose --env-file .env -f docker-compose.prod.yml up -d
 ```
 
 The one-shot `migrate` service runs `alembic upgrade head`. Backend and worker
-start only after it succeeds. A failed migration therefore stops deployment.
+start only after PostgreSQL is healthy and the migration succeeds. A failed
+migration therefore stops deployment.
+
+Create a local custom-format PostgreSQL backup with:
+
+```bash
+./scripts/backup-postgres.sh
+```
+
+The script writes to the ignored `backups/` directory by default. These files
+can later be copied to S3. Backups are not automatic: schedule the script and
+test restores before relying on it for disaster recovery.
 
 Timers use a conditional database update committed before event delivery. This
 makes claims safe across multiple Uvicorn processes and gives timer delivery

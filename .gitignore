@@ -272,6 +272,7 @@ deploy/
 ---
 # APNs auth keys (Apple Push Notification service .p8 private keys)
 workspace/backend/secrets/
+workspace/backups/
 *.p8
 
 # End-to-end test credentials (tests/end_to_end/agents.example.json is the template)

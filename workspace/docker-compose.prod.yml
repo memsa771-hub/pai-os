@@ -1,6 +1,6 @@
 x-backend-env: &backend-env
   APP_ENV: production
-  DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must point to AWS RDS}
+  DATABASE_URL: ${DATABASE_URL:-postgresql://${DB_USER:-pai_admin}:${DB_PASSWORD}@postgres:5432/openagents_workspace}
   AUTH_MODE: ${AUTH_MODE:-workspace_token}
   IDENTITY_MODE: ${IDENTITY_MODE:-standalone}
   CORS_ORIGINS: ${CORS_ORIGINS:-https://app.placement-ai.com}
@@ -58,10 +58,30 @@ x-logging: &default-logging
   options: {max-size: "10m", max-file: "5"}
 
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: openagents_workspace
+      POSTGRES_USER: ${DB_USER:-pai_admin}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks: [private]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    logging: *default-logging
+
   migrate:
     <<: *backend-image
     environment: *backend-env
     entrypoint: ["alembic", "upgrade", "head"]
+    depends_on:
+      postgres: {condition: service_healthy}
     restart: "no"
     networks: [private]
     logging: *default-logging
@@ -70,6 +90,7 @@ services:
     <<: *backend-image
     environment: *backend-env
     depends_on:
+      postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       redis: {condition: service_healthy}
       qdrant: {condition: service_started}
@@ -88,6 +109,7 @@ services:
     environment: *backend-env
     entrypoint: ["python", "-m", "app.jobs.worker"]
     depends_on:
+      postgres: {condition: service_healthy}
       migrate: {condition: service_completed_successfully}
       qdrant: {condition: service_started}
     restart: unless-stopped
@@ -154,4 +176,5 @@ networks:
   private:
 
 volumes:
+  pgdata:
   qdrant_data:
