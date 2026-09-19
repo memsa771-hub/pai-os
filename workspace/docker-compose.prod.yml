@@ -24,6 +24,8 @@ x-backend-env: &backend-env
   BROWSERFABRIC_URL: ${BROWSERFABRIC_URL:-https://api.browserfabric.com}
   BROWSERFABRIC_PROVISION_SECRET: ${BROWSERFABRIC_PROVISION_SECRET:-}
   REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  REDIS_CONNECT_TIMEOUT: ${REDIS_CONNECT_TIMEOUT:-0.5}
+  REDIS_SOCKET_TIMEOUT: ${REDIS_SOCKET_TIMEOUT:-0.5}
   MEMORY_VECTOR_BACKEND: ${MEMORY_VECTOR_BACKEND:-qdrant}
   QDRANT_URL: ${QDRANT_URL:-http://qdrant:6333}
   QDRANT_API_KEY: ${QDRANT_API_KEY:-}
@@ -87,7 +89,6 @@ services:
     entrypoint: ["python", "-m", "app.jobs.worker"]
     depends_on:
       migrate: {condition: service_completed_successfully}
-      redis: {condition: service_healthy}
       qdrant: {condition: service_started}
     restart: unless-stopped
     networks: [private]
@@ -110,8 +111,17 @@ services:
     logging: *default-logging
 
   redis:
-    image: redis:7-alpine
-    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    image: redis:7.4-alpine
+    command:
+      - redis-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-256mb}
+      - --maxmemory-policy
+      - allkeys-lru
     restart: unless-stopped
     networks: [private]
     healthcheck:
@@ -119,6 +129,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+      start_period: 5s
     logging: *default-logging
 
   qdrant:

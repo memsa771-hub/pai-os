@@ -41,6 +41,11 @@ x-backend-env: &backend-env
   PAI_MEMORY_CONTEXT_MAX_CHARS: ${PAI_MEMORY_CONTEXT_MAX_CHARS:-2500}
   PAI_MEMORY_FOREGROUND_WORKERS: ${PAI_MEMORY_FOREGROUND_WORKERS:-4}
   PAI_MEMORY_FOREGROUND_MAX_INFLIGHT: ${PAI_MEMORY_FOREGROUND_MAX_INFLIGHT:-8}
+  # Redis is optional application state: cache, composing TTLs, webhook dedupe,
+  # and Pub/Sub only. PostgreSQL remains canonical.
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
+  REDIS_CONNECT_TIMEOUT: ${REDIS_CONNECT_TIMEOUT:-0.5}
+  REDIS_SOCKET_TIMEOUT: ${REDIS_SOCKET_TIMEOUT:-0.5}
 
 services:
   db:
@@ -77,6 +82,17 @@ services:
       retries: 5
       start_period: 20s
 
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "${REDIS_MAXMEMORY:-256mb}", "--maxmemory-policy", "allkeys-lru"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
   backend:
     build:
       context: ./backend
@@ -87,6 +103,8 @@ services:
       - "8000:8000"
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - ./backend:/app

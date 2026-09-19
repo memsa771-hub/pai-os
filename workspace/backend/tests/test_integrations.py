@@ -241,7 +241,7 @@ def test_slack_rejects_bad_signature(client, slack_binding):
 
 
 def test_slack_message_bridges_into_channel(client, workspace, slack_binding, monkeypatch):
-    monkeypatch.setattr(svc, "slack_user_display_name", lambda tok, uid: "Jane Doe")
+    monkeypatch.setattr(svc, "slack_user_display_name", lambda tok, uid, bid="": "Jane Doe")
     resp = _slack_post(client, slack_binding["id"], {
         "type": "event_callback",
         "event_id": "Ev123",
@@ -408,7 +408,7 @@ def _shared_slack_post(client, body: dict):
 
 
 def test_shared_events_routes_by_team_id(client, workspace, official_binding, monkeypatch):
-    monkeypatch.setattr(svc, "slack_user_display_name", lambda tok, uid: "Bob")
+    monkeypatch.setattr(svc, "slack_user_display_name", lambda tok, uid, bid="": "Bob")
     resp = _shared_slack_post(client, {
         "type": "event_callback",
         "event_id": "EvShared1",

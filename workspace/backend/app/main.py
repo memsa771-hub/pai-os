@@ -436,6 +436,8 @@ async def lifespan(app: FastAPI):
         await timer_task
     except asyncio.CancelledError:
         pass
+    from app.cache import close_redis
+    await close_redis()
     # Shutdown: close Playwright browser
     from app.browser import BrowserManager
     await BrowserManager.get().shutdown()

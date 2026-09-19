@@ -1,175 +1,274 @@
 # -*- coding: utf-8 -*-
-"""
-Lightweight Redis cache helper.
+"""Best-effort Redis cache and Pub/Sub helpers.
 
-Used to deduplicate high-frequency identical requests (e.g. /v1/events polls
-from many agents with the same query params within a 1-second window). The
-cache is intentionally dumb: read-through with a short TTL, no invalidation.
-Correctness comes from the TTL being short enough that freshness is
-acceptable for the use case (poll loops).
-
-If REDIS_URL is not set, or Redis is unreachable, everything becomes a
-no-op and callers fall through to their normal code path. Failures are
-logged at debug level only — the backend must still serve requests when
-Redis is down.
+Redis stores only disposable, reconstructible data: bounded-TTL caches,
+composing indicators, webhook dedupe markers, and Pub/Sub messages. PostgreSQL
+remains authoritative. Every failure therefore degrades to a cache miss or a
+closed SSE stream, never an authorization success.
 """
 
 import asyncio
 import json
 import logging
-import os
+import threading
+import time
 from typing import Any, AsyncGenerator, Callable, Optional
+
+from app.config import config
 
 logger = logging.getLogger(__name__)
 
-_REDIS_URL = os.environ.get("REDIS_URL", "").strip()
+_RETRY_INITIAL_SECONDS = 0.25
+_RETRY_MAX_SECONDS = 5.0
+
 _client = None
-_disabled = not _REDIS_URL
+_sync_lock = threading.Lock()
+_sync_next_retry = 0.0
+_sync_backoff = _RETRY_INITIAL_SECONDS
+_sync_ever_connected = False
+_sync_unavailable_logged = False
+
+_async_redis = None
+_async_lock = None
+_async_next_retry = 0.0
+_async_backoff = _RETRY_INITIAL_SECONDS
+_async_ever_connected = False
+_async_unavailable_logged = False
+
+
+def _safe_endpoint() -> str:
+    """Return a credential-free endpoint suitable for logs."""
+    if not config.REDIS_URL:
+        return "disabled"
+    try:
+        from urllib.parse import urlsplit
+
+        parsed = urlsplit(config.REDIS_URL)
+        host = parsed.hostname or "unknown"
+        port = f":{parsed.port}" if parsed.port else ""
+        return f"{parsed.scheme}://{host}{port}{parsed.path or ''}"
+    except Exception:
+        return "configured endpoint"
+
+
+def _close_sync_client(client) -> None:
+    if client is None:
+        return
+    try:
+        client.close()
+    except Exception:
+        try:
+            client.connection_pool.disconnect()
+        except Exception:
+            pass
+
+
+def _sync_failed(exc: Exception) -> None:
+    """Discard a broken sync client and schedule a bounded reconnect."""
+    global _client, _sync_next_retry, _sync_backoff, _sync_unavailable_logged
+    with _sync_lock:
+        broken, _client = _client, None
+        _close_sync_client(broken)
+        _sync_next_retry = time.monotonic() + _sync_backoff
+        _sync_backoff = min(_sync_backoff * 2, _RETRY_MAX_SECONDS)
+        if not _sync_unavailable_logged:
+            logger.warning("Redis temporarily unavailable at %s: %s", _safe_endpoint(), exc)
+            _sync_unavailable_logged = True
 
 
 def _lazy_client():
-    """Initialize the Redis client on first use."""
-    global _client, _disabled
-    if _disabled or _client is not None:
+    """Return a healthy sync client, retrying after bounded shared backoff."""
+    global _client, _sync_next_retry, _sync_backoff
+    global _sync_ever_connected, _sync_unavailable_logged
+    if not config.REDIS_URL:
+        return None
+    if _client is not None:
         return _client
-    try:
-        import redis  # noqa: F401  — optional dep
-        _client = redis.Redis.from_url(
-            _REDIS_URL,
-            socket_timeout=0.25,          # 250ms: don't let Redis stalls slow requests
-            socket_connect_timeout=1.0,
-            retry_on_timeout=False,
-            decode_responses=False,       # we pass bytes
-            health_check_interval=30,
-        )
-        # Probe once on startup so we know connectivity works.
-        _client.ping()
-        logger.info("Redis cache: connected to %s", _REDIS_URL.split("@")[-1])
-    except Exception as e:
-        logger.warning("Redis cache disabled (connect failed): %s", e)
-        _disabled = True
-        _client = None
-    return _client
+    if time.monotonic() < _sync_next_retry:
+        return None
+
+    with _sync_lock:
+        if _client is not None:
+            return _client
+        if time.monotonic() < _sync_next_retry:
+            return None
+        candidate = None
+        try:
+            import redis
+
+            candidate = redis.Redis.from_url(
+                config.REDIS_URL,
+                socket_timeout=config.REDIS_SOCKET_TIMEOUT,
+                socket_connect_timeout=config.REDIS_CONNECT_TIMEOUT,
+                retry_on_timeout=False,
+                decode_responses=False,
+                health_check_interval=30,
+            )
+            candidate.ping()
+            _client = candidate
+            _sync_next_retry = 0.0
+            _sync_backoff = _RETRY_INITIAL_SECONDS
+            state = "reconnected" if _sync_ever_connected else "connected"
+            logger.info("Redis cache %s to %s", state, _safe_endpoint())
+            _sync_ever_connected = True
+            _sync_unavailable_logged = False
+            return _client
+        except Exception as exc:
+            _close_sync_client(candidate)
+            _sync_next_retry = time.monotonic() + _sync_backoff
+            _sync_backoff = min(_sync_backoff * 2, _RETRY_MAX_SECONDS)
+            if not _sync_unavailable_logged:
+                logger.warning("Redis temporarily unavailable at %s: %s", _safe_endpoint(), exc)
+                _sync_unavailable_logged = True
+            return None
 
 
 def get_bytes(key: str) -> Optional[bytes]:
-    """Return cached bytes, or None on miss/error/disabled."""
-    c = _lazy_client()
-    if c is None:
+    """Return cached bytes, or ``None`` on miss/unavailable Redis."""
+    client = _lazy_client()
+    if client is None:
         return None
     try:
-        return c.get(key)
-    except Exception as e:
-        logger.debug("Redis GET failed for %s: %s", key, e)
+        return client.get(key)
+    except Exception as exc:
+        _sync_failed(exc)
         return None
 
 
 def set_bytes(key: str, value: bytes, ttl_seconds: float) -> None:
-    """Store bytes with a TTL. Silent on failure."""
-    c = _lazy_client()
-    if c is None:
+    """Store bytes with a mandatory bounded TTL; silently degrade on failure."""
+    if ttl_seconds <= 0:
+        raise ValueError("Redis cache entries require a positive TTL")
+    client = _lazy_client()
+    if client is None:
         return
     try:
-        # Redis SET PX uses milliseconds; round up to avoid zero-ms TTL
-        px = max(1, int(round(ttl_seconds * 1000)))
-        c.set(key, value, px=px)
-    except Exception as e:
-        logger.debug("Redis SET failed for %s: %s", key, e)
+        client.set(key, value, px=max(1, int(round(ttl_seconds * 1000))))
+    except Exception as exc:
+        _sync_failed(exc)
 
 
 def delete_key(key: str) -> None:
-    """Delete a cache key. Silent on failure."""
-    c = _lazy_client()
-    if c is None:
+    """Delete one targeted cache key; silently degrade on failure."""
+    client = _lazy_client()
+    if client is None:
         return
     try:
-        c.delete(key)
-    except Exception as e:
-        logger.debug("Redis DELETE failed for %s: %s", key, e)
+        client.delete(key)
+    except Exception as exc:
+        _sync_failed(exc)
 
 
-def json_read_through(
-    key: str,
-    ttl_seconds: float,
-    compute: Callable[[], Any],
-) -> Any:
-    """Read-through JSON cache.
-
-    Returns the cached JSON value for ``key`` if present; otherwise calls
-    ``compute()``, caches its result for ``ttl_seconds``, and returns it.
-
-    ``compute`` must return a JSON-serializable object. Any exception from
-    ``compute`` propagates unchanged (we never cache errors).
-    """
+def json_read_through(key: str, ttl_seconds: float, compute: Callable[[], Any]) -> Any:
+    """Read JSON through Redis, falling back to the authoritative computation."""
     raw = get_bytes(key)
     if raw is not None:
         try:
             return json.loads(raw)
         except Exception:
-            # Corrupt entry — fall through to recompute and overwrite
-            pass
+            delete_key(key)
 
     value = compute()
     try:
-        set_bytes(key, json.dumps(value, separators=(",", ":")).encode("utf-8"), ttl_seconds)
-    except (TypeError, ValueError) as e:
-        # Not JSON-serializable — skip caching but still return the value
-        logger.debug("Skip cache for %s (not JSON-serializable): %s", key, e)
+        set_bytes(key, json.dumps(value, separators=(",", ":")).encode(), ttl_seconds)
+    except (TypeError, ValueError) as exc:
+        logger.debug("Skip cache for %s: %s", key, exc)
     return value
 
 
-# ---------------------------------------------------------------------------
-# Pub/Sub — used by SSE streaming
-# ---------------------------------------------------------------------------
-
 def publish_event(channel: str, data: bytes) -> None:
-    """Publish event data to a Redis pub/sub channel. Silent on failure."""
-    c = _lazy_client()
-    if c is None:
+    """Publish after database commit; Redis failure never fails the event."""
+    client = _lazy_client()
+    if client is None:
         return
     try:
-        c.publish(channel, data)
-    except Exception as e:
-        logger.debug("Redis PUBLISH failed for %s: %s", channel, e)
+        client.publish(channel, data)
+    except Exception as exc:
+        _sync_failed(exc)
 
 
-_async_redis = None
+def _get_async_lock():
+    global _async_lock
+    if _async_lock is None:
+        _async_lock = asyncio.Lock()
+    return _async_lock
+
+
+async def _close_async_client(client) -> None:
+    if client is None:
+        return
+    try:
+        await client.aclose()
+    except AttributeError:  # redis-py 4 compatibility
+        await client.close()
+    except Exception:
+        pass
+
+
+async def _async_failed(exc: Exception) -> None:
+    """Discard a broken async client so a later SSE request can reconnect."""
+    global _async_redis, _async_next_retry, _async_backoff, _async_unavailable_logged
+    lock = _get_async_lock()
+    async with lock:
+        broken, _async_redis = _async_redis, None
+        await _close_async_client(broken)
+        _async_next_retry = time.monotonic() + _async_backoff
+        _async_backoff = min(_async_backoff * 2, _RETRY_MAX_SECONDS)
+        if not _async_unavailable_logged:
+            logger.warning("Redis Pub/Sub temporarily unavailable at %s: %s", _safe_endpoint(), exc)
+            _async_unavailable_logged = True
 
 
 async def _lazy_async_client():
-    """Initialize an async Redis client for pub/sub subscriptions."""
-    global _async_redis
-    if _disabled:
+    """Return a healthy async client using the same bounded retry policy."""
+    global _async_redis, _async_next_retry, _async_backoff
+    global _async_ever_connected, _async_unavailable_logged
+    if not config.REDIS_URL:
         return None
     if _async_redis is not None:
         return _async_redis
-    try:
-        import redis.asyncio as aioredis
-        _async_redis = aioredis.from_url(
-            _REDIS_URL,
-            socket_timeout=5.0,
-            socket_connect_timeout=5.0,
-            decode_responses=False,
-        )
-        await _async_redis.ping()
-        logger.info("Redis async pub/sub: connected")
-    except Exception as e:
-        logger.warning("Redis async pub/sub disabled: %s", e)
-        _async_redis = None
-    return _async_redis
+    if time.monotonic() < _async_next_retry:
+        return None
+
+    lock = _get_async_lock()
+    async with lock:
+        if _async_redis is not None:
+            return _async_redis
+        if time.monotonic() < _async_next_retry:
+            return None
+        candidate = None
+        try:
+            import redis.asyncio as aioredis
+
+            candidate = aioredis.from_url(
+                config.REDIS_URL,
+                socket_timeout=config.REDIS_SOCKET_TIMEOUT,
+                socket_connect_timeout=config.REDIS_CONNECT_TIMEOUT,
+                retry_on_timeout=False,
+                decode_responses=False,
+                health_check_interval=30,
+            )
+            await candidate.ping()
+            _async_redis = candidate
+            _async_next_retry = 0.0
+            _async_backoff = _RETRY_INITIAL_SECONDS
+            state = "reconnected" if _async_ever_connected else "connected"
+            logger.info("Redis Pub/Sub %s to %s", state, _safe_endpoint())
+            _async_ever_connected = True
+            _async_unavailable_logged = False
+            return _async_redis
+        except Exception as exc:
+            await _close_async_client(candidate)
+            _async_next_retry = time.monotonic() + _async_backoff
+            _async_backoff = min(_async_backoff * 2, _RETRY_MAX_SECONDS)
+            if not _async_unavailable_logged:
+                logger.warning("Redis Pub/Sub temporarily unavailable at %s: %s", _safe_endpoint(), exc)
+                _async_unavailable_logged = True
+            return None
 
 
 async def subscribe_events(channel: str) -> AsyncGenerator[Optional[bytes], None]:
-    """Async generator that yields messages from a Redis pub/sub channel.
-
-    Yields raw ``bytes`` for each message, and ``None`` on idle ticks (roughly
-    once a second when no message is pending). The idle tick lets SSE consumers
-    emit keepalives and check for client disconnect even during long quiet
-    periods — without it, a stream that goes silent (e.g. an agent thinking on a
-    slow tool) sends zero bytes, and proxies / mobile networks drop the idle
-    connection, stranding the client on a stale "thinking…" state.
-
-    Caller is responsible for cleanup."""
+    """Yield Pub/Sub messages and idle ticks; close cleanly on Redis failure."""
     client = await _lazy_async_client()
     if client is None:
         return
@@ -177,17 +276,35 @@ async def subscribe_events(channel: str) -> AsyncGenerator[Optional[bytes], None
     try:
         await pubsub.subscribe(channel)
         while True:
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-            if msg and msg["type"] == "message":
-                yield msg["data"]
+            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
+            if message and message["type"] == "message":
+                yield message["data"]
             else:
                 yield None
                 await asyncio.sleep(0.05)
-    except Exception as e:
-        logger.debug("Redis subscribe error on %s: %s", channel, e)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        await _async_failed(exc)
     finally:
         try:
             await pubsub.unsubscribe(channel)
+        except Exception:
+            pass
+        try:
+            await pubsub.aclose()
+        except AttributeError:
             await pubsub.close()
         except Exception:
             pass
+
+
+async def close_redis() -> None:
+    """Close sync/async pools during application shutdown."""
+    global _client, _async_redis, _async_lock
+    with _sync_lock:
+        client, _client = _client, None
+        _close_sync_client(client)
+    async_client, _async_redis = _async_redis, None
+    await _close_async_client(async_client)
+    _async_lock = None

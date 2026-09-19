@@ -547,7 +547,7 @@ def _send_lark(binding, chat_id: str, sender: str, content: str) -> None:
 def lark_user_display_name(binding, open_id: str) -> str:
     """Resolve an open_id to a name (needs a contact scope; falls back to a
     short anonymous handle without it). Redis-cached for 1h."""
-    cache_key = f"integr:larkuser:{open_id}"
+    cache_key = f"integr:larkuser:{binding.id}:{open_id}"
     cached = cache.get_bytes(cache_key)
     if cached:
         return cached.decode("utf-8", "replace")
@@ -574,9 +574,11 @@ def lark_user_display_name(binding, open_id: str) -> str:
     return name
 
 
-def slack_user_display_name(bot_token: str, user_id: str) -> str:
+def slack_user_display_name(bot_token: str, user_id: str, binding_id: str = "") -> str:
     """Resolve a Slack user id to a display name, cached in Redis for 1h."""
-    cache_key = f"integr:slackuser:{user_id}"
+    # Slack user IDs are team-scoped. Include the Placement AI binding so one
+    # workspace can never consume another workspace's cached display name.
+    cache_key = f"integr:slackuser:{binding_id}:{user_id}"
     cached = cache.get_bytes(cache_key)
     if cached:
         return cached.decode("utf-8", "replace")

@@ -29,7 +29,9 @@ Internet -> Cloudflare -> host cloudflared systemd service
 - AWS RDS PostgreSQL is canonical and external to Compose.
 - AWS S3 stores uploaded files. boto3 uses the EC2 IAM Instance Role through
   its standard credential provider chain; do not create static AWS access keys.
-- Redis is an internal, non-canonical cache/pub-sub service.
+- Redis is an internal, non-canonical cache/PubSub service. It stores only
+  bounded-TTL/reconstructible data and Pub/Sub messages, runs without AOF/RDB
+  persistence, and uses `allkeys-lru` under a configurable 256 MB ceiling.
 - Qdrant is an internal, persisted but rebuildable derived memory index;
   PostgreSQL remains the canonical memory store.
 - The durable job worker is a separate process using the backend image.

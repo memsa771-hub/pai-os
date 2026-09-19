@@ -597,3 +597,47 @@ class TestPollResolveCache:
         # token-hash must not let a bad token through (it falls through to DB auth)
         r3 = client.get("/v1/events", params=params, headers={"X-Workspace-Token": "wrong-token"})
         assert r3.status_code == 401
+
+    def test_missing_token_rejected_with_warm_cache(self, client, workspace, monkeypatch):
+        self._use_memory_cache(monkeypatch)
+        params = {"network": workspace["id"]}
+        assert client.get(
+            "/v1/events", params=params,
+            headers={"X-Workspace-Token": workspace["token"]},
+        ).status_code == 200
+        assert client.get("/v1/events", params=params).status_code == 401
+
+    def test_corrupt_cache_falls_back_to_database_auth(self, client, workspace, monkeypatch):
+        store = self._use_memory_cache(monkeypatch)
+        import hashlib
+        key = "v1ws:resolve:" + hashlib.sha1(workspace["id"].encode()).hexdigest()
+        store[key] = b'{not-json'
+        params = {"network": workspace["id"]}
+        assert client.get(
+            "/v1/events", params=params,
+            headers={"X-Workspace-Token": "wrong-token"},
+        ).status_code == 401
+
+    def test_redis_unavailable_falls_back_safely(self, client, workspace, monkeypatch):
+        from app import cache as _cache
+        monkeypatch.setattr(_cache, "get_bytes", lambda key: None)
+        monkeypatch.setattr(_cache, "set_bytes", lambda *args, **kwargs: None)
+        params = {"network": workspace["id"]}
+        assert client.get(
+            "/v1/events", params=params,
+            headers={"X-Workspace-Token": workspace["token"]},
+        ).status_code == 200
+        assert client.get(
+            "/v1/events", params=params,
+            headers={"X-Workspace-Token": "wrong-token"},
+        ).status_code == 401
+
+    def test_workspace_cache_contains_hash_not_plaintext_token(self, client, workspace, monkeypatch):
+        store = self._use_memory_cache(monkeypatch)
+        client.get(
+            "/v1/events", params={"network": workspace["id"]},
+            headers={"X-Workspace-Token": workspace["token"]},
+        )
+        cached = next(v for k, v in store.items() if k.startswith("v1ws:resolve:"))
+        assert workspace["token"].encode() not in cached
+        assert b'"ph_sha"' in cached

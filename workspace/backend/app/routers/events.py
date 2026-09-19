@@ -33,6 +33,13 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1", tags=["Events"])
 
+# Cache TTLs are deliberately short: authorization changes converge within
+# 30 seconds, while high-frequency event polls are deduplicated only across
+# adjacent requests. Redis is never authoritative.
+WORKSPACE_RESOLVE_TTL_SECONDS = 30.0
+POLL_RESPONSE_TTL_SECONDS = 1.5
+POLL_HEAD_TTL_SECONDS = 30.0
+
 
 # ---------------------------------------------------------------------------
 # Request / Response models
@@ -210,7 +217,11 @@ def _resolve_and_auth_cached(db, network, token, authorization):
         "ph_sha": hashlib.sha256(ph.encode("utf-8")).hexdigest() if ph else None,
     }
     try:
-        cache.set_bytes(ck, _json.dumps(meta).encode("utf-8"), ttl_seconds=30.0)
+        cache.set_bytes(
+            ck,
+            _json.dumps(meta).encode("utf-8"),
+            ttl_seconds=WORKSPACE_RESOLVE_TTL_SECONDS,
+        )
     except Exception:
         pass
     return str(workspace.id), None
@@ -716,7 +727,7 @@ def poll_events(
             ).encode("utf-8")
             # Level 1: exact-match cache (includes cursor). Slightly
             # longer TTL helps dedup adjacent polls from the same agent.
-            cache.set_bytes(cache_key, serialized, ttl_seconds=1.5)
+            cache.set_bytes(cache_key, serialized, ttl_seconds=POLL_RESPONSE_TTL_SECONDS)
 
             # Level 2 maintenance — track the head cursor for these
             # filters, and cache the "empty" response when the client was
@@ -730,7 +741,7 @@ def poll_events(
                     cache.set_bytes(
                         head_tracker_key,
                         str(newest_id).encode("utf-8"),
-                        ttl_seconds=30.0,
+                        ttl_seconds=POLL_HEAD_TTL_SECONDS,
                     )
                 elif not events and incoming_after:
                     # DB returned empty AND the client had a cursor. This
@@ -741,12 +752,12 @@ def poll_events(
                     cache.set_bytes(
                         head_tracker_key,
                         incoming_after.encode("utf-8"),
-                        ttl_seconds=30.0,
+                        ttl_seconds=POLL_HEAD_TTL_SECONDS,
                     )
                     cache.set_bytes(
                         "v1events:athead:" + filter_hash,
                         serialized,
-                        ttl_seconds=1.5,
+                        ttl_seconds=POLL_RESPONSE_TTL_SECONDS,
                     )
         except Exception:
             pass

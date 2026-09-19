@@ -84,6 +84,12 @@ class Config:
     IDENTITY_MODE: str = os.environ.get("IDENTITY_MODE", "standalone")
     WORKSPACE_ENDPOINT: str = os.environ.get("WORKSPACE_ENDPOINT", "")
 
+    # Redis is an optional cache/PubSub accelerator. Short timeouts keep
+    # PostgreSQL-backed requests responsive during Redis outages.
+    REDIS_URL: str = os.environ.get("REDIS_URL", "").strip()
+    REDIS_CONNECT_TIMEOUT: float = float(os.environ.get("REDIS_CONNECT_TIMEOUT", "0.5"))
+    REDIS_SOCKET_TIMEOUT: float = float(os.environ.get("REDIS_SOCKET_TIMEOUT", "0.5"))
+
     # Agent offline timeout in seconds
     AGENT_TIMEOUT_SECONDS: int = int(os.environ.get("AGENT_TIMEOUT_SECONDS", "60"))
 

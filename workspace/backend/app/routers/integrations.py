@@ -696,7 +696,7 @@ async def slack_events_shared(
 
 def _ingest_slack_message(binding_id: str, bot_token: str, channel_id: str,
                           channel_type: Optional[str], user_id: str, text: str) -> None:
-    sender_name = svc.slack_user_display_name(bot_token, user_id)
+    sender_name = svc.slack_user_display_name(bot_token, user_id, binding_id)
     chat_title = sender_name if channel_type == "im" else f"#{channel_id}"
     svc.ingest_external_message(
         binding_id, channel_id, chat_title, sender_name, text,
