@@ -608,9 +608,7 @@ export function ThreadList() {
     });
 
   // ── Start a new DM ──
-  // Candidates: online agents plus the workspace's human members (fetched
-  // lazily on first open; token-only sessions may not have team access, in
-  // which case the picker just shows agents).
+  // A personal workspace has one human, so new DMs target connected agents.
   const startDM = (address: string) => {
     // Canonical DM id: sorted pair, matching the backend's (lesser, greater)
     // conversation normalization — so opening the same counterpart always

@@ -224,7 +224,7 @@ class WorkspaceApi {
   // ---------------------------------------------------------------------------
 
   // ---------------------------------------------------------------------------
-  // Chat-platform integrations (Slack / Telegram bridges) — owner/admin only
+  // Chat-platform integrations (Slack / Telegram bridges) — workspace access required
   // ---------------------------------------------------------------------------
 
   async listIntegrations(): Promise<{

@@ -3,11 +3,12 @@
 import { use, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import {
-  ArrowLeft, CircleUser, Globe, KeyRound, LogIn, Settings2, ShieldCheck, SlidersHorizontal,
-} from 'lucide-react';
+import { ArrowLeft, CircleUser, Globe, LogIn, Settings2, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { AdminSettingsContext, type AdminSettingsValue } from '@/components/settings/admin-context';
+import {
+  WorkspaceSettingsContext,
+  type WorkspaceSettingsValue,
+} from '@/components/settings/workspace-settings-context';
 import { workspaceApi } from '@/lib/api';
 import type { Workspace, WorkspaceMe } from '@/lib/types';
 import { usePaiAuth } from '@/lib/pai-auth-context';
@@ -61,7 +62,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
     setToken('');
   }, [urlToken, workspaceId, idToken, authLoading]);
 
-  // ── Load workspace + caller role once credentials are settled ──
+  // Load the personal workspace and the access mode once credentials settle.
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [me, setMe] = useState<WorkspaceMe | null>(null);
   const [error, setError] = useState<'denied' | 'load' | null>(null);
@@ -89,7 +90,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
     setWorkspace(await workspaceApi.getWorkspace());
   }, []);
 
-  const ctxValue = useMemo<AdminSettingsValue | null>(() => {
+  const ctxValue = useMemo<WorkspaceSettingsValue | null>(() => {
     if (!workspace || !me) return null;
     return { workspaceId, workspace, me, token: token || '', refreshWorkspace, query };
   }, [workspaceId, workspace, me, token, refreshWorkspace, query]);
@@ -143,16 +144,8 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
     );
   }
 
-  // One human per workspace, so the badge says how you got in, not what rank
-  // you hold: the owner, or an agent on the machine token.
-  const roleBadge = ctxValue.me.isOwner
-    ? t('admin.roleOwner')
-    : ctxValue.me.tokenAccess
-      ? t('admin.roleBadgeToken')
-      : '';
-
   return (
-    <AdminSettingsContext.Provider value={ctxValue}>
+    <WorkspaceSettingsContext.Provider value={ctxValue}>
       <div className="min-h-screen bg-background">
         <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
           <div className="mx-auto flex h-14 max-w-5xl items-center gap-3 px-4">
@@ -169,12 +162,6 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
                 <span className="ms-2 font-normal text-muted-foreground">· {t('admin.title')}</span>
               </h1>
             </div>
-            {roleBadge && (
-              <span className="flex items-center gap-1 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                <KeyRound className="size-3" />
-                {roleBadge}
-              </span>
-            )}
           </div>
         </header>
 
@@ -202,7 +189,7 @@ function SettingsShell({ workspaceId, children }: { workspaceId: string; childre
           <main className="min-w-0 flex-1 pb-16">{children}</main>
         </div>
       </div>
-    </AdminSettingsContext.Provider>
+    </WorkspaceSettingsContext.Provider>
   );
 }
 

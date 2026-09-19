@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useConfirm } from '@/components/ui/dialogs-provider';
-import { useAdminSettings, canAdminister } from '@/components/settings/admin-context';
+import { useWorkspaceSettings, canManageWorkspace } from '@/components/settings/workspace-settings-context';
 import { ReadOnlyBanner, SectionHeader } from '@/components/settings/section-chrome';
 import { workspaceApi } from '@/lib/api';
 import type { IntegrationBinding, WorkspaceAgent } from '@/lib/types';
@@ -32,10 +32,10 @@ type ConnectForm = 'telegram' | 'slack' | 'lark' | null;
 const NO_AGENT = '__none__';
 
 export default function IntegrationsSettingsPage() {
-  const { workspace, me, refreshWorkspace } = useAdminSettings();
+  const { workspace, me, refreshWorkspace } = useWorkspaceSettings();
   const t = useT();
   const confirm = useConfirm();
-  const editable = canAdminister(me);
+  const editable = canManageWorkspace(me);
 
   const [bfApiKey, setBfApiKey] = useState('');
   const [saving, setSaving] = useState(false);

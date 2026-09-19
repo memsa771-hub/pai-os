@@ -687,7 +687,6 @@ export const messages = {
 
   userMenu: {
     account: 'Account',
-    ownsWorkspace: 'You own this workspace',
     copyToken: 'Copy workspace token',
     tokenCopied: 'Copied!',
     tokenCopiedToast: 'Management token copied',
@@ -727,7 +726,6 @@ export const messages = {
     notificationSoundHint: 'Play a sound when an agent completes a task.',
     splitBrowser: 'Split Browser View',
     splitBrowserHint: 'Show browser tab side-by-side with chat when viewing threads.',
-    owner: 'Owner',
     browserFabricKey: 'Browser Fabric API Key',
     browserFabricCurrent: 'Current: {key}',
     browserFabricReplace: 'Enter new key to replace',
@@ -741,21 +739,17 @@ export const messages = {
   },
 
   admin: {
-    title: 'Workspace admin',
+    title: 'Workspace settings',
     backToWorkspace: 'Back to workspace',
     loading: 'Loading workspace…',
     loadFailed: 'Failed to load the workspace.',
     retry: 'Retry',
     accessDeniedTitle: 'No access',
     accessDeniedBody: "You don't have access to this workspace's settings.",
-    readOnlyBanner: 'You are viewing as {role}. Only an owner or admin can change these settings.',
-    roleBadgeToken: 'token access',
-    roleOwner: 'Owner',
-    roleViewer: 'Viewer',
+    readOnlyBanner: 'These settings are read-only for this connection.',
 
     navProfile: 'Profile',
     navGeneral: 'General',
-    navMembers: 'Members',
     navSecurity: 'Security',
     navDevices: 'Devices',
     modelAccessTitle: 'Model access',
@@ -788,45 +782,16 @@ export const messages = {
     generalTitle: 'General',
     generalDescription: 'Workspace name, language and display options.',
 
-    membersTitle: 'Members',
-    inviteHint:
-      'They get an email with an invitation link. After signing in with this address they join with the selected role.',
-    inviteLinkHint:
-      'A shareable link anyone can use to join with the selected role. It expires automatically and can be revoked — it never contains the workspace token.',
-    inviteEmailSent: 'Invitation email sent to {email}',
-    inviteCreatedCopied: 'Invite created for {email} — link copied (email delivery is not configured)',
-    inviteCreated: 'Invite created for {email} — copy the link from the pending list below',
-    inviteFailed: 'Could not create invite (owner/admin only)',
-    pendingInvites: 'Pending invites',
-    openInviteLink: 'Open invite link',
-    inviteExpires: 'Expires {time}',
-    copyLink: 'Copy link',
-    inviteRevoke: 'Revoke',
-    inviteRevoked: 'Invite revoked',
-    inviteRevokeFailed: 'Could not revoke invite',
-    roleChanged: 'Role updated',
-    roleChangeFailed: 'Could not change role',
-    removeMember: 'Remove',
-    removeTitle: 'Remove member?',
-    removeDescription: '{email} will lose access to this workspace.',
-    removed: 'Removed {email}',
-    removeFailed: 'Could not remove member',
-    noMembers: 'No members to show.',
-    you: 'you',
-
     securityTitle: 'Security & access',
-    securityDescription: 'Login enforcement, workspace credentials and ownership.',
+    securityDescription: 'Login enforcement and workspace credentials.',
     requireLogin: 'Require login',
-    requireLoginHint: 'When on, people must sign in and be a member to open this workspace.',
+    requireLoginHint: 'When on, you must sign in with your Placement AI account to open this workspace.',
     requireLoginOn: 'Login now required',
     requireLoginOff: 'Login no longer required',
-    requireLoginFailed: 'Only an owner or admin can change this',
+    requireLoginFailed: 'You do not have permission to change this setting',
     workspaceToken: 'Workspace token',
     workspaceTokenHint:
       'The machine credential agents and devices use to connect. Anyone with this token has full access — share it carefully.',
-    ownerTitle: 'Workspace owner',
-    ownedBy: 'Owned by {email}',
-    ownedByYou: 'Owned by you.',
 
     lastSeen: 'Last seen {time}',
 
@@ -889,34 +854,15 @@ export const messages = {
 
   profile: {
     title: 'Profile',
-    description: 'Your name and photo, shown to other members across all your workspaces.',
+    description: 'Your name and photo, used in your workspace and conversations.',
     displayName: 'Display name',
     displayNamePlaceholder: 'Your name',
-    displayNameHint: 'Shown in member lists, invitations and chat.',
+    displayNameHint: 'Shown in your workspace and conversations.',
     changePhoto: 'Change photo',
     removePhoto: 'Remove photo',
     badImage: "Couldn't read that image — try a different file.",
     saved: 'Profile updated',
     signInPrompt: 'Sign in to customize your name and photo.',
-  },
-
-  invitePage: {
-    title: 'Join {workspace}',
-    invitedByAs: '{inviter} invited you to join as a {role}.',
-    invitedAs: "You've been invited to join as a {role}.",
-    boundTo: 'This invitation is for {email}',
-    signInToAccept: 'Sign in to accept',
-    signInHint: 'Sign in with your Google or Apple account to join this workspace.',
-    join: 'Join {workspace}',
-    signedInAs: 'Signed in as {email}.',
-    switchAccount: 'Use a different account',
-    invalidTitle: 'Invitation not found',
-    invalidBody: 'This invitation link is invalid. Ask the person who invited you for a new one.',
-    unavailableTitle: 'Invitation unavailable',
-    status_accepted: 'This invitation to {workspace} has already been used.',
-    status_expired: 'This invitation to {workspace} has expired. Ask for a new link.',
-    status_revoked: 'This invitation to {workspace} was revoked.',
-    acceptFailed: 'Could not accept the invitation',
   },
 
   threads: {
@@ -1091,7 +1037,7 @@ export const messages = {
     guest: 'Guest',
     signInTitle: 'Sign in to access this workspace',
     signInBody:
-      'Log in with your Placement AI account to access workspaces you own, or add a token to the URL.',
+      'Log in with your Placement AI account to access your workspace, or add a self-hosted token to the URL.',
     signInWithGoogle: 'Sign in with Google',
     googleAuthFailed: 'Could not start Google sign-in — please try again',
     logIn: 'Log in',
@@ -1102,10 +1048,10 @@ export const messages = {
     notFoundBody: 'No workspace exists at this address. Double-check the link.',
     noAccessTitle: 'No access to this workspace',
     noAccessBody:
-      "Your account isn't a member of this workspace. Ask the owner for an invite, or open it with a token link.",
+      "This workspace does not belong to your account. Check the address or open a self-hosted token link.",
     loadFailedTitle: 'Could not check your access',
     loadFailedBody: 'A network error occurred while loading your workspaces. Please retry.',
-    goHome: 'Go to my workspaces',
+    goHome: 'Go to my workspace',
   },
 
   connect: {

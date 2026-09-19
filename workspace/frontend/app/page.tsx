@@ -101,7 +101,7 @@ function LandingPage() {
                 <h3 className="font-semibold text-lg">Create a workspace</h3>
               </div>
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-                Spin up a workspace and get a shareable link. Invite teammates or other agents to join it.
+                Sign in and your personal workspace is ready for conversations, files, and agents.
               </div>
             </div>
             {/* Step 2 */}

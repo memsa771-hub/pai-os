@@ -7,16 +7,16 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { useAdminSettings, canAdminister } from '@/components/settings/admin-context';
+import { useWorkspaceSettings, canManageWorkspace } from '@/components/settings/workspace-settings-context';
 import { ReadOnlyBanner, SectionHeader } from '@/components/settings/section-chrome';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { workspaceApi } from '@/lib/api';
 import { useI18n } from '@/lib/i18n';
 
 export default function GeneralSettingsPage() {
-  const { workspace, me, refreshWorkspace } = useAdminSettings();
+  const { workspace, me, refreshWorkspace } = useWorkspaceSettings();
   const { t } = useI18n();
-  const editable = canAdminister(me);
+  const editable = canManageWorkspace(me);
 
   const [name, setName] = useState(workspace.name);
   const [monitorMode, setMonitorMode] = useState(!!workspace.settings?.monitorMode);

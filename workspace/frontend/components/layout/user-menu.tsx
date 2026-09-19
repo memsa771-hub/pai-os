@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  Check, KeyRound, LogIn, LogOut, Monitor, Moon, Settings, Shield, Sun, User, MessageSquarePlus } from 'lucide-react';
+  Check, KeyRound, LogIn, LogOut, Monitor, Moon, Settings, Sun, User, MessageSquarePlus } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { toast } from 'sonner';
 import {
@@ -60,11 +60,6 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
   const activeThemeOption =
     THEME_OPTIONS.find((option) => option.value === activeTheme) ?? THEME_OPTIONS[0];
   const ActiveThemeIcon = activeThemeOption.icon;
-
-  // Ownership is the workspace's owner record, not a string compare against a
-  // copied-in email: `user` is only set when the signed-in identity resolved,
-  // and the API only returns a workspace to the person who owns it.
-  const isOwnedByUser = Boolean(workspace && user);
 
   const handleCopyToken = async () => {
     if (!token) {
@@ -133,11 +128,6 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
             <>
               <DropdownMenuLabel className="flex flex-col gap-0.5">
                 <span className="truncate text-sm font-medium">{user.email}</span>
-                {isOwnedByUser && (
-                  <span className="flex items-center gap-1 text-[11px] font-normal text-emerald-600">
-                    <Shield className="size-3" /> {t('userMenu.ownsWorkspace')}
-                  </span>
-                )}
               </DropdownMenuLabel>
               <DropdownMenuSeparator />
             </>
@@ -179,7 +169,7 @@ export function UserMenu({ side, align = 'end' }: UserMenuProps = {}) {
             {t('userMenu.sendFeedback')}
           </DropdownMenuItem>
 
-          {/* Full-page admin dashboard (general / security / devices /
+          {/* Full-page workspace settings (general / security / devices /
               integrations / preferences). window.location.search carries an
               incoming ?token= through so token-link visitors keep access. */}
           <DropdownMenuItem

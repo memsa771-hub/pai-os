@@ -1,13 +1,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Copy, Eye, EyeOff, Shield, ShieldCheck } from 'lucide-react';
+import { Check, Copy, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { useAdminSettings, canAdminister } from '@/components/settings/admin-context';
+import { useWorkspaceSettings, canManageWorkspace } from '@/components/settings/workspace-settings-context';
 import { ReadOnlyBanner, SectionHeader } from '@/components/settings/section-chrome';
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard';
 import { workspaceApi } from '@/lib/api';
@@ -16,9 +16,9 @@ import { useT } from '@/lib/i18n';
 export default function SecuritySettingsPage() {
   // `token` is the resolved machine credential (?token= link, cookie, or the
   // signed-in user's account) — '' when accessing via identity bearer only.
-  const { workspace, me, token, refreshWorkspace } = useAdminSettings();
+  const { workspace, me, token, refreshWorkspace } = useWorkspaceSettings();
   const t = useT();
-  const editable = canAdminister(me);
+  const editable = canManageWorkspace(me);
 
   const [requireLogin, setRequireLogin] = useState(workspace.requireLogin);
   const [showToken, setShowToken] = useState(false);
@@ -74,17 +74,6 @@ export default function SecuritySettingsPage() {
         </div>
       )}
 
-      {/* Ownership — display only; login is enforced, so workspaces get an
-          owner at creation. The Members section handles owner transfer. */}
-      <div className="space-y-2 rounded-lg border p-4">
-        <div className="flex items-center gap-1.5">
-          <Shield className="size-4 text-muted-foreground" />
-          <Label>{t('admin.ownerTitle')}</Label>
-        </div>
-        <p className="text-sm text-muted-foreground">
-          {me.email ? t('admin.ownedBy', { email: me.email }) : t('admin.ownedByYou')}
-        </p>
-      </div>
     </div>
   );
 }
