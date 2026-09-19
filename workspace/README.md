@@ -2,18 +2,9 @@
 
 Placement AI is a FastAPI/PostgreSQL backend with a standalone Next.js frontend.
 
-## Local development
-
-Development Compose intentionally includes local PostgreSQL, published localhost
-ports, source bind mounts, and local Playwright/Chromium support.
-
-```bash
-cd workspace
-make dev
-```
-
-The backend is available at `http://localhost:8000` and the frontend at
-`http://localhost:3000`. Copy `.env.example` to `.env` for local credentials.
+This `v4` branch contains only the production deployment source and assets.
+Development Compose files, test suites, fixtures, and local tooling remain on
+the `v3` branch.
 
 ## AWS production architecture
 
@@ -84,13 +75,3 @@ but another process cannot deliver a duplicate.
 
 `NEXT_PUBLIC_*` variables are compiled into the frontend image. Rebuild the
 frontend when they change, and never put backend secrets into those variables.
-
-## Useful commands
-
-```bash
-cd workspace
-make test
-make migrate
-make migration msg="add_new_table"
-make reset-db
-```
