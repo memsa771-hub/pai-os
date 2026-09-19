@@ -15,6 +15,7 @@ import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { workspaceApi } from '@/lib/api';
 import type { WorkspaceAgent, WorkspaceSession } from '@/lib/types';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
+import { DMS_UI_ENABLED } from '@/lib/config';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,7 +65,9 @@ const TABS: { id: FilterTab; labelKey: MessageKey }[] = [
   { id: 'all', labelKey: 'threads.tabAll' },
   { id: 'starred', labelKey: 'threads.tabStarred' },
   { id: 'archived', labelKey: 'threads.tabArchived' },
-  { id: 'dms', labelKey: 'threads.tabDms' },
+  ...(DMS_UI_ENABLED
+    ? [{ id: 'dms' as const, labelKey: 'threads.tabDms' as MessageKey }]
+    : []),
 ];
 
 type SortOrder = 'recent' | 'oldest' | 'title';
@@ -281,7 +284,7 @@ export function ThreadList() {
   // not a stale "All" tab with no matching row. Only switches INTO the DMs
   // tab; picking a regular thread never yanks the user's tab choice.
   useEffect(() => {
-    if (currentSessionId?.startsWith('dm:')) setFilter('dms');
+    if (DMS_UI_ENABLED && currentSessionId?.startsWith('dm:')) setFilter('dms');
   }, [currentSessionId]);
   const [sortOrder, setSortOrder] = useState<SortOrder>('recent');
   const [searchQuery, setSearchQuery] = useState('');

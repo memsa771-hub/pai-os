@@ -131,6 +131,8 @@ services:
         NEXT_PUBLIC_API_URL: http://localhost:8000
         NEXT_PUBLIC_SUPABASE_URL: ${SUPABASE_URL:-}
         NEXT_PUBLIC_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+        NEXT_PUBLIC_ENABLE_DMS: ${NEXT_PUBLIC_ENABLE_DMS:-false}
+        NEXT_PUBLIC_ENABLE_INBOX: ${NEXT_PUBLIC_ENABLE_INBOX:-false}
     ports:
       - "3000:3000"
     depends_on:

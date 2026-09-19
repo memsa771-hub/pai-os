@@ -5,6 +5,7 @@ import { Bell, CheckCheck, RefreshCw } from 'lucide-react';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { NotificationCard } from '@/components/inbox/inbox-view';
+import { INBOX_UI_ENABLED } from '@/lib/config';
 import { cn } from '@/lib/utils';
 import { useWorkspace } from '@/lib/workspace-context';
 import type { NotificationItem } from '@/lib/types';
@@ -128,15 +129,17 @@ export function NotificationsMenu({ side, align = 'end' }: NotificationsMenuProp
           </ScrollArea>
         )}
 
-        <button
-          onClick={() => {
-            openView('inbox');
-            setOpen(false);
-          }}
-          className="w-full shrink-0 border-t border-border px-3 py-2 text-center text-xs font-medium text-primary transition-colors hover:bg-muted"
-        >
-          {t('notifications.viewAllInInbox')}
-        </button>
+        {INBOX_UI_ENABLED && (
+          <button
+            onClick={() => {
+              openView('inbox');
+              setOpen(false);
+            }}
+            className="w-full shrink-0 border-t border-border px-3 py-2 text-center text-xs font-medium text-primary transition-colors hover:bg-muted"
+          >
+            {t('notifications.viewAllInInbox')}
+          </button>
+        )}
       </PopoverContent>
     </Popover>
   );

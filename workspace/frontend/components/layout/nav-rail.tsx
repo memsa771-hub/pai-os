@@ -25,6 +25,7 @@ import { cn } from '@/lib/utils';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
+import { INBOX_UI_ENABLED } from '@/lib/config';
 import {
   useLayout,
   RAIL_WIDTH_COLLAPSED,
@@ -231,12 +232,14 @@ export function NavRail() {
       unread: tasks.some((task) => task.status === 'need_input'),
     },
     { mode: 'workflows', label: t('views.workflows'), icon: <Waypoints /> },
-    {
-      mode: 'inbox',
-      label: t('views.inbox'),
-      icon: <Inbox />,
-      unread: unreadNotificationCount > 0,
-    },
+    ...(INBOX_UI_ENABLED
+      ? [{
+          mode: 'inbox' as const,
+          label: t('views.inbox'),
+          icon: <Inbox />,
+          unread: unreadNotificationCount > 0,
+        }]
+      : []),
   ];
 
   const workspaceLabel = workspace?.name || t('nav.workspaceFallback');

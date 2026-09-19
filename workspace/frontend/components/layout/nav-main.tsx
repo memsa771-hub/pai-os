@@ -18,6 +18,7 @@ import { useWorkspace } from '@/lib/workspace-context';
 import { countFiles } from '@/components/files/file-utils';
 import { useT } from '@/lib/i18n';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
+import { INBOX_UI_ENABLED } from '@/lib/config';
 import { useLayout, type ViewMode } from './layout-context';
 
 interface NavItem {
@@ -73,12 +74,14 @@ export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
       icon: <Waypoints />,
       count: workflows.length,
     },
-    {
-      mode: 'inbox',
-      label: t('views.inbox'),
-      icon: <Inbox />,
-      count: unreadNotificationCount > 0 ? unreadNotificationCount : undefined,
-    },
+    ...(INBOX_UI_ENABLED
+      ? [{
+          mode: 'inbox' as const,
+          label: t('views.inbox'),
+          icon: <Inbox />,
+          count: unreadNotificationCount > 0 ? unreadNotificationCount : undefined,
+        }]
+      : []),
   ];
 
   return (

@@ -28,6 +28,18 @@ export const DEFAULT_APP_URL = 'https://app.placement-ai.com';
 export const API_URL = (process.env.NEXT_PUBLIC_API_URL || DEFAULT_API_URL).replace(/\/$/, '');
 
 /**
+ * Direct messages are retained for a future Placement AI chat release, but
+ * intentionally absent from the current web and desktop UI.
+ */
+export const DMS_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DMS === 'true';
+
+/**
+ * The notification inbox is reserved for a later Placement AI release. Its
+ * implementation stays available behind the same kind of build-time gate.
+ */
+export const INBOX_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_INBOX === 'true';
+
+/**
  * The sign-in page, on this origin.
  *
  * Deliberately a path, not an absolute URL: hosted web, localhost and any

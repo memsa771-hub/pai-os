@@ -75,6 +75,14 @@ export default defineConfig(({ mode }) => {
       // (from workspace/.env), unlike API_URL above. See the loadEnv() call up top.
       'process.env.NEXT_PUBLIC_SUPABASE_URL': JSON.stringify(supabaseUrl),
       'process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY': JSON.stringify(supabaseAnonKey),
+      // Keep the desktop build aligned with the web feature flag. DMs remain
+      // implemented, but are hidden until a later Placement AI release.
+      'process.env.NEXT_PUBLIC_ENABLE_DMS': JSON.stringify(
+        env.NEXT_PUBLIC_ENABLE_DMS || process.env.NEXT_PUBLIC_ENABLE_DMS || 'false',
+      ),
+      'process.env.NEXT_PUBLIC_ENABLE_INBOX': JSON.stringify(
+        env.NEXT_PUBLIC_ENABLE_INBOX || process.env.NEXT_PUBLIC_ENABLE_INBOX || 'false',
+      ),
       // Analytics is deliberately off in the desktop build; see shims/next-script.
       'process.env.NEXT_PUBLIC_POSTHOG_KEY': 'undefined',
       'process.env.NEXT_PUBLIC_POSTHOG_HOST': 'undefined',

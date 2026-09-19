@@ -7,6 +7,7 @@ import { usePaiAuth } from './pai-auth-context';
 import { generateUserId, getStoredIdentity, storeIdentity } from './identity';
 import { networkAgentToWorkspaceAgent, networkChannelToSession } from './types';
 import { defaultWorkspaceConversation } from './primary-conversation';
+import { DMS_UI_ENABLED } from './config';
 import { useUploadQueue } from '@/hooks/use-upload-queue';
 import type { PendingUpload } from '@/hooks/use-upload-queue';
 import type { BrowserPersistentContext, BrowserTab, DMConversation, KanbanTask, Workflow, WorkflowStep, KnowledgeEntry, NotificationItem, OnlineUser, RoutineItem, TodoItem, TrashEntry, Workspace, WorkspaceAgent, WorkspaceFile, WorkspaceIdentity, WorkspaceSession } from './types';
@@ -1273,7 +1274,8 @@ export function WorkspaceProvider({
         const keepCurrent =
           !switchedWorkspace &&
           cur != null &&
-          (channelSessions.some((s) => s.sessionId === cur) || cur.startsWith('dm:'));
+          (channelSessions.some((s) => s.sessionId === cur) ||
+            (DMS_UI_ENABLED && cur.startsWith('dm:')));
         if (!keepCurrent) {
           const selected = defaultWorkspaceConversation(channelSessions);
           if (selected) {
