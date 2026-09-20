@@ -324,10 +324,6 @@ function ResolvingWorkspace({
       }
     }
     const msg = lastErr instanceof Error ? lastErr.message : 'Failed to load your workspace';
-    if (/username setup required/i.test(msg)) {
-      router.push('/sign-up');
-      return;
-    }
     setError(
       /failed to fetch|load failed|networkerror/i.test(msg)
         ? "Can't reach the Placement AI server right now. Check your network (VPN / proxy / firewall) and press Retry."

@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { usePaiAuth } from '@/lib/pai-auth-context';
-import { claimUsername } from '@/lib/auth-api';
 import { consumePkceVerifier, exchangeOAuthCode } from '@/lib/supabase-auth';
 
 function AuthCallback() {
@@ -24,20 +23,6 @@ function AuthCallback() {
         if (!verifier) throw new Error('Sign-in expired. Please try again.');
         const session = await exchangeOAuthCode(code, verifier);
         applySession(session);
-        if (!session.user.username) {
-          router.replace('/sign-up');
-          return;
-        }
-        try {
-          await claimUsername(session.accessToken, session.user.username);
-        } catch (claimError) {
-          const message = claimError instanceof Error ? claimError.message : '';
-          if (/already taken/i.test(message)) {
-            router.replace('/sign-up?username-race=1');
-            return;
-          }
-          throw claimError;
-        }
         router.replace('/');
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Sign-in failed. Please try again.');

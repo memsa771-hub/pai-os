@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
@@ -20,13 +20,13 @@ export default function SignUpPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState<string | null>(() =>
-    typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('username-race')
-      ? 'That username was just taken. Choose another username.'
-      : null,
-  );
+  const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checkEmail, setCheckEmail] = useState(false);
+
+  useEffect(() => {
+    if (idToken) router.replace('/');
+  }, [idToken, router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -35,26 +35,6 @@ export default function SignUpPage() {
     const normalizedUsername = username.trim().toLowerCase();
     if (!/^[a-z0-9_-]{3,32}$/.test(normalizedUsername)) {
       setError('Username must be 3-32 characters: letters, numbers, _ or -');
-      return;
-    }
-
-    if (idToken) {
-      setBusy(true);
-      try {
-        if (!(await isUsernameAvailable(normalizedUsername))) {
-          setError('That username is already taken. Choose another username.');
-          return;
-        }
-        await claimUsername(idToken, normalizedUsername);
-        router.push('/');
-      } catch (err) {
-        const message = err instanceof Error ? err.message : '';
-        setError(/already taken/i.test(message)
-          ? 'That username was just taken. Choose another username.'
-          : message || 'Could not save username');
-      } finally {
-        setBusy(false);
-      }
       return;
     }
 
@@ -133,17 +113,7 @@ export default function SignUpPage() {
   if (idToken) {
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
-        <div className="w-full max-w-sm">
-          <h1 className="text-xl font-semibold tracking-tight">Choose a username</h1>
-          <p className="mt-2 text-sm text-muted-foreground">A username is required before opening your workspaces.</p>
-          <form onSubmit={submit} className="mt-6 grid gap-4">
-            <Label htmlFor="username">Username</Label>
-            <Input id="username" autoCapitalize="none" required value={username}
-              onChange={(e) => setUsername(e.target.value)} disabled={busy} />
-            {error && <p className="text-sm text-destructive">{error}</p>}
-            <Button type="submit" disabled={busy || !username.trim()}>{busy ? 'Saving…' : 'Continue'}</Button>
-          </form>
-        </div>
+        <p className="text-sm text-muted-foreground">Opening Placement AI…</p>
       </div>
     );
   }

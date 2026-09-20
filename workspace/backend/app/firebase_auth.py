@@ -188,7 +188,7 @@ def _verify_supabase_via_introspection(token: str) -> Optional[dict]:
 def verify_supabase_claims(token: str) -> Optional[dict]:
     """Verify a Supabase access token and return persisted identity claims.
 
-    Returns {"provider", "email", "supabase_uid", "display_name"} or None.
+    Returns identity fields including the optional signup username, or None.
     Tries local JWKS verification first (no network round trip once cached);
     falls back to asking Supabase to verify the token itself
     (GET /auth/v1/user) for projects that sign with a shared secret we
@@ -235,6 +235,7 @@ def verify_supabase_claims(token: str) -> Optional[dict]:
         "provider": "supabase",
         "email": email,
         "supabase_uid": claims.get("sub") or claims.get("id"),
+        "username": user_metadata.get("username"),
         "display_name": user_metadata.get("username") or user_metadata.get("display_name"),
     }
 

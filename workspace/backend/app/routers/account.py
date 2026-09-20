@@ -103,10 +103,6 @@ def get_account_workspace(
     if not user:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
 
-    if not user.username:
-        db.commit()
-        return json_response(ResponseCode.FORBIDDEN, "Username setup required")
-
     workspace = get_or_create_owned_workspace(db, user)
     db.commit()
     db.refresh(workspace)
@@ -155,13 +151,6 @@ def list_account_workspaces(
     user = resolve_current_user(db, authorization)
     if not user:
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid identity token")
-
-    # Workspace access is unavailable until signup's required username claim
-    # has succeeded. The authenticated account remains usable so the client
-    # can ask the user to choose another name after an availability race.
-    if not user.username:
-        db.commit()
-        return json_response(ResponseCode.FORBIDDEN, "Username setup required")
 
     workspace = get_or_create_owned_workspace(db, user)
     db.commit()
