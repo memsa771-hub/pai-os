@@ -10,11 +10,23 @@ import {
   useState
 } from 'react';
 import { useIsMobile } from '@/hooks/use-mobile';
-import { INBOX_UI_ENABLED } from '@/lib/config';
+import { INBOX_UI_ENABLED, TASKS_UI_ENABLED, WORKFLOWS_UI_ENABLED } from '@/lib/config';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import type { FileSortKey, FileTypeFilter } from '@/components/files/file-utils';
 
-export type ViewMode = 'threads' | 'files' | 'knowledge' | 'browser' | 'tasks' | 'workflows' | 'routines' | 'inbox' | 'connect' | 'skills';
+export type ViewMode = 'threads' | 'profile' | 'files' | 'knowledge' | 'browser' | 'tasks' | 'workflows' | 'routines' | 'inbox' | 'skills';
+
+/**
+ * Views whose implementation ships but whose entry points are held back for a
+ * later release. The nav lists drop them, and every other way in — the desktop
+ * view restore, a notification hand-off, a stale saved preference — is folded
+ * back to threads here rather than at each call site.
+ */
+const HIDDEN_VIEWS: ReadonlySet<ViewMode> = new Set<ViewMode>([
+  ...(INBOX_UI_ENABLED ? [] : ['inbox' as const]),
+  ...(TASKS_UI_ENABLED ? [] : ['tasks' as const]),
+  ...(WORKFLOWS_UI_ENABLED ? [] : ['workflows' as const]),
+]);
 
 /** The Files view has two halves the folder panel switches between. */
 export type FilesSection = 'folders' | 'trash';
@@ -60,6 +72,13 @@ const DEFAULT_FILES_BROWSE: FilesBrowseState = {
 export const VIEWS_WITH_LIST: ReadonlySet<ViewMode> = new Set<ViewMode>([
   'threads', 'files', 'browser', 'routines', 'knowledge',
 ]);
+
+/**
+ * Views another page may hand us through `?view=`. Deliberately a small
+ * allow-list rather than "any ViewMode": the query string is attacker-supplied
+ * in principle, and only the views something actually links to belong here.
+ */
+export const ROUTABLE_VIEWS: ReadonlySet<ViewMode> = new Set<ViewMode>(['profile']);
 
 /**
  * Per-view list-panel preference, persisted in a cookie so it survives reloads
@@ -216,6 +235,18 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     setListPrefs(readListPrefs());
     setIsRailExpanded(readRailPref());
+    // `?view=` is how another page hands the workspace a destination — today
+    // that is the retired Settings → Profile route, which now redirects here
+    // instead of 404ing on anyone's bookmark. Read from `window` rather than
+    // `useSearchParams` so the provider stays out of a Suspense boundary, and
+    // dropped from the URL afterwards so a reload isn't stuck on that view.
+    const requested = new URLSearchParams(window.location.search).get('view');
+    if (requested && ROUTABLE_VIEWS.has(requested as ViewMode)) {
+      setViewMode(requested as ViewMode);
+      const url = new URL(window.location.href);
+      url.searchParams.delete('view');
+      window.history.replaceState(null, '', url.toString());
+    }
   }, []);
 
   // Persist outside the state updater: React may run an updater more than once
@@ -252,7 +283,7 @@ export function LayoutProvider({ children }: { children: ReactNode }) {
 
   // Switching views keeps whatever the user last chose for the target view.
   const openView = (mode: ViewMode) => {
-    const nextMode = mode === 'inbox' && !INBOX_UI_ENABLED ? 'threads' : mode;
+    const nextMode = HIDDEN_VIEWS.has(mode) ? 'threads' : mode;
     setViewMode(nextMode);
     // Files is the exception: its list pane is a folder tree, and what you want
     // on opening it is usually the file you or an agent just added — which is

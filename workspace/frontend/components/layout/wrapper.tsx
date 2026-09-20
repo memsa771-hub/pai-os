@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useDesktopWorkspaceState } from './use-desktop-workspace-state';
 
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
@@ -22,9 +22,13 @@ import { WorkflowsView } from '@/components/workflows/workflows-view';
 import { RoutineList } from '@/components/routines/routine-list';
 import { SkillsView } from '@/components/skills/skills-view';
 import { InboxView } from '@/components/inbox/inbox-view';
+import { ProfileView } from '@/components/profile/profile-view';
+import { OnboardingView } from '@/components/onboarding/onboarding-view';
 import { KnowledgeView } from '@/components/knowledge/knowledge-view';
 import { KnowledgeList } from '@/components/knowledge/knowledge-list';
 import { useWorkspace } from '@/lib/workspace-context';
+import { workspaceApi } from '@/lib/api';
+import type { OnboardingState } from '@/lib/onboarding';
 import { useT } from '@/lib/i18n';
 import { NewThreadDialogHost } from '@/components/threads/new-thread-dialog-host';
 
@@ -77,6 +81,21 @@ export function Wrapper() {
     if (isMobile && currentSessionId === 'pai-counselor') openMobileDetail();
   }, [isMobile, currentSessionId, openMobileDetail]);
 
+  // First-run onboarding. Checked once the workspace itself has loaded, and
+  // deliberately fail-open: if this call errors the student still reaches
+  // their workspace. A form we could not fetch must never lock anyone out.
+  const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
+  useEffect(() => {
+    if (loading) return;
+    let cancelled = false;
+    workspaceApi.getOnboarding()
+      .then((state) => { if (!cancelled) setOnboarding(state); })
+      .catch(() => { /* fail open — see above */ })
+      .finally(() => { if (!cancelled) setOnboardingChecked(true); });
+    return () => { cancelled = true; };
+  }, [loading]);
+
   // Auto-dismiss the docked agent-profile panel when the user navigates away:
   // switching to another thread (incl. starting a new chat) or to another view
   // should not leave the profile pinned to the right. It stays open only while
@@ -111,8 +130,20 @@ export function Wrapper() {
   //    plain `!currentSessionId` gate would let the seeded thread's
   //    auto-selection suppress onboarding too.
 
-  if (loading) {
+  if (loading || !onboardingChecked) {
     return <WorkspaceLoadingScreen />;
+  }
+
+  // The student's opening statement, asked once. Gating here rather than on a
+  // route means every way into the workspace — sign-up, sign-in, a bookmarked
+  // link — passes through it, with no redirect that could loop.
+  if (onboarding?.required) {
+    return (
+      <OnboardingView
+        state={onboarding}
+        onDone={() => setOnboarding({ ...onboarding, required: false })}
+      />
+    );
   }
 
   // ── Mobile layout: single-pane with list/detail switching ──
@@ -122,7 +153,11 @@ export function Wrapper() {
         <MobileHeader />
         <div className="flex-1 min-h-0 pt-[var(--header-height-mobile)] pb-[calc(48px+env(safe-area-inset-bottom))]">
           {/* Full-screen views (no list/detail split) */}
-          {viewMode === 'tasks' ? (
+          {viewMode === 'profile' ? (
+            <div className="h-full bg-background overflow-hidden">
+              <ProfileView />
+            </div>
+          ) : viewMode === 'tasks' ? (
             <div className="h-full bg-background overflow-hidden">
               <TasksView />
             </div>
@@ -249,6 +284,7 @@ export function Wrapper() {
               )}
               {viewMode === 'files' && (filesSection === 'trash' ? <TrashView /> : <FilePreview />)}
               {viewMode === 'browser' && <BrowserView />}
+              {viewMode === 'profile' && <ProfileView />}
               {viewMode === 'tasks' && <TasksView />}
               {viewMode === 'workflows' && <WorkflowsView />}
               {viewMode === 'inbox' && <InboxView />}

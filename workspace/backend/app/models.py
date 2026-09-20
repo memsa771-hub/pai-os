@@ -287,6 +287,10 @@ class User(Base):
     # Has this account dismissed the first-run welcome? Per-account (not
     # per-device) so mobile onboarding shows exactly once across devices.
     welcome_seen = Column(Boolean, nullable=False, default=False, server_default=text("FALSE"))
+    # When this account finished (or dismissed) first-run onboarding. A
+    # timestamp rather than a flag so "when did students start completing it?"
+    # stays answerable. NULL = the onboarding form is still owed.
+    onboarded_at = Column(DateTime(timezone=True), nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     last_login_at = Column(DateTime(timezone=True), nullable=True)
 

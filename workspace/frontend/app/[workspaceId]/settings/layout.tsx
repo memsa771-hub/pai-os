@@ -3,7 +3,7 @@
 import { use, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { ArrowLeft, CircleUser, Globe, LogIn, Settings2, ShieldCheck, SlidersHorizontal } from 'lucide-react';
+import { ArrowLeft, Globe, LogIn, Settings2, ShieldCheck, SlidersHorizontal } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   WorkspaceSettingsContext,
@@ -32,8 +32,11 @@ function readCookieToken(workspaceId: string): string | null {
   return null;
 }
 
+// Profile is deliberately absent: the student's profile is a first-class
+// workspace view now (see components/profile/profile-view.tsx), not a setting.
+// The old /settings/profile route still exists and redirects there, so any
+// bookmark or link lands on the real page instead of a 404.
 const SECTIONS = [
-  { slug: 'profile', labelKey: 'admin.navProfile', icon: CircleUser },
   { slug: 'general', labelKey: 'admin.navGeneral', icon: Settings2 },
   { slug: 'security', labelKey: 'admin.navSecurity', icon: ShieldCheck },
   { slug: 'integrations', labelKey: 'admin.navIntegrations', icon: Globe },

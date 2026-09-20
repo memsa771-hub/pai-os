@@ -12,6 +12,8 @@ const nextConfig = {
     // of the bundle — the same thing vite.config.ts does for desktop.
     NEXT_PUBLIC_ENABLE_DMS: process.env.NEXT_PUBLIC_ENABLE_DMS || 'false',
     NEXT_PUBLIC_ENABLE_INBOX: process.env.NEXT_PUBLIC_ENABLE_INBOX || 'false',
+    NEXT_PUBLIC_ENABLE_TASKS: process.env.NEXT_PUBLIC_ENABLE_TASKS || 'false',
+    NEXT_PUBLIC_ENABLE_WORKFLOWS: process.env.NEXT_PUBLIC_ENABLE_WORKFLOWS || 'false',
   },
 };
 

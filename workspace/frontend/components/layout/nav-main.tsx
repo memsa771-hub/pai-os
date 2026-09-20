@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  FileText, Globe, Inbox, KanbanSquare, MessageSquare, Sparkles, Waypoints,
+  CircleUser, FileText, Globe, Inbox, KanbanSquare, MessageSquare, Waypoints,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -18,7 +18,7 @@ import { useWorkspace } from '@/lib/workspace-context';
 import { countFiles } from '@/components/files/file-utils';
 import { useT } from '@/lib/i18n';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
-import { INBOX_UI_ENABLED } from '@/lib/config';
+import { INBOX_UI_ENABLED, TASKS_UI_ENABLED, WORKFLOWS_UI_ENABLED } from '@/lib/config';
 import { useLayout, type ViewMode } from './layout-context';
 
 interface NavItem {
@@ -39,7 +39,6 @@ export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
   } = useWorkspace();
   const t = useT();
 
-  const isOnboarding = sessions.length === 0;
   const isPaiCounselorActive = viewMode === 'threads' && currentSessionId === PAI_PRIMARY_CONVERSATION_ID;
 
   const openPaiCounselor = (): void => {
@@ -50,30 +49,34 @@ export function NavMain({ onNavigate }: { onNavigate?: () => void }) {
   };
 
   const items: NavItem[] = [
-    isOnboarding
-      ? { mode: 'threads', label: t('views.onboarding'), icon: <Sparkles /> }
-      : {
-          mode: 'threads',
-          label: t('views.threads'),
-          icon: <MessageSquare />,
-          count: sessions.filter((s) => !s.sessionId.startsWith('routine:') && !s.sessionId.startsWith('task:')).length,
-        },
+    // Directly under PAI Counselor — see the matching note in nav-rail.
+    { mode: 'profile', label: t('views.profile'), icon: <CircleUser /> },
+    {
+      mode: 'threads',
+      label: t('views.threads'),
+      icon: <MessageSquare />,
+      count: sessions.filter((s) => !s.sessionId.startsWith('routine:') && !s.sessionId.startsWith('task:')).length,
+    },
     { mode: 'files', label: t('views.files'), icon: <FileText />, count: countFiles(files) },
     { mode: 'browser', label: t('views.browser'), icon: <Globe />, count: browserTabs.length },
-    {
-      mode: 'tasks',
-      label: t('views.tasks'),
-      icon: <KanbanSquare />,
-      // Count only what demands the user: tasks blocked on their input.
-      count: tasks.filter((task) => task.status === 'need_input').length,
-      urgent: true,
-    },
-    {
-      mode: 'workflows',
-      label: t('views.workflows'),
-      icon: <Waypoints />,
-      count: workflows.length,
-    },
+    ...(TASKS_UI_ENABLED
+      ? [{
+          mode: 'tasks' as const,
+          label: t('views.tasks'),
+          icon: <KanbanSquare />,
+          // Count only what demands the user: tasks blocked on their input.
+          count: tasks.filter((task) => task.status === 'need_input').length,
+          urgent: true,
+        }]
+      : []),
+    ...(WORKFLOWS_UI_ENABLED
+      ? [{
+          mode: 'workflows' as const,
+          label: t('views.workflows'),
+          icon: <Waypoints />,
+          count: workflows.length,
+        }]
+      : []),
     ...(INBOX_UI_ENABLED
       ? [{
           mode: 'inbox' as const,

@@ -3,7 +3,7 @@
 import * as React from 'react';
 import Image from 'next/image';
 import {
-  ChevronLeft, ChevronRight, FileText, Globe,
+  ChevronLeft, ChevronRight, CircleUser, FileText, Globe,
   Inbox, KanbanSquare, MessageSquare, Users, Waypoints,
 } from 'lucide-react';
 import {
@@ -25,7 +25,7 @@ import { cn } from '@/lib/utils';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useT } from '@/lib/i18n';
 import { PAI_PRIMARY_CONVERSATION_ID } from '@/lib/primary-conversation';
-import { INBOX_UI_ENABLED } from '@/lib/config';
+import { INBOX_UI_ENABLED, TASKS_UI_ENABLED, WORKFLOWS_UI_ENABLED } from '@/lib/config';
 import {
   useLayout,
   RAIL_WIDTH_COLLAPSED,
@@ -216,6 +216,10 @@ export function NavRail() {
   };
 
   const items: RailItem[] = [
+    // Profile sits directly under PAI Counselor: the student's own record is
+    // the other half of the conversation, not a setting filed away under a
+    // gear icon.
+    { mode: 'profile', label: t('views.profile'), icon: <CircleUser /> },
     {
       mode: 'threads',
       label: t('views.threads'),
@@ -224,14 +228,18 @@ export function NavRail() {
     },
     { mode: 'files', label: t('views.files'), icon: <FileText /> },
     { mode: 'browser', label: t('views.browser'), icon: <Globe /> },
-    {
-      mode: 'tasks',
-      label: t('views.tasks'),
-      icon: <KanbanSquare />,
-      // Attention dot when a task is blocked waiting on human input.
-      unread: tasks.some((task) => task.status === 'need_input'),
-    },
-    { mode: 'workflows', label: t('views.workflows'), icon: <Waypoints /> },
+    ...(TASKS_UI_ENABLED
+      ? [{
+          mode: 'tasks' as const,
+          label: t('views.tasks'),
+          icon: <KanbanSquare />,
+          // Attention dot when a task is blocked waiting on human input.
+          unread: tasks.some((task) => task.status === 'need_input'),
+        }]
+      : []),
+    ...(WORKFLOWS_UI_ENABLED
+      ? [{ mode: 'workflows' as const, label: t('views.workflows'), icon: <Waypoints /> }]
+      : []),
     ...(INBOX_UI_ENABLED
       ? [{
           mode: 'inbox' as const,

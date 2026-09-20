@@ -102,6 +102,7 @@ export function DetailHeader({
 /** Every view mode maps onto a `views.*` message key. */
 export const VIEW_TITLE_KEYS: Record<ViewMode, MessageKey> = {
   threads: "views.threads",
+  profile: "views.profile",
   files: "views.files",
   knowledge: "views.knowledge",
   browser: "views.browser",
@@ -109,7 +110,6 @@ export const VIEW_TITLE_KEYS: Record<ViewMode, MessageKey> = {
   workflows: "views.workflows",
   routines: "views.routines",
   inbox: "views.inbox",
-  connect: "views.connect",
   skills: "views.skills",
 }
 
@@ -208,20 +208,9 @@ export function AppHeader() {
     sessions,
   } = useWorkspace()
 
-  // A fresh workspace (no real agent, no threads) is in guided onboarding — the
-  // threads view renders the onboarding flow, so title it "Onboarding".
-  const isOnboarding =
-    !agents.some((a) => isRecentAgent(a) && !a.builtin) && sessions.length === 0
-
   // Title: the selected item for list-backed views, the view name otherwise.
   let title: React.ReactNode
-  if (viewMode === "threads" && isOnboarding) {
-    title = (
-      <h3 className="w-0 flex-1 truncate text-sm leading-snug font-semibold text-foreground">
-        {t("views.onboarding")}
-      </h3>
-    )
-  } else if (viewMode === "threads" || viewMode === "routines") {
+  if (viewMode === "threads" || viewMode === "routines") {
     title = <ThreadTitle />
   } else if (viewMode === "files") {
     const name =

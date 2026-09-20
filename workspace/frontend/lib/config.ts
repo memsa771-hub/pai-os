@@ -40,6 +40,18 @@ export const DMS_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_DMS === 'true';
 export const INBOX_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_INBOX === 'true';
 
 /**
+ * The task board is held back for a later Placement AI release. Agents still
+ * create and run tasks server-side; only the student-facing board is gated.
+ */
+export const TASKS_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_TASKS === 'true';
+
+/**
+ * Workflows likewise: the builder ships with the same later release as the
+ * task board it feeds, so the two are gated together by default.
+ */
+export const WORKFLOWS_UI_ENABLED = process.env.NEXT_PUBLIC_ENABLE_WORKFLOWS === 'true';
+
+/**
  * The sign-in page, on this origin.
  *
  * Deliberately a path, not an absolute URL: hosted web, localhost and any

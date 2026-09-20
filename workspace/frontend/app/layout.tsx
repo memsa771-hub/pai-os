@@ -1,5 +1,4 @@
 import type { Metadata, Viewport } from 'next';
-import { Inter } from 'next/font/google';
 import Script from 'next/script';
 import { ThemeProvider } from 'next-themes';
 import { Toaster } from '@/components/ui/sonner';
@@ -8,8 +7,6 @@ import { DialogsProvider } from '@/components/ui/dialogs-provider';
 import { DEFAULT_LOCALE, I18nProvider } from '@/lib/i18n';
 import { getServerTranslations } from '@/lib/i18n/server';
 import '@/styles/globals.css';
-
-const inter = Inter({ subsets: ['latin'] });
 
 // Analytics identifiers are injected via Vercel env vars (Project → Settings →
 // Environment Variables) rather than hardcoded. NEXT_PUBLIC_* values are inlined
@@ -87,7 +84,7 @@ export default async function RootLayout({
           that buries real warnings. Scoped to this element — children still
           report normally. */}
       <body
-        className={`${inter.className} bg-zinc-100 dark:bg-zinc-900`}
+        className="font-sans bg-zinc-100 dark:bg-zinc-900"
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>

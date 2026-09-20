@@ -5,7 +5,6 @@ import { ChatMessages } from './chat-messages';
 import { PaiDmIntro } from './pai-dm-intro';
 import { ChatInput, type PendingFile } from './chat-input';
 import { ThreadStatusBar } from './thread-status-bar';
-import { EmptyState } from './empty-state';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useMessagePolling } from '@/hooks/use-polling';
 import { useComposingSignal } from '@/hooks/use-composing-signal';
@@ -941,7 +940,14 @@ export function ChatView() {
             return dmBuiltin ? (
               <PaiDmIntro agentLabel={agentLabel(dmBuiltin)} onQuick={(text) => handleSend(text)} />
             ) : (
-              <EmptyState />
+              /* An empty thread is just an empty thread. This used to be the
+                 OpenAgents "connect your first agent" screen, which has no
+                 meaning in PAI: PAI Counselor is the only conversational
+                 agent and PAI Operator is deliberately invisible. */
+              <div className="flex h-full flex-col items-center justify-center gap-2 px-4">
+                <MessageSquare className="size-8 text-muted-foreground opacity-30" />
+                <p className="text-sm text-muted-foreground">{t('threads.noMessages')}</p>
+              </div>
             );
           })()
         ) : (

@@ -24,6 +24,7 @@ from app.memory.extractor import _validate, build_user_prompt, extract_candidate
 from app.memory.field_definitions import SEED_FIELD_DEFINITIONS, VaultFieldDefinitionService
 from app.memory.foreground import render_block
 from app.memory.reconciler import MemoryReconciler
+from app.memory.readiness import STAGES
 from app.memory.student_context import StudentContextBuilder
 from app.memory.student_context import classify_intent
 from app.memory.student_records import ENTITY_MODELS, RecordNeedsReview, StudentRecordService
@@ -65,8 +66,18 @@ def db():
         for spec in SEED_FIELD_DEFINITIONS:
             fields.upsert_definition({**spec, "context_tags": ["counseling"] if spec["key"] == "finance.budget" else [],
                                       "profile_priority": 100 if spec["key"] == "finance.budget" else 50})
-        for key, sensitivity in (("identity.preferred_name", "normal"), ("identity.passport_number", "restricted")):
-            fields.upsert_definition({"key": key, "category": "identity", "sensitivity": sensitivity,
+        # Mirrors migration 063's sensitivity classes: the Profile projection is
+        # only meaningfully tested against a Vault that has one of each.
+        for key, sensitivity in (("identity.preferred_name", "normal"),
+                                 ("identity.current_status", "normal"),
+                                 ("location.current_city", "normal"),
+                                 ("location.current_country", "normal"),
+                                 ("career.primary_interest", "normal"),
+                                 ("identity.nationality", "sensitive"),
+                                 ("accessibility.accommodation_needs", "restricted"),
+                                 ("identity.passport_number", "restricted")):
+            fields.upsert_definition({"key": key, "category": key.split(".")[0],
+                                      "sensitivity": sensitivity,
                                       "data_type": "string", "validation_schema": {"type": "string"}})
         session.commit()
         yield session
@@ -415,3 +426,218 @@ def test_complex_introduction_extracts_separate_structured_claims(db):
     assert [item.key for item in extracted].count("education") == 2
     assert {item.key for item in extracted} >= {"education", "test_attempt", "goal", "finance.budget"}
     assert all("expiry_date" not in (item.proposed_value or {}) for item in extracted)
+
+
+# ---------------------------------------------------------------------------
+# The Profile projection — the student-facing view over the same canonical
+# state the Counselor reads. These tests exist to hold three lines: the page
+# shows every record (not a reduced "one degree, one GPA" summary), it never
+# leaks a restricted identifier, and an edit made on the page is the same
+# canonical write an extraction makes.
+# ---------------------------------------------------------------------------
+
+
+def _profile(db, account=None):
+    from app.memory.student_profile_view import StudentProfileView
+    return StudentProfileView(db).build(db.info["workspace"], account)
+
+
+def _call_profile_endpoint(db):
+    """Drive the real endpoint, through the real credential check."""
+    from app.routers import student_profile as router
+
+    workspace = db.execute(select(Workspace).where(Workspace.id == db.info["workspace"])).scalar_one()
+    workspace.password_hash = "machine-secret"
+    db.flush()
+    return router.get_student_profile(
+        network=str(workspace.id), db=db,
+        x_workspace_token="machine-secret", authorization=None)
+
+
+def test_profile_header_combines_account_identity_vault_and_records(db):
+    workspace = db.info["workspace"]
+    vault = VaultService(db)
+    vault.apply_fact(workspace, "identity.current_status", "Final-year BS Computer Science Student", "user_explicit")
+    vault.apply_fact(workspace, "location.current_city", "Islamabad", "user_explicit")
+    vault.apply_fact(workspace, "location.current_country", "Pakistan", "user_explicit")
+    vault.apply_fact(workspace, "career.primary_interest", "Interested in AI and MSc opportunities", "user_explicit")
+    db.commit()
+
+    header = _profile(db, {"displayName": "Ali Ahmed", "avatarUrl": "https://img.test/a.png",
+                           "email": "ali@example.test"})["header"]
+    assert header["displayName"] == "Ali Ahmed"
+    assert header["avatarUrl"] == "https://img.test/a.png"
+    assert header["email"] == "ali@example.test"
+    assert header["status"] == "Final-year BS Computer Science Student"
+    assert header["location"] == "Islamabad, Pakistan"
+    assert header["headline"] == "Interested in AI and MSc opportunities"
+
+
+def test_profile_header_falls_back_to_stated_records_not_invented_text(db):
+    propose(db, "education", {"qualification_name": "BS Computer Science",
+                              "institution_name": "COMSATS", "academic_status": "current"})
+    propose(db, "goal", {"goal_type": "education", "title": "MSc AI in Germany",
+                         "commitment": "committed"})
+    header = _profile(db)["header"]
+    assert header["status"] == "BS Computer Science student at COMSATS"
+    assert header["headline"] == "MSc AI in Germany"
+    # Nothing stated a location, so the header simply has no location field —
+    # the page hides it rather than rendering a placeholder.
+    assert "location" not in header
+
+
+def test_profile_renders_every_education_record_with_its_own_result(db):
+    propose(db, "education", {"qualification_name": "BS Computer Science", "institution_name": "COMSATS",
+                              "start_date": "2022", "end_date": "2026",
+                              "result": {"gpa": 3.42, "gpa_scale": 4}})
+    propose(db, "education", {"qualification_name": "FSc Pre-Engineering", "institution_name": "Punjab College",
+                              "start_date": "2020", "end_date": "2022",
+                              "result": {"percentage": 87}})
+    education = _profile(db)["sections"]["education"]["education"]
+    assert len(education) == 2
+    by_name = {row["qualification_name"]: row for row in education}
+    assert by_name["BS Computer Science"]["result"] == {"gpa": 3.42, "gpa_scale": 4}
+    assert by_name["FSc Pre-Engineering"]["result"] == {"percentage": 87}
+    assert by_name["FSc Pre-Engineering"]["institution_name"] == "Punjab College"
+
+
+def test_profile_keeps_every_repeatable_record_kind_separate(db):
+    for attempt, band in ((1, "6.5"), (2, "7.5")):
+        propose(db, "test_attempt", {"test_type": "IELTS", "attempt_number": attempt, "overall_score": band})
+    propose(db, "project", {"name": "Portfolio"})
+    propose(db, "project", {"name": "Research prototype"})
+    propose(db, "work_experience", {"organization": "Acme", "role": "Intern"})
+    propose(db, "work_experience", {"organization": "Globex", "role": "Engineer"})
+    sections = _profile(db)["sections"]
+    assert len(sections["tests"]["test_attempt"]) == 2
+    assert len(sections["projects"]["project"]) == 2
+    assert len(sections["experience"]["work_experience"]) == 2
+
+
+def test_profile_withholds_restricted_identifiers_but_keeps_safe_planning_facts(db):
+    workspace = db.info["workspace"]
+    vault = VaultService(db)
+    vault.apply_fact(workspace, "identity.passport_number", "SECRET-PASSPORT", "user_explicit")
+    vault.apply_fact(workspace, "accessibility.accommodation_needs", "PRIVATE-NEED", "user_explicit")
+    vault.apply_fact(workspace, "identity.nationality", "Pakistani", "user_explicit")
+    vault.apply_fact(workspace, "finance.budget", {"amount": 12000, "currency": "EUR", "period": "per_year"}, "user_explicit")
+    db.commit()
+
+    profile = _profile(db)
+    assert "identity.passport_number" not in profile["facts"]
+    assert "accessibility.accommodation_needs" not in profile["facts"]
+    assert profile["facts"]["identity.nationality"] == "Pakistani"
+    assert profile["facts"]["finance.budget"]["amount"] == 12000
+    assert "SECRET-PASSPORT" not in json.dumps(profile)
+    assert "PRIVATE-NEED" not in json.dumps(profile)
+
+
+def test_profile_issue_evidence_never_echoes_a_restricted_value(db):
+    workspace = db.info["workspace"]
+    vault = VaultService(db)
+    # Two conversational claims about the same field raise an issue whose
+    # evidence carries the proposed value inline.
+    vault.apply_fact(workspace, "identity.passport_number", "FIRST-PASSPORT", "conversation")
+    vault.apply_fact(workspace, "identity.passport_number", "SECOND-PASSPORT", "conversation")
+    db.commit()
+
+    profile = _profile(db)
+    assert profile["issues"], "the conflicting claim should surface as an issue"
+    assert "SECOND-PASSPORT" not in json.dumps(profile)
+    assert all(issue["values"] is None and issue["fieldKey"] is None
+               for issue in profile["issues"])
+    # The student still learns that something needs their attention.
+    assert any(issue["severity"] == "blocking" for issue in profile["issues"])
+
+
+def test_profile_issue_keeps_record_values_the_page_would_show_anyway(db):
+    _, first = propose(db, "education", {"qualification_name": "BS CS", "institution_name": "COMSATS",
+                                         "result": {"gpa": 3.42}}, evidence={"quote": "My GPA is 3.42"})
+    assert first.accepted
+    propose(db, "education", {"qualification_name": "BS CS", "institution_name": "COMSATS",
+                              "result": {"gpa": 2.1}}, evidence={"quote": "my gpa is 2.1"})
+    issues = _profile(db)["issues"]
+    conflict = next(i for i in issues if i["type"] == "conflicting_record")
+    assert conflict["recordType"] == "education"
+    assert conflict["recordId"] == first.result_id
+    assert conflict["values"]["proposed"]["result"]["gpa"] == 2.1
+    assert conflict["clarificationQuestion"]
+
+
+def test_empty_profile_reports_itself_empty(db):
+    profile = _profile(db, {"displayName": "Ali Ahmed", "email": "ali@example.test"})
+    assert profile["meta"]["isEmpty"] is True
+    assert profile["meta"]["recordCount"] == 0
+    # Account identity alone is not a profile PAI has learned anything from,
+    # but it is still rendered at the top of the page.
+    assert profile["header"]["displayName"] == "Ali Ahmed"
+
+
+def test_profile_reports_readiness_for_every_stage(db):
+    propose(db, "education", {"qualification_name": "BS CS"})
+    readiness = _profile(db)["readiness"]
+    assert set(readiness["stages"]) == set(STAGES)
+    assert readiness["primary"]["stage"] == "discovery"
+    assert "records.goal" in readiness["primary"]["missing"]
+
+
+def test_counselor_extraction_reaches_profile_and_profile_edit_reaches_counselor(db):
+    """The full loop: conversation -> canonical record -> Profile -> Counselor."""
+    workspace = db.info["workspace"]
+
+    # 1. The student tells the Counselor; extraction proposes, reconciliation
+    #    writes the canonical record.
+    _, extracted = propose(db, "education",
+                           {"qualification_name": "BS CS", "institution_name": "COMSATS",
+                            "result": {"gpa": 3.42, "gpa_scale": 4}},
+                           source="conversation",
+                           evidence={"quote": "I completed BS CS at COMSATS with 3.42 CGPA."})
+    assert extracted.accepted
+
+    # 2. Opening the Profile shows that record.
+    education = _profile(db)["sections"]["education"]["education"]
+    assert [row["qualification_name"] for row in education] == ["BS CS"]
+    assert education[0]["result"]["gpa"] == 3.42
+
+    # 3. The student corrects it on the Profile page — the same canonical path.
+    _, corrected = propose(db, "education", {"result": {"gpa": 3.52, "gpa_scale": 4}},
+                           source="user_explicit", entities={"record_id": extracted.result_id},
+                           evidence={"reason": "Corrected on my profile", "capture": "profile_edit"})
+    assert corrected.accepted and corrected.result_id == extracted.result_id
+
+    # 4. The correction is what the Profile now shows...
+    assert _profile(db)["sections"]["education"]["education"][0]["result"]["gpa"] == 3.52
+
+    # 5. ...and what the Counselor sees in its next conversation.
+    context = StudentContextBuilder(db).build_context(workspace, query="What should I study?")
+    counselor_education = context.records["education"]
+    assert counselor_education[0]["result"]["gpa"] == 3.52
+
+    # 6. Provenance survived the hand edit: both claims are still on the record.
+    revisions = StudentRecordService(db).history(workspace, "education", extracted.result_id)
+    assert [r.source_type for r in revisions] == ["conversation", "user_explicit"]
+    assert revisions[-1].capture_method == "explicit_correction"
+
+
+def test_profile_endpoint_returns_the_projection_not_raw_memory(db):
+    workspace = db.info["workspace"]
+    VaultService(db).apply_fact(workspace, "identity.passport_number", "SECRET-PASSPORT", "user_explicit")
+    db.commit()
+    propose(db, "education", {"qualification_name": "BS CS", "institution_name": "COMSATS"})
+
+    response = _call_profile_endpoint(db)
+    assert response["code"] == 0
+    data = response["data"]
+    assert set(data) == {"header", "facts", "factGroups", "sections", "readiness", "issues", "meta"}
+    assert data["sections"]["education"]["education"][0]["qualification_name"] == "BS CS"
+    assert "SECRET-PASSPORT" not in json.dumps(data)
+
+
+def test_profile_endpoint_rejects_a_caller_without_credentials(db):
+    from app.routers import student_profile as router
+    workspace = db.execute(select(Workspace).where(Workspace.id == db.info["workspace"])).scalar_one()
+    workspace.password_hash = "machine-secret"
+    db.flush()
+    response = router.get_student_profile(network=str(workspace.id), db=db,
+                                          x_workspace_token="wrong", authorization=None)
+    assert response.status_code == 401

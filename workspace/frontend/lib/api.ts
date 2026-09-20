@@ -419,6 +419,85 @@ class WorkspaceApi {
   }
 
   // ---------------------------------------------------------------------------
+  // Student Profile
+  //
+  // One endpoint, one projection. The Profile view never reaches into memory
+  // internals — no Vault reads, no record tables, no readiness service. The
+  // backend composes account identity, safe facts, typed records, readiness
+  // and issues, and withholds restricted identifiers before they leave it.
+  // ---------------------------------------------------------------------------
+
+  /** The composed student Profile for the current workspace. */
+  async getStudentProfile(): Promise<import('./student-profile').StudentProfile> {
+    return this.request<import('./student-profile').StudentProfile>(
+      `/v1/student-profile?network=${this.requireWorkspace()}`,
+    );
+  }
+
+  /**
+   * A student's own correction, written through the canonical validated path
+   * (candidate -> reconciler -> Vault/typed record), so provenance and the
+   * revision trail survive a hand edit exactly as they do for extraction.
+   *
+   * Omit `recordId` to create a record; the backend still matches it against
+   * existing ones so re-stating a degree updates it instead of duplicating it.
+   */
+  async editStudentProfile(
+    edit: import('./student-profile').ProfileEdit,
+  ): Promise<{ saved: boolean; id: string | null }> {
+    return this.request<{ saved: boolean; id: string | null }>(
+      `/v1/student-profile/edits?network=${this.requireWorkspace()}`,
+      {
+        method: 'POST',
+        body: JSON.stringify({
+          ...(edit.recordType ? { record_type: edit.recordType } : {}),
+          ...(edit.recordId ? { record_id: edit.recordId } : {}),
+          ...(edit.fieldKey ? { field_key: edit.fieldKey } : {}),
+          value: edit.value,
+          reason: edit.reason,
+        }),
+      },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // First-run onboarding
+  // ---------------------------------------------------------------------------
+
+  /** Whether this account still owes the first-run form, plus any prefill. */
+  async getOnboarding(): Promise<import('./onboarding').OnboardingState> {
+    return this.request<import('./onboarding').OnboardingState>(
+      `/v1/student-profile/onboarding?network=${this.requireWorkspace()}`,
+    );
+  }
+
+  /** Submit the answers. They become canonical Vault facts, not a form row. */
+  async submitOnboarding(
+    answers: import('./onboarding').OnboardingAnswers,
+  ): Promise<import('./onboarding').OnboardingResult> {
+    return this.request<import('./onboarding').OnboardingResult>(
+      `/v1/student-profile/onboarding?network=${this.requireWorkspace()}`,
+      { method: 'POST', body: JSON.stringify({ answers }) },
+    );
+  }
+
+  /** Dismiss it. PAI will learn the same facts through conversation instead. */
+  async skipOnboarding(): Promise<{ completed: boolean }> {
+    return this.request<{ completed: boolean }>(
+      `/v1/student-profile/onboarding/skip?network=${this.requireWorkspace()}`,
+      { method: 'POST' },
+    );
+  }
+
+  /** Mark an item that needed review as settled, with the student's note. */
+  async resolveProfileIssue(issueId: string, note: string): Promise<{ resolved: boolean }> {
+    return this.request<{ resolved: boolean }>(
+      `/v1/student-profile/issues/${encodeURIComponent(issueId)}/resolve?network=${this.requireWorkspace()}`,
+      { method: 'POST', body: JSON.stringify({ note }) },
+    );
+  }
+
+  // ---------------------------------------------------------------------------
   // Channels (sessions) — via ONM events
   // ---------------------------------------------------------------------------
 
@@ -1055,9 +1134,6 @@ class WorkspaceApi {
   }
 
   /** Fetch the catalog of supported agent client types. */
-  async getAgentCatalog(): Promise<AgentCatalogEntry[]> {
-    return this.request<AgentCatalogEntry[]>('/v1/agent-catalog');
-  }
 
   /** Fetch full detail for one agent type (install/uninstall + supported models). */
   async getAgentCatalogDetail(agentType: string): Promise<AgentCatalogDetail> {

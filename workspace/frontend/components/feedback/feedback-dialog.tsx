@@ -105,7 +105,7 @@ export function FeedbackDialog({ onClose }: { onClose: () => void }) {
         <div className="flex items-center justify-between gap-2">
           <span className="text-[11px] text-muted-foreground">{t('feedback.contextNote')}</span>
           <div className="flex gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={sending}>{t('connect.nodeCancel')}</Button>
+            <Button variant="ghost" onClick={onClose} disabled={sending}>{t('common.cancel')}</Button>
             <Button onClick={submit} disabled={!message.trim() || sending}>
               {sending ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Send className="mr-1.5 size-4" />}
               {t('feedback.submit')}
