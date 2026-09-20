@@ -135,7 +135,13 @@ celerybeat.pid
 *.sage.py
 
 # Environments
+# `.env` alone does not cover .env.local, .env.backup-*, .env.prod and the
+# like, all of which hold real credentials. Ignore every variant, then
+# re-admit only the committed templates.
 .env
+.env.*
+!.env.example
+!.env.*.example
 .venv
 env/
 venv/

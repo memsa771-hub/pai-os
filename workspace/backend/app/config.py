@@ -2,10 +2,43 @@
 """
 Workspace backend configuration.
 
-All settings are loaded from environment variables.
+All settings are loaded from environment variables. There is exactly ONE
+settings file, `workspace/.env`, and it is read by two different mechanisms:
+
+* Docker Compose reads it automatically, because it sits beside the
+  docker-compose files, and substitutes it into each service's `environment:`
+  block. A variable not listed there never reaches the container.
+* Running the backend directly (uvicorn, pytest, scripts) does NOT get that
+  for free, so `_load_env_file()` below loads the same file into os.environ.
+
+Real environment variables always win: `load_dotenv` is called WITHOUT
+override, so the file only fills in what the environment has not already set.
+That keeps Docker and the hosting platform authoritative in production while
+local runs still pick the file up.
 """
 
 import os
+from pathlib import Path
+
+
+def _load_env_file() -> None:
+    """Load `workspace/.env` for processes Docker Compose did not start.
+
+    Must run before Config's class body, which reads os.environ at import.
+    Missing file or missing python-dotenv is not an error: the environment may
+    legitimately be supplied entirely from outside.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    # app/config.py -> app -> backend -> workspace/.env
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    if env_file.is_file():
+        load_dotenv(env_file, override=False)
+
+
+_load_env_file()
 
 
 class Config:
