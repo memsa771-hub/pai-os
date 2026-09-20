@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import config
 from app.identity_errors import IdentityUnavailable
 from app.response import ResponseCode, json_response
-from app.routers import account, app_version, auth, browser, devices, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, tasks, timers, todos, workflows, workspaces
+from app.routers import account, app_version, auth, browser, devices, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, student_profile, tasks, timers, todos, workflows, workspaces
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -649,6 +649,7 @@ app.include_router(operator.router)
 app.include_router(routines.router)
 app.include_router(search.router)
 app.include_router(shares.router)
+app.include_router(student_profile.router)
 app.include_router(tasks.router)
 app.include_router(todos.router)
 app.include_router(workflows.router)

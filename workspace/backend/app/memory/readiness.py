@@ -8,12 +8,16 @@ STAGES = (
     "discovery", "counseling", "matching", "eligibility", "application",
     "scholarship", "visa", "enrollment", "career",
 )
-ENTITY_REQUIREMENTS = {
-    "matching": ("education", "goal"),
-    "eligibility": ("education", "test_attempt"),
-    "application": ("education", "goal", "document"),
-    "scholarship": ("education",),
-    "career": ("education",),
+STAGE_REQUIREMENTS = {
+    "discovery": {"entities": ("education", "goal")},
+    "counseling": {"entities": ("education", "goal")},
+    "matching": {"facts": ("preferences.target_countries", "finance.budget"), "entities": ("education", "goal")},
+    "eligibility": {"entities": ("education", "goal")},
+    "application": {"entities": ("education", "goal", "document")},
+    "scholarship": {"facts": ("finance.funding_status",), "entities": ("education", "goal")},
+    "visa": {"facts": ("identity.nationality",), "entities": ("application", "document")},
+    "enrollment": {"entities": ("application", "document")},
+    "career": {"entities": ("education", "goal")},
 }
 
 
@@ -29,16 +33,26 @@ class ReadinessService:
         facts = self.vault.snapshot(workspace_id, include_sensitive=True)
         records = self.records.snapshot(workspace_id)
         filled, missing = [], []
+        required = STAGE_REQUIREMENTS[stage]
+        required_fact_keys = set(required.get("facts", ()))
         for definition in self.fields.list_definitions():
             if stage not in (definition.required_for or []):
                 continue
-            (filled if facts.get(definition.key) not in (None, "", []) else missing).append(definition.key)
-        for kind in ENTITY_REQUIREMENTS.get(stage, ()):
+            required_fact_keys.add(definition.key)
+        for key in sorted(required_fact_keys):
+            (filled if facts.get(key) not in (None, "", []) else missing).append(key)
+        for kind in required.get("entities", ()):
             (filled if records.get(kind) else missing).append(f"records.{kind}")
         issues = self.records.issues(workspace_id)
+        conflicts = [issue.id for issue in issues
+                     if issue.issue_type in ("conflicting_fact", "conflicting_record")]
+        expired = [f"records.{kind}:{row['id']}" for kind, rows in records.items()
+                   for row in rows if row.get("verification_status") == "expired"]
+        status = ("blocked" if conflicts else "insufficient_information" if not filled
+                  else "partially_ready" if missing or expired else "ready")
         return {
-            "stage": stage, "filled": filled, "missing": missing,
-            "conflicts": [issue.id for issue in issues
-                          if issue.issue_type in ("conflicting_fact", "conflicting_record")],
+            "stage": stage, "status": status, "filled": filled, "missing": missing,
+            "conflicts": conflicts, "expired_evidence": expired,
+            "blocking_issues": conflicts,
             "next_useful_gap": missing[0] if missing else None,
         }

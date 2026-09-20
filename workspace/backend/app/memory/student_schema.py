@@ -118,6 +118,42 @@ RECORD_SPECS = {
         "properties": {"file_id": string(), "document_type": string(), "title": string(),
             "details": obj({"related_record_type": string(), "related_record_id": string()})},
     },
+    "language_proficiency": {
+        "required": ("language",), "identity": ("language",), "discriminators": ("evidence_type",),
+        "properties": {"language": string(), "proficiency": string(), "evidence_type": string(),
+            "details": obj({"native": {"type": "boolean"}, "notes": string()})},
+    },
+    "research": {
+        "required": ("title",), "identity": ("title", "organization"), "discriminators": ("start_date",),
+        "properties": {"title": string(), "organization": string(), "role": string(),
+            "start_date": string(), "end_date": string(),
+            "details": obj({"abstract": string(), "methods": strings(), "outcomes": strings(),
+                            "publication_title": string(), "publication_url": string()})},
+    },
+    "achievement": {
+        "required": ("title",), "identity": ("title", "issuer"), "discriminators": ("achieved_on",),
+        "properties": {"title": string(), "achievement_type": string(), "issuer": string(),
+            "achieved_on": string(), "details": obj({"description": string(), "level": string(),
+                                                       "leadership_role": string(), "activity_type": string()})},
+    },
+    "financial_sponsor": {
+        "required": ("sponsor_type",), "identity": ("sponsor_type", "name"), "discriminators": (),
+        "properties": {"sponsor_type": string(), "name": string(), "commitment_status": string(),
+            "details": obj({"relationship": string(), "amount": number(), "currency": string(),
+                            "evidence_available": {"type": "boolean"}})},
+    },
+    "scholarship_application": {
+        "required": ("scholarship_name",), "identity": ("scholarship_name", "provider"), "discriminators": ("deadline",),
+        "properties": {"scholarship_name": string(), "provider": string(), "application_status": string(),
+            "deadline": string(), "details": obj({"award_amount": number(), "currency": string(),
+                                                    "missing_requirements": strings(), "next_action": string()})},
+    },
+    "visa": {
+        "required": ("country",), "identity": ("country", "visa_type"), "discriminators": ("expiry_date",),
+        "properties": {"country": string(), "visa_type": string(), "application_status": string(),
+            "expiry_date": string(), "details": obj({"history_type": string(), "decision_date": string(),
+                                                       "refusal_reason": string(), "next_action": string()})},
+    },
 }
 
 
@@ -137,7 +173,7 @@ def validate_record(kind: str, values: dict, *, partial: bool = False) -> dict:
     try:
         _validate(obj(spec["properties"], () if partial else spec["required"]), value, kind)
         _finite(value)
-        for key in ("start_date", "end_date", "test_date", "expiry_date", "issued_on", "expires_on", "deadline", "target_date"):
+        for key in ("start_date", "end_date", "test_date", "expiry_date", "issued_on", "expires_on", "deadline", "target_date", "achieved_on"):
             if key in value:
                 text = value[key]
                 if not re.fullmatch(r"\d{4}(?:-\d{2})?(?:-\d{2})?", text):

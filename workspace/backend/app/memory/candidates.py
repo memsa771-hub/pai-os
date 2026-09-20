@@ -89,6 +89,9 @@ class MemoryCandidateService:
                 "user-command path"
             )
 
+        if candidate_type == "vault_fact" and key:
+            from .field_definitions import FIELD_ALIASES
+            key = FIELD_ALIASES.get(key, key)
         candidate = MemoryCandidate(
             workspace_id=workspace_id,
             subject_user_id=subject_user_id,

@@ -1010,6 +1010,8 @@ class VaultFact(Base):
     # user_explicit | document | conversation | agent | system.
     # user_explicit outranks inference in the reconciler.
     source_type = Column(Text, nullable=False)
+    claim_origin = Column(Text, nullable=True)
+    capture_method = Column(Text, nullable=True)
     source_event_id = Column(Text, nullable=True)        # events.id that evidences this
     evidence = Column(JSONB, nullable=True)              # {"quote": "...", "file_id": "..."}
     valid_from = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
@@ -1158,15 +1160,79 @@ class StudentDocument(_StudentRecord, Base):
     __table_args__ = (Index("idx_pai_documents_ws", "workspace_id", "status"),)
 
 
+class LanguageProficiency(_StudentRecord, Base):
+    __tablename__ = "pai_language_proficiencies"
+    language = Column(Text, nullable=False)
+    proficiency = Column(Text, nullable=True)
+    evidence_type = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_languages_ws", "workspace_id", "status"),)
+
+
+class ResearchRecord(_StudentRecord, Base):
+    __tablename__ = "pai_research_records"
+    title = Column(Text, nullable=False)
+    organization = Column(Text, nullable=True)
+    role = Column(Text, nullable=True)
+    start_date = Column(Text, nullable=True)
+    end_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_research_ws", "workspace_id", "status"),)
+
+
+class AchievementRecord(_StudentRecord, Base):
+    __tablename__ = "pai_achievement_records"
+    title = Column(Text, nullable=False)
+    achievement_type = Column(Text, nullable=True)
+    issuer = Column(Text, nullable=True)
+    achieved_on = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_achievements_ws", "workspace_id", "status"),)
+
+
+class FinancialSponsor(_StudentRecord, Base):
+    __tablename__ = "pai_financial_sponsors"
+    sponsor_type = Column(Text, nullable=False)
+    name = Column(Text, nullable=True)
+    commitment_status = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_sponsors_ws", "workspace_id", "status"),)
+
+
+class ScholarshipApplication(_StudentRecord, Base):
+    __tablename__ = "pai_scholarship_applications"
+    scholarship_name = Column(Text, nullable=False)
+    provider = Column(Text, nullable=True)
+    application_status = Column(Text, nullable=True)
+    deadline = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_scholarships_ws", "workspace_id", "status"),)
+
+
+class VisaRecord(_StudentRecord, Base):
+    __tablename__ = "pai_visa_records"
+    country = Column(Text, nullable=False)
+    visa_type = Column(Text, nullable=True)
+    application_status = Column(Text, nullable=True)
+    expiry_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_visas_ws", "workspace_id", "status"),)
+
+
 class ProfileIssue(Base):
     __tablename__ = "pai_profile_issues"
     id = Column(Text, primary_key=True, default=_uuid)
     workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
     subject_user_id = Column(Text, nullable=True)
     issue_type = Column(Text, nullable=False)
+    severity = Column(Text, nullable=False, default="warning", server_default=text("'warning'"))
+    affected_type = Column(Text, nullable=True)
+    affected_id = Column(Text, nullable=True)
     summary = Column(Text, nullable=False)
+    clarification_question = Column(Text, nullable=True)
     evidence = Column(JSONB, nullable=True)
     status = Column(Text, nullable=False, default="open", server_default=text("'open'"))
+    resolution = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     __table_args__ = (Index("idx_pai_issues_ws", "workspace_id", "status"),)

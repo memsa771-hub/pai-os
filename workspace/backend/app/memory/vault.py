@@ -194,6 +194,8 @@ class VaultService:
         source_event_id: Optional[str] = None,
         evidence: Optional[dict] = None,
         subject_user_id: Optional[str] = None,
+        claim_origin: Optional[str] = None,
+        capture_method: Optional[str] = None,
     ) -> "VaultWriteResult":
         """Validate, resolve against any existing fact, and record.
 
@@ -212,13 +214,18 @@ class VaultService:
 
         # An institutional document disagreeing with self-report is evidence
         # of a conflict, not authority to silently replace the student's claim.
-        if (current is not None and source_type == "document"
-                and current.source_type in ("conversation", "user_explicit")
-                and _unwrap(current.value) != value):
+        quote = str((evidence or {}).get("quote") or "").casefold()
+        explicit_correction = any(marker in quote for marker in
+                                  ("actually", "correction", "correct that", "i changed", "now ", "instead"))
+        if (current is not None and _unwrap(current.value) != value and (
+                (source_type == "document" and current.source_type in ("conversation", "user_explicit")) or
+                (source_type == "conversation" and current.source_type == "conversation" and not explicit_correction))):
             self.db.add(ProfileIssue(
                 workspace_id=workspace_id, subject_user_id=subject_user_id,
                 issue_type="conflicting_fact",
+                severity="blocking", affected_type="vault_fact", affected_id=current.id,
                 summary=f"Conflicting evidence for {field_key}",
+                clarification_question=f"What is the correct value for {field_key}?",
                 evidence={"field_key": field_key, "current_fact_id": current.id,
                           "proposed_value": value, "proposed_evidence": evidence},
             ))
@@ -269,6 +276,8 @@ class VaultService:
             value={"value": value},
             confidence=confidence,
             source_type=source_type,
+            claim_origin=claim_origin or ("institution_document" if source_type == "document" else "student" if source_type in ("conversation", "user_explicit") else "agent_inference"),
+            capture_method=capture_method or ("document_extraction" if source_type == "document" else "conversation_extraction" if source_type == "conversation" else "explicit_correction" if source_type == "user_explicit" else "agent_proposal"),
             source_event_id=source_event_id,
             evidence=evidence,
             status="active",

@@ -34,6 +34,7 @@ COUNSELOR_CAPABILITIES = frozenset({
 OPERATOR_CAPABILITIES = frozenset({
     Capability.MEMORY_READ.value,
     Capability.VAULT_READ.value,
+    Capability.PROFILE_PROPOSE.value,
 })
 
 

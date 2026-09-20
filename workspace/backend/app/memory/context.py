@@ -53,6 +53,7 @@ class StudentContext:
     vault: dict[str, Any] = field(default_factory=dict)
     records: dict[str, list[dict]] = field(default_factory=dict)
     issues: list[dict] = field(default_factory=list)
+    readiness: dict[str, Any] = field(default_factory=dict)
     memories: list[dict] = field(default_factory=list)
     episodes: list[dict] = field(default_factory=list)
     # Which refs produced this, for debugging and for the Operator run record.
@@ -66,6 +67,7 @@ class StudentContext:
             "vault": self.vault,
             "records": self.records,
             "issues": self.issues,
+            "readiness": self.readiness,
             "memories": self.memories,
             "episodes": self.episodes,
             "resolved_refs": self.resolved_refs,
@@ -241,9 +243,9 @@ class MemoryContextService:
     def _record_section(self, workspace_id: str, query: Optional[str]) -> dict[str, list[dict]]:
         from .student_records import ENTITY_MODELS
         q = (query or "").lower()
-        kinds = ["goal", "education", "test_attempt", "work_experience", "skill", "project", "certification"]
+        kinds = ["goal", "education", "test_attempt", "language_proficiency", "work_experience", "skill", "project", "certification", "research", "achievement", "financial_sponsor", "scholarship_application", "visa", "document"]
         if any(word in q for word in ("career", "work", "job", "intern", "project", "skill")):
-            kinds = ["goal", "education", "work_experience", "skill", "project", "certification", "test_attempt"]
+            kinds = ["goal", "education", "work_experience", "skill", "project", "certification", "research", "achievement", "test_attempt", "language_proficiency"]
         if any(word in q for word in ("application", "admission", "deadline")):
             kinds.append("application")
         snapshot = self.records.snapshot(workspace_id, kinds=kinds, limit=5)
@@ -256,6 +258,13 @@ class MemoryContextService:
             "skill": ("id", "name", "proficiency"),
             "certification": ("id", "name", "issuer", "issued_on"),
             "application": ("id", "institution_name", "program_name", "intake", "application_status", "deadline"),
+            "language_proficiency": ("id", "language", "proficiency", "evidence_type"),
+            "research": ("id", "title", "organization", "role", "start_date", "end_date"),
+            "achievement": ("id", "title", "achievement_type", "issuer", "achieved_on"),
+            "financial_sponsor": ("id", "sponsor_type", "name", "commitment_status"),
+            "scholarship_application": ("id", "scholarship_name", "provider", "application_status", "deadline"),
+            "visa": ("id", "country", "visa_type", "application_status", "expiry_date"),
+            "document": ("id", "file_id", "document_type", "title"),
         }
         from .student_schema import RECORD_SPECS
         for kind in safe_columns:
@@ -271,7 +280,8 @@ class MemoryContextService:
         }
 
     def _issues_section(self, workspace_id):
-        return [{"type": issue.issue_type, "summary": issue.summary,
+        return [{"id": issue.id, "type": issue.issue_type, "severity": issue.severity,
+                 "summary": issue.summary, "clarification_question": issue.clarification_question,
                  "record_type": (issue.evidence or {}).get("record_type"),
                  "record_id": (issue.evidence or {}).get("record_id"),
                  "field_key": (issue.evidence or {}).get("field_key")}

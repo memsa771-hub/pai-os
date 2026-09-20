@@ -81,8 +81,20 @@ def upgrade():
             "tags": json.dumps(required_for), "required_for": json.dumps(required_for),
             "priority": priority,
         })
+    # Never silently discard two different active claims during deployment.
+    # Exact duplicate rows are safe to consolidate; semantic conflicts require
+    # an operator to resolve them before retrying the migration.
+    op.execute("""
+        DO $$ BEGIN
+          IF EXISTS (
+            SELECT 1 FROM pai_vault_facts WHERE status = 'active'
+            GROUP BY workspace_id, field_key HAVING count(DISTINCT value) > 1
+          ) THEN
+            RAISE EXCEPTION 'Conflicting active Vault facts exist; resolve them before migration 063';
+          END IF;
+        END $$
+    """)
     # A partial unique index is the concurrency boundary for all scalar facts.
-    # Existing duplicates must be retired deterministically before creating it.
     op.execute("""
         WITH ranked AS (
           SELECT id, row_number() OVER (

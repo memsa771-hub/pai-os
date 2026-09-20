@@ -127,6 +127,8 @@ async def extract_memory(job, db) -> dict:
             return {"candidates_proposed": 0, "reason": "source_turn_missing"}
 
         definitions = VaultFieldDefinitionService(db).list_definitions()
+        from app.memory.field_definitions import ENTITY_BACKED_LEGACY_FIELDS
+        definitions = [d for d in definitions if d.key not in ENTITY_BACKED_LEGACY_FIELDS]
         allowed_keys = {d.key for d in definitions}
         # The same set twice, for two different jobs: `allowed_keys` is the
         # authorization filter, `field_specs` is what the model is actually

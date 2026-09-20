@@ -123,6 +123,9 @@ class MemoryReconciler:
     def _reconcile_vault(self, candidate: MemoryCandidate) -> ReconcileResult:
         if not candidate.key:
             return self._reject(candidate, "vault_fact candidate requires a key")
+        from .field_definitions import ENTITY_BACKED_LEGACY_FIELDS
+        if candidate.key in ENTITY_BACKED_LEGACY_FIELDS:
+            return self._reject(candidate, f"{candidate.key} is represented by a typed student record")
 
         if candidate.operation == "retract":
             count = self.vault.retract_fact(candidate.workspace_id, candidate.key)

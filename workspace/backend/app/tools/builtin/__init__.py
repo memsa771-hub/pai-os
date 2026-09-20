@@ -8,6 +8,7 @@ CAP_MEMORY_READ = frozenset({Capability.MEMORY_READ.value})
 CAP_MEMORY_MANAGE = frozenset({Capability.MEMORY_MANAGE.value})
 CAP_VAULT_READ = frozenset({Capability.VAULT_READ.value})
 CAP_VAULT_MANAGE = frozenset({Capability.VAULT_MANAGE.value})
+CAP_PROFILE_PROPOSE = frozenset({Capability.PROFILE_PROPOSE.value})
 
 EMPTY = {"type": "object", "properties": {}, "additionalProperties": False}
 
@@ -90,6 +91,7 @@ def register_builtin_tools(registry):
                         "work rather than restating the profile in the objective."
                     ),
                 },
+                "intent": {"type": "string", "enum": ["discovery", "academic_planning", "study_abroad_matching", "eligibility_analysis", "career_exploration", "scholarship_planning", "application_preparation", "application_execution", "visa_preparation", "enrollment", "document_review"]},
             }, ["objective"]),
             "operator", ToolRisk.WRITE, operator.delegate, audiences=COUNSELOR_ONLY,
         ),
@@ -129,6 +131,7 @@ def register_builtin_tools(registry):
                         "ignored."
                     ),
                 },
+                "intent": {"type": "string", "enum": ["discovery", "academic_planning", "study_abroad_matching", "eligibility_analysis", "career_exploration", "scholarship_planning", "application_preparation", "application_execution", "visa_preparation", "enrollment", "document_review"]},
             }),
             "memory", ToolRisk.READ, memory.get_context,
             capabilities=CAP_MEMORY_READ | CAP_VAULT_READ, audiences=BOTH,
@@ -139,7 +142,7 @@ def register_builtin_tools(registry):
             "repeatable records, issues and discovery readiness, "
             "snapshot, or pass one (e.g. 'education.cgpa') for that field with "
             "its provenance.",
-            obj({"field_key": {"type": "string"}}),
+            obj({"field_key": {"type": "string"}, "query": {"type": "string"}, "intent": {"type": "string"}}),
             "memory", ToolRisk.READ, memory.vault_get,
             capabilities=CAP_VAULT_READ, audiences=BOTH,
         ),
@@ -162,6 +165,22 @@ def register_builtin_tools(registry):
             obj({"event_type": {"type": "string"}, "limit": {"type": "integer"}}),
             "memory", ToolRisk.READ, memory.episodes_recent,
             capabilities=CAP_MEMORY_READ, audiences=BOTH,
+        ),
+        ToolDefinition(
+            "profile.propose",
+            "Propose structured student profile facts found during document or research work. "
+            "Proposals are validated and reconciled by the backend; this never overwrites the profile directly.",
+            obj({"proposals": {"type": "array", "maxItems": 50, "items": {
+                "type": "object", "additionalProperties": False,
+                "properties": {
+                    "candidate_type": {"type": "string", "enum": ["student_record", "vault_fact"]},
+                    "key": {"type": "string"}, "value": {}, "entities": {"type": "object"},
+                    "confidence": {"type": "number"}, "file_id": {"type": "string"},
+                    "quote": {"type": "string"},
+                }, "required": ["candidate_type", "key", "value"]
+            }}}, ["proposals"]),
+            "memory", ToolRisk.WRITE, memory.propose_profile,
+            capabilities=CAP_PROFILE_PROPOSE, audiences=OPERATOR_ONLY,
         ),
         ToolDefinition(
             "memory.remember",

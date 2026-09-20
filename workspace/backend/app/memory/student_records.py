@@ -8,6 +8,8 @@ from app.models import (
     CourseRecord, EducationRecord, FileRecord, ProfileIssue, StudentGoal, StudentProject,
     TestAttempt, WorkExperience, StudentSkill, StudentCertification,
     StudentApplication, StudentDocument, StudentRecordRevision, Workspace,
+    LanguageProficiency, ResearchRecord, AchievementRecord, FinancialSponsor,
+    ScholarshipApplication, VisaRecord,
 )
 from .errors import MemoryDataError
 from .student_schema import RECORD_SPECS, validate_record
@@ -17,6 +19,9 @@ ENTITY_MODELS = {
     "work_experience": WorkExperience, "project": StudentProject, "goal": StudentGoal,
     "skill": StudentSkill, "certification": StudentCertification,
     "application": StudentApplication, "document": StudentDocument,
+    "language_proficiency": LanguageProficiency, "research": ResearchRecord,
+    "achievement": AchievementRecord, "financial_sponsor": FinancialSponsor,
+    "scholarship_application": ScholarshipApplication, "visa": VisaRecord,
 }
 REQUIRED = {kind: spec["required"] for kind, spec in RECORD_SPECS.items()}
 ALLOWED = {kind: set(spec["properties"]) for kind, spec in RECORD_SPECS.items()}
@@ -43,6 +48,11 @@ def _conflicts(previous, patch):
     return any(key in previous and (
         _conflicts(previous[key], value) if isinstance(previous[key], dict) and isinstance(value, dict)
         else not _same(previous[key], value)) for key, value in patch.items())
+
+
+def _explicit_correction(evidence):
+    quote = str((evidence or {}).get("quote") or "").casefold()
+    return any(marker in quote for marker in ("actually", "correction", "correct that", "i changed", "now ", "instead"))
 
 
 class StudentRecordService:
@@ -121,9 +131,12 @@ class StudentRecordService:
         changed = current and _conflicts(before, values)
         if changed and source_type != "user_explicit" and (
                 source_type == "document" or current.source_type == "document" or
-                current.verification_status in ("document_supported", "externally_verified", "verified")):
+                current.verification_status in ("document_supported", "externally_verified", "verified") or
+                (source_type == "conversation" and not _explicit_correction(evidence))):
             self.db.add(ProfileIssue(workspace_id=workspace_id, subject_user_id=subject_user_id,
                 issue_type="conflicting_record", summary=f"Conflicting {kind.replace('_', ' ')} information",
+                severity="blocking", affected_type=kind, affected_id=current.id,
+                clarification_question=f"Which {kind.replace('_', ' ')} information is correct?",
                 evidence={"record_type": kind, "record_id": current.id, "current": before,
                           "proposed": values, "current_evidence": current.evidence, "proposed_evidence": evidence}))
             self.db.flush()

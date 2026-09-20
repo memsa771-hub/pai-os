@@ -25,6 +25,7 @@ from app.memory.field_definitions import SEED_FIELD_DEFINITIONS, VaultFieldDefin
 from app.memory.foreground import render_block
 from app.memory.reconciler import MemoryReconciler
 from app.memory.student_context import StudentContextBuilder
+from app.memory.student_context import classify_intent
 from app.memory.student_records import ENTITY_MODELS, RecordNeedsReview, StudentRecordService
 from app.memory.student_schema import validate_record
 from app.memory.errors import MemoryDataError
@@ -137,6 +138,16 @@ def test_document_conflict_keeps_both_claims_without_overwrite(db):
     issue = service.issues(db.info["workspace"])[0]
     assert issue.evidence["current"]["result"]["gpa"] == 3.42
     assert issue.evidence["proposed"]["result"]["gpa"] == 3.41
+
+
+def test_ordinary_conversation_cannot_silently_overwrite_record(db):
+    service = StudentRecordService(db)
+    _, initial = propose(db, "education", {"qualification_name": "BS CS", "result": {"gpa": 3.42}})
+    candidate, result = propose(db, "education", {"result": {"gpa": 3.1}},
+                                entities={"record_id": initial.result_id},
+                                evidence={"quote": "My GPA is 3.1"})
+    assert not result.accepted and candidate.status == "needs_review"
+    assert service.get(db.info["workspace"], "education", initial.result_id).result["gpa"] == 3.42
 
 
 def test_goal_change_keeps_history_and_independent_career_goal(db):
@@ -315,3 +326,92 @@ def test_background_turn_to_profile_and_new_chat(db):
     assert asyncio.run(reconcile_memory(queued, db))["accepted"] == 0
     block = MemoryContextService(db).build_student_context(workspace, query="What should I do next?").to_prompt_block()
     assert all(value in block for value in ("COMSATS", "10000", "MSc AI in Germany"))
+
+
+def test_journey_intent_selects_relevant_records_and_readiness(db):
+    propose(db, "education", {"qualification_name": "BS CS"})
+    propose(db, "research", {"title": "NLP thesis", "role": "Researcher"})
+    propose(db, "financial_sponsor", {"sponsor_type": "family", "commitment_status": "confirmed"})
+    assert classify_intent("Can I get a scholarship with this funding?") == "scholarship_planning"
+    career = StudentContextBuilder(db).build_context(
+        db.info["workspace"], "How should I build my research career?")
+    assert "research" in career.records and "financial_sponsor" not in career.records
+    assert career.readiness["stage"] == "career"
+
+
+def test_legacy_scalar_cannot_disagree_with_typed_record(db):
+    propose(db, "education", {"qualification_name": "BS CS", "result": {"gpa": 3.42, "gpa_scale": 4}})
+    candidate = MemoryCandidateService(db).propose(
+        workspace_id=db.info["workspace"], candidate_type="vault_fact",
+        key="education.cgpa", proposed_value=3.1, confidence=0.99,
+        source_type="conversation")
+    result = MemoryReconciler(db).reconcile(candidate)
+    db.commit()
+    assert not result.accepted and candidate.status == "rejected"
+    assert VaultService(db).get_fact(db.info["workspace"], "education.cgpa") is None
+
+
+def test_country_alias_has_one_canonical_readiness_requirement(db):
+    workspace = db.info["workspace"]
+    VaultService(db).apply_fact(workspace, "preferences.target_countries", ["Germany"], "user_explicit")
+    propose(db, "education", {"qualification_name": "BS CS"})
+    propose(db, "goal", {"goal_type": "education", "title": "MSc AI"})
+    readiness = __import__("app.memory.readiness", fromlist=["ReadinessService"]).ReadinessService(db).evaluate(workspace, "matching")
+    assert "preferences.target_countries" in readiness["filled"]
+    assert "preferences.countries" not in readiness["missing"]
+
+
+@pytest.mark.parametrize("kind,value", [
+    ("language_proficiency", {"language": "German", "proficiency": "B1"}),
+    ("research", {"title": "NLP thesis", "organization": "University"}),
+    ("achievement", {"title": "Hackathon winner", "achievement_type": "award"}),
+    ("financial_sponsor", {"sponsor_type": "family"}),
+    ("scholarship_application", {"scholarship_name": "Merit award"}),
+    ("visa", {"country": "Germany", "visa_type": "student"}),
+])
+def test_rich_profile_records_are_repeatable_and_validated(db, kind, value):
+    first = propose(db, kind, value)[1]
+    repeated = propose(db, kind, value)[1]
+    assert first.accepted and repeated.result_id == first.result_id
+    assert len(StudentRecordService(db).list(db.info["workspace"], kind)) == 1
+
+
+def test_operator_can_propose_but_cannot_directly_manage_profile():
+    from app.memory.permissions import OPERATOR_CAPABILITIES
+    from app.tools import AUDIENCE_OPERATOR, get_tool_registry
+    tools = {entry["function"]["name"] for entry in
+             get_tool_registry().openai_tools_for_audience(AUDIENCE_OPERATOR, OPERATOR_CAPABILITIES)}
+    assert "profile__propose" in tools
+    assert "memory__remember" not in tools and "memory__forget" not in tools
+
+
+def test_complex_introduction_extracts_separate_structured_claims(db):
+    text = ("I finished FSc Pre-Engineering with 87%, then BS CS at COMSATS with "
+            "3.42/4.0. I took IELTS twice and my latest score was 7.5. I want MSc "
+            "AI in Germany because cost matters and my budget is about 12000 EUR a year.")
+    raw = {"candidates": [
+        {"candidate_type": "student_record", "key": "education", "proposed_value":
+         {"qualification_name": "FSc Pre-Engineering", "result": {"percentage": 87}}},
+        {"candidate_type": "student_record", "key": "education", "proposed_value":
+         {"qualification_name": "BS CS", "institution_name": "COMSATS", "result": {"gpa": 3.42, "gpa_scale": 4}}},
+        {"candidate_type": "student_record", "key": "test_attempt", "proposed_value":
+         {"test_type": "IELTS", "attempt_number": 2, "overall_score": "7.5"}},
+        {"candidate_type": "student_record", "key": "goal", "proposed_value":
+         {"goal_type": "education", "title": "MSc AI in Germany", "commitment": "considering",
+          "details": {"motivation": "cost matters", "target_countries": ["Germany"]}}},
+        {"candidate_type": "vault_fact", "key": "finance.budget", "proposed_value":
+         {"amount": 12000, "currency": "EUR", "period": "per_year"}},
+    ]}
+    for candidate in raw["candidates"]:
+        candidate.update(quote=text, confidence=0.95)
+    turn = TurnContext(workspace_id=db.info["workspace"], user_event_id="intro", user_text=text)
+    fields = VaultFieldDefinitionService(db).list_definitions()
+    with patch("app.memory.extractor.chat_completion", AsyncMock(return_value=json.dumps(raw))), \
+         patch("app.memory.extractor._model_config", return_value=("test", "openai", "test", None)):
+        extracted = asyncio.run(extract_candidates(
+            turn, {field.key for field in fields},
+            [{"key": field.key, "data_type": field.data_type,
+              "validation_schema": field.validation_schema} for field in fields]))
+    assert [item.key for item in extracted].count("education") == 2
+    assert {item.key for item in extracted} >= {"education", "test_attempt", "goal", "finance.budget"}
+    assert all("expiry_date" not in (item.proposed_value or {}) for item in extracted)

@@ -26,6 +26,14 @@ from .errors import MemoryDataError
 
 logger = logging.getLogger(__name__)
 
+# These values now live in independently addressable typed records. Existing
+# rows remain readable as history, but new extraction must never create a
+# second canonical truth beside EducationRecord/TestAttempt.
+ENTITY_BACKED_LEGACY_FIELDS = frozenset({
+    "education.cgpa", "education.backlogs", "tests.ielts.score",
+})
+FIELD_ALIASES = {"preferences.countries": "preferences.target_countries"}
+
 
 class VaultFieldError(MemoryDataError):
     """A proposed value does not satisfy its field definition."""
@@ -91,7 +99,7 @@ SEED_FIELD_DEFINITIONS: tuple[dict, ...] = (
         "description": "Budget the student can fund, with currency and period.",
     },
     {
-        "key": "preferences.countries",
+        "key": "preferences.target_countries",
         "category": "preferences",
         "data_type": "array",
         "validation_schema": {"type": "array", "items": {"type": "string"}},

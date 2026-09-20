@@ -116,7 +116,7 @@ Return ONLY a JSON object, no prose and no markdown fences:
 Each candidate is one of:
 
   {"candidate_type": "student_record", "operation": "upsert",
-   "key": "education|test_attempt|work_experience|project|goal|skill|certification|application",
+   "key": "education|test_attempt|language_proficiency|work_experience|project|goal|skill|certification|research|achievement|financial_sponsor|scholarship_application|visa|application",
    "proposed_value": <object with only stated fields>,
    "confidence": 0.0-1.0, "quote": "<the student's exact words>"}
 

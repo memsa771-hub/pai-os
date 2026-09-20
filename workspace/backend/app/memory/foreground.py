@@ -373,25 +373,21 @@ async def _hybrid(workspace_id: str, query: str, caller: str):
 def _hybrid_blocking(workspace_id: str, query: str, caller: str):
     """The synchronous body, executed on a foreground worker thread."""
     from app.database import new_session
-    from app.memory.context import MemoryContextService
+    from app.memory.student_context import StudentContextBuilder
 
     db = new_session()
     try:
-        service = MemoryContextService(db)
+        service = StudentContextBuilder(db)
 
         async def _run():
             try:
-                student = await service.build_student_context_async(
-                    workspace_id=workspace_id,
-                    query=query,
-                    caller=caller,
-                    # Vault sensitivity flags are honoured: automatic context
-                    # never carries fields the definition marks sensitive.
-                    include_sensitive=False,
-                )
+                # StudentContextBuilder is the authoritative journey-aware
+                # composition path. Its low-level memory service remains
+                # responsible for retrieval and capability checks.
+                student = await service.build_context_async(workspace_id, query, caller)
                 # The retriever records whether it really ran hybrid or fell
                 # back; reading it here keeps rollout telemetry honest.
-                return student, getattr(service, "last_retrieval_mode", None)
+                return student, getattr(service.memory, "last_retrieval_mode", None)
             finally:
                 # Close any Qdrant client this short-lived loop created, while
                 # the loop is still alive. Without this the loop closes around
@@ -428,13 +424,10 @@ def _structured(workspace_id: str, query: str, caller: str):
     search and structured Vault reads, never an embedding call or Qdrant.
     """
     from app.database import new_session
-    from app.memory.context import MemoryContextService
+    from app.memory.student_context import StudentContextBuilder
 
     db = new_session()
     try:
-        return MemoryContextService(db).build_student_context(
-            workspace_id=workspace_id, query=query, caller=caller,
-            include_sensitive=False,
-        )
+        return StudentContextBuilder(db).build_context(workspace_id, query, caller)
     finally:
         db.close()

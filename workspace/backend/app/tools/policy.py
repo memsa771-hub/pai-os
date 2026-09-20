@@ -27,6 +27,7 @@ class Capability(str, Enum):
     MEMORY_MANAGE = "memory.manage"
     VAULT_READ = "vault.read"
     VAULT_MANAGE = "vault.manage"
+    PROFILE_PROPOSE = "profile.propose"
 
 
 @dataclass(frozen=True)

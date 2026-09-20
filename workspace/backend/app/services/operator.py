@@ -298,7 +298,7 @@ def _terminal_message(status: str, summary: Optional[str], missing: Any, verific
     return summary or "I ran into an issue and couldn't finish this — let me know if you'd like me to try again."
 
 
-def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> str:
+def _resolve_memory_context(workspace_id: str, context_refs: Optional[list], query: str = "") -> str:
     """Resolve `ExecutionRun.context_refs` to a compact prompt block.
 
     Returns "" when there are no refs, nothing is known yet, or resolution
@@ -319,16 +319,13 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list]) -> 
         return ""
     db = new_session()
     try:
-        from app.memory.context import MemoryContextService
+        from app.memory.student_context import StudentContextBuilder
         from app.memory.foreground import (
             MEMORY_RULES, MEMORY_RULES_TRAILER, render_block,
         )
 
-        student = MemoryContextService(db).resolve_refs(
-            workspace_id=workspace_id,
-            context_refs=list(context_refs),
-            caller=PAI_OPERATOR_AGENT_NAME,
-        )
+        student = StudentContextBuilder(db).build_context(
+            workspace_id, query=query, caller=PAI_OPERATOR_AGENT_NAME)
         block, _truncated = render_block(student)
         if not block:
             return ""
@@ -462,7 +459,7 @@ async def _execute(
         #
         # Resolution is capability-gated as `pai-operator`, so this cannot be
         # used to read more than Operator is granted.
-        memory_block = _resolve_memory_context(workspace_id, context_refs)
+        memory_block = _resolve_memory_context(workspace_id, context_refs, objective)
 
         # ---- UNDERSTAND ----
         set_status("understanding", current_step="Understanding the objective")
