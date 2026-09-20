@@ -22,6 +22,7 @@ from .candidates import MemoryCandidateService
 from .episodic import EpisodicMemoryService
 from .errors import MemoryDataError
 from .semantic import MemoryService
+from .student_records import RecordNeedsReview, StudentRecordService
 from .vault import VaultOutcome, VaultService
 
 logger = logging.getLogger(__name__)
@@ -52,6 +53,7 @@ class MemoryReconciler:
         self.vault = VaultService(db)
         self.memories = MemoryService(db)
         self.episodes = EpisodicMemoryService(db)
+        self.records = StudentRecordService(db)
 
     # -- entry points ------------------------------------------------------
 
@@ -67,6 +69,7 @@ class MemoryReconciler:
         verdict caused by a bug or an outage, loses the data, and hides the
         failure from the durable job that should have retried it.
         """
+        self.db.refresh(candidate, with_for_update=True)
         if candidate.status != "pending":
             return ReconcileResult(False, candidate.id, reason="not_pending")
 
@@ -77,7 +80,14 @@ class MemoryReconciler:
                 return self._reconcile_semantic(candidate)
             if candidate.candidate_type == "episode":
                 return self._reconcile_episode(candidate)
+            if candidate.candidate_type == "student_record":
+                return self._reconcile_student_record(candidate)
             return self._reject(candidate, f"unknown candidate_type: {candidate.candidate_type}")
+        except RecordNeedsReview as exc:
+            candidate.status = "needs_review"
+            candidate.rejection_reason = str(exc)
+            self.db.flush()
+            return ReconcileResult(False, candidate.id, reason="needs_review", outcome="needs_review")
         except MemoryDataError as exc:
             # A statement about the candidate — the expected rejection path.
             return self._reject(candidate, str(exc))
@@ -86,6 +96,29 @@ class MemoryReconciler:
         return [self.reconcile(c) for c in self.candidates.pending(workspace_id, limit)]
 
     # -- per-type handling -------------------------------------------------
+
+    def _reconcile_student_record(self, candidate: MemoryCandidate) -> ReconcileResult:
+        if candidate.operation != "upsert" or not self._confident_enough(candidate):
+            return self._reject(candidate, "invalid operation or insufficient confidence")
+        values = self._unwrap(candidate.proposed_value)
+        if not isinstance(values, dict):
+            return self._reject(candidate, "student record requires an object")
+        record = self.records.apply(
+            candidate.workspace_id, candidate.key or "", values,
+            source_type=candidate.source_type,
+            claim_origin=("institution_document" if candidate.source_type == "document" else
+                          "student" if candidate.source_type in ("conversation", "user_explicit") else
+                          "agent_inference"),
+            capture_method=("document_extraction" if candidate.source_type == "document" else
+                            "conversation_extraction" if candidate.source_type == "conversation" else
+                            "explicit_correction" if candidate.source_type == "user_explicit" else
+                            "agent_proposal"),
+            evidence=candidate.evidence, subject_user_id=candidate.subject_user_id,
+            record_id=(candidate.entities or {}).get("record_id"),
+            supersedes_record_id=(candidate.entities or {}).get("supersedes_record_id"),
+        )
+        self.candidates.mark_accepted(candidate, record.id)
+        return ReconcileResult(True, candidate.id, result_id=record.id)
 
     def _reconcile_vault(self, candidate: MemoryCandidate) -> ReconcileResult:
         if not candidate.key:

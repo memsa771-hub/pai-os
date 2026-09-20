@@ -18,7 +18,7 @@ from app.models import MemoryCandidate
 
 logger = logging.getLogger(__name__)
 
-CANDIDATE_TYPES = ("vault_fact", "semantic_memory", "episode")
+CANDIDATE_TYPES = ("vault_fact", "semantic_memory", "episode", "student_record")
 OPERATIONS = ("upsert", "retract", "forget")
 
 # `source_type` decides how much a proposal is trusted — `user_explicit`

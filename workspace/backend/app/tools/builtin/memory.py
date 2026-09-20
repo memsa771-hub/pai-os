@@ -23,6 +23,7 @@ from app.memory.candidates import MemoryCandidateService
 from app.memory.context import MemoryContextService
 from app.memory.reconciler import MemoryReconciler
 from app.memory.vault import VaultService
+from app.memory.field_definitions import usable_in_counseling
 
 logger = logging.getLogger(__name__)
 
@@ -63,6 +64,9 @@ async def vault_get(context, args: dict) -> dict:
         vault = VaultService(db)
         field_key = args.get("field_key")
         if field_key:
+            definition = vault.fields.get(field_key)
+            if definition is not None and not usable_in_counseling(definition):
+                return {"ok": False, "error": {"code": "sensitive_field", "message": "This field is not available in conversational context"}}
             fact = vault.get_fact(context.workspace_id, field_key)
             if fact is None:
                 return {"ok": True, "data": {"field_key": field_key, "value": None}}
@@ -73,7 +77,21 @@ async def vault_get(context, args: dict) -> dict:
                 "source_type": fact.source_type,
                 "valid_from": fact.valid_from.isoformat() if fact.valid_from else None,
             }}
-        return {"ok": True, "data": {"fields": vault.snapshot(context.workspace_id)}}
+        from app.memory.student_records import StudentRecordService
+        from app.memory.readiness import ReadinessService
+        profile = MemoryContextService(db).build_student_context(
+            context.workspace_id, query=args.get("query"), context_refs=["vault"], caller=context.agent_name)
+        from app.memory.student_schema import extraction_specs
+        return {"ok": True, "data": {
+            "fields": profile.vault,
+            "records": profile.records,
+            "record_schemas": extraction_specs(),
+            "issues": [
+                {"id": issue.id, "type": issue.issue_type, "summary": issue.summary}
+                for issue in StudentRecordService(db).issues(context.workspace_id)
+            ],
+            "readiness": ReadinessService(db).evaluate(context.workspace_id, "discovery"),
+        }}
     finally:
         db.close()
 
@@ -133,7 +151,18 @@ async def remember(context, args: dict) -> dict:
     try:
         candidates = MemoryCandidateService(db)
         field_key = args.get("field_key")
-        if field_key:
+        record_type = args.get("record_type")
+        if record_type and field_key:
+            return {"ok": False, "error": {"code": "invalid_arguments", "message": "Choose a scalar field or a record"}}
+        if record_type:
+            candidate = candidates.propose(
+                workspace_id=context.workspace_id, candidate_type="student_record", key=record_type,
+                proposed_value=args.get("value"),
+                entities={"record_id": args["record_id"]} if args.get("record_id") else {},
+                confidence=1.0, source_type="user_explicit", allow_user_explicit=True,
+                evidence={"quote": content},
+            )
+        elif field_key:
             candidate = candidates.propose(
                 workspace_id=context.workspace_id,
                 candidate_type="vault_fact",

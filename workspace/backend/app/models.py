@@ -968,6 +968,11 @@ class VaultFieldDefinition(Base):
     sensitivity = Column(Text, nullable=False, default="normal", server_default=text("'normal'"))
     # Whether this field should be offered to text/hybrid retrieval later.
     searchable = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    context_tags = Column(JSONB, nullable=True)
+    required_for = Column(JSONB, nullable=True)
+    profile_priority = Column(Integer, nullable=False, default=50, server_default=text("50"))
+    extractable_from = Column(JSONB, nullable=True)
+    verification_policy = Column(Text, nullable=True)
     enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
     version = Column(Integer, nullable=False, default=1, server_default=text("1"))
     description = Column(Text, nullable=True)
@@ -1016,10 +1021,172 @@ class VaultFact(Base):
 
     __table_args__ = (
         Index("idx_vault_facts_workspace", "workspace_id"),
+        Index(
+            "uq_vault_facts_ws_key_active", "workspace_id", "field_key",
+            unique=True,
+            postgresql_where=text("status = 'active'"),
+            sqlite_where=text("status = 'active'"),
+        ),
         # The hot read: "active facts for this workspace", and the single-
         # cardinality conflict lookup by key.
         Index("idx_vault_facts_ws_status_key", "workspace_id", "status", "field_key"),
     )
+
+
+class _StudentRecord:
+    """Shared audit columns for repeatable, workspace-scoped student records."""
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    source_type = Column(Text, nullable=False)
+    claim_origin = Column(Text, nullable=False)
+    capture_method = Column(Text, nullable=False)
+    verification_status = Column(Text, nullable=False, default="self_reported", server_default=text("'self_reported'"))
+    evidence = Column(JSONB, nullable=True)
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+
+class EducationRecord(_StudentRecord, Base):
+    __tablename__ = "pai_education_records"
+    institution_name = Column(Text, nullable=True)
+    qualification_name = Column(Text, nullable=False)
+    canonical_level = Column(Text, nullable=True)
+    field_of_study = Column(Text, nullable=True)
+    start_date = Column(Text, nullable=True)
+    end_date = Column(Text, nullable=True)
+    graduation_year = Column(Integer, nullable=True)
+    academic_status = Column(Text, nullable=True)
+    result = Column(JSONB, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_education_ws", "workspace_id", "status"),)
+
+
+class CourseRecord(_StudentRecord, Base):
+    __tablename__ = "pai_course_records"
+    education_id = Column(Text, ForeignKey("pai_education_records.id", ondelete="CASCADE"), nullable=False)
+    name = Column(Text, nullable=False)
+    normalized_name = Column(Text, nullable=True)
+    grade = Column(Text, nullable=True)
+    score = Column(JSONB, nullable=True)
+    credits = Column(Float, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_course_education", "education_id"),)
+
+
+class TestAttempt(_StudentRecord, Base):
+    __tablename__ = "pai_test_attempts"
+    test_type = Column(Text, nullable=False)
+    original_name = Column(Text, nullable=True)
+    attempt_number = Column(Integer, nullable=True)
+    test_date = Column(Text, nullable=True)
+    expiry_date = Column(Text, nullable=True)
+    overall_score = Column(Text, nullable=True)
+    section_scores = Column(JSONB, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_tests_ws", "workspace_id", "status", "test_type"),)
+
+
+class WorkExperience(_StudentRecord, Base):
+    __tablename__ = "pai_work_experiences"
+    organization = Column(Text, nullable=False)
+    role = Column(Text, nullable=False)
+    experience_type = Column(Text, nullable=True)
+    start_date = Column(Text, nullable=True)
+    end_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_work_ws", "workspace_id", "status"),)
+
+
+class StudentProject(_StudentRecord, Base):
+    __tablename__ = "pai_student_projects"
+    name = Column(Text, nullable=False)
+    role = Column(Text, nullable=True)
+    start_date = Column(Text, nullable=True)
+    end_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_projects_ws", "workspace_id", "status"),)
+
+
+class StudentGoal(_StudentRecord, Base):
+    __tablename__ = "pai_student_goals"
+    goal_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    commitment = Column(Text, nullable=True)
+    target_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_goals_ws", "workspace_id", "status"),)
+
+
+class StudentSkill(_StudentRecord, Base):
+    __tablename__ = "pai_student_skills"
+    name = Column(Text, nullable=False)
+    proficiency = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_skills_ws", "workspace_id", "status"),)
+
+
+class StudentCertification(_StudentRecord, Base):
+    __tablename__ = "pai_student_certifications"
+    name = Column(Text, nullable=False)
+    issuer = Column(Text, nullable=True)
+    issued_on = Column(Text, nullable=True)
+    expires_on = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_certifications_ws", "workspace_id", "status"),)
+
+
+class StudentApplication(_StudentRecord, Base):
+    __tablename__ = "pai_student_applications"
+    institution_name = Column(Text, nullable=False)
+    program_name = Column(Text, nullable=True)
+    intake = Column(Text, nullable=True)
+    application_status = Column(Text, nullable=True)
+    deadline = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_applications_ws", "workspace_id", "status"),)
+
+
+class StudentDocument(_StudentRecord, Base):
+    __tablename__ = "pai_student_documents"
+    file_id = Column(Text, nullable=False)
+    document_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_documents_ws", "workspace_id", "status"),)
+
+
+class ProfileIssue(Base):
+    __tablename__ = "pai_profile_issues"
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    issue_type = Column(Text, nullable=False)
+    summary = Column(Text, nullable=False)
+    evidence = Column(JSONB, nullable=True)
+    status = Column(Text, nullable=False, default="open", server_default=text("'open'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    resolved_at = Column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (Index("idx_pai_issues_ws", "workspace_id", "status"),)
+
+
+class StudentRecordRevision(Base):
+    """Audit trail for changes to a stable, repeatable student record."""
+    __tablename__ = "pai_student_record_revisions"
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    record_type = Column(Text, nullable=False)
+    record_id = Column(Text, nullable=False)
+    before = Column(JSONB, nullable=True)
+    after = Column(JSONB, nullable=False)
+    source_type = Column(Text, nullable=False)
+    claim_origin = Column(Text, nullable=False)
+    capture_method = Column(Text, nullable=False)
+    evidence = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    __table_args__ = (Index("idx_pai_record_revision_ws", "workspace_id", "record_type", "record_id"),)
 
 
 class PaiMemory(Base):

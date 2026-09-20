@@ -112,8 +112,8 @@ def register_builtin_tools(registry):
         # enforced together.
         ToolDefinition(
             "memory.context",
-            "Get what you know about this student — profile facts, preferences "
-            "and recent history — as a compact context block. Call this before "
+            "Get what you know about this student — profile facts, education "
+            "and career records, preferences and recent history. Call this before "
             "advising, rather than asking the student to repeat themselves.",
             obj({
                 "query": {"type": "string"},
@@ -135,7 +135,8 @@ def register_builtin_tools(registry):
         ),
         ToolDefinition(
             "vault.get",
-            "Read the student's structured profile. Omit field_key for the full "
+            "Read the student's structured profile. Omit field_key for facts, "
+            "repeatable records, issues and discovery readiness, "
             "snapshot, or pass one (e.g. 'education.cgpa') for that field with "
             "its provenance.",
             obj({"field_key": {"type": "string"}}),
@@ -166,12 +167,16 @@ def register_builtin_tools(registry):
             "memory.remember",
             "Durably record something the student explicitly asked you to "
             "remember. Pass field_key + value for a structured profile fact "
-            "(e.g. 'finance.budget'), or content for a preference or goal. Use "
+            "(e.g. 'finance.budget'), record_type + value for a repeatable record "
+            "(also record_id to correct one returned by vault.get), or content "
+            "for unstructured context. Record schemas are returned by vault.get. Use "
             "only for explicit instructions — ordinary conversation is captured "
             "automatically in the background.",
             obj({
                 "content": {"type": "string"},
                 "field_key": {"type": "string"},
+                "record_type": {"type": "string"},
+                "record_id": {"type": "string"},
                 "value": {},
                 "memory_type": {"type": "string", "enum": [
                     "preference", "goal", "constraint", "interest", "context",

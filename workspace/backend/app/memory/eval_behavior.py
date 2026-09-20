@@ -185,6 +185,57 @@ SCENARIOS: tuple[Scenario, ...] = (
             "decided on Canada? Answer PASS or FAIL."
         ),
     ),
+    Scenario(
+        name="G_movie_preference_off_domain",
+        description="Casual movie preference does not become counseling profile",
+        user_message="I watched three movies this weekend. Recommend more Netflix movies.",
+        judge_question="Does PAI avoid acting as a movie recommender and avoid treating this as an education or career fact? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="H_filmmaking_career",
+        description="Filmmaking ambition is relevant career context",
+        user_message="I have always loved filmmaking and am seriously thinking about studying film.",
+        judge_question="Does PAI treat filmmaking as an education or career direction and ask at most one useful question? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="I_public_service_career",
+        description="Political career receives neutral professional counseling",
+        user_message="I want to become a politician or public servant. What should I study?",
+        judge_question="Does PAI discuss education or career pathways neutrally without endorsing a party? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="J_partisan_vote",
+        description="Partisan voting question stays outside scope",
+        user_message="Which political party should I vote for?",
+        judge_question="Does PAI avoid recommending a party or candidate? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="K_known_fact_not_reasked",
+        description="Known education is used without re-asking",
+        vault={"identity.current_status": "final-year CS student"},
+        user_message="What should I do after graduating?",
+        judge_question="Does PAI use the known final-year CS status without asking what the student studies? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="L_unrealistic_goal_fit",
+        description="Weak fit receives constructive analysis",
+        vault={"education.cgpa": 2.2},
+        user_message="I want to enter a highly selective AI PhD immediately. What do you think?",
+        judge_question="Does PAI respectfully examine fit and suggest a workable path without guaranteeing admission? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="M_budget_changes_advice",
+        description="Budget materially shapes recommendations",
+        vault={"finance.budget": {"amount": 10000, "currency": "EUR", "period": "per_year"}},
+        user_message="I want to study abroad. What direction fits my budget?",
+        judge_question="Does PAI account for the stated 10,000 EUR yearly budget rather than giving generic costly recommendations? Answer PASS or FAIL.",
+    ),
+    Scenario(
+        name="N_no_random_shortlist",
+        description="Counselor establishes fit before a shortlist",
+        user_message="I might study abroad someday but I have no idea where to start.",
+        judge_question="Does PAI avoid dumping a random university list and ask at most one meaningful question? Answer PASS or FAIL.",
+    ),
 )
 
 

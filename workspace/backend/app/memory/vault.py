@@ -45,7 +45,7 @@ from typing import Any, Optional
 
 from sqlalchemy import select
 
-from app.models import VaultFact
+from app.models import ProfileIssue, VaultFact
 from .field_definitions import VaultFieldDefinitionService, VaultFieldError
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,7 @@ class VaultService:
 
     def snapshot(
         self, workspace_id: str, include_sensitive: bool = False,
+        allowed_sensitive_keys: Optional[set[str]] = None,
     ) -> dict[str, Any]:
         """All active facts as `{field_key: value}`.
 
@@ -154,7 +155,9 @@ class VaultService:
         sensitive: set[str] = set()
         if not include_sensitive:
             sensitive = {
-                d.key for d in self.fields.list_definitions() if d.sensitivity == "sensitive"
+                d.key for d in self.fields.list_definitions()
+                if d.sensitivity == "restricted" or
+                (d.sensitivity == "sensitive" and d.key not in (allowed_sensitive_keys or set()))
             }
 
         out: dict[str, Any] = {}
@@ -207,6 +210,21 @@ class VaultService:
         policy = definition.conflict_policy or "latest_wins"
         current = self.get_fact(workspace_id, field_key)
 
+        # An institutional document disagreeing with self-report is evidence
+        # of a conflict, not authority to silently replace the student's claim.
+        if (current is not None and source_type == "document"
+                and current.source_type in ("conversation", "user_explicit")
+                and _unwrap(current.value) != value):
+            self.db.add(ProfileIssue(
+                workspace_id=workspace_id, subject_user_id=subject_user_id,
+                issue_type="conflicting_fact",
+                summary=f"Conflicting evidence for {field_key}",
+                evidence={"field_key": field_key, "current_fact_id": current.id,
+                          "proposed_value": value, "proposed_evidence": evidence},
+            ))
+            self.db.flush()
+            return VaultWriteResult(VaultOutcome.NEEDS_REVIEW, current)
+
         # manual_review parks anything not stated first-hand, whether or not a
         # value already exists. Checked before the existence branch because a
         # FIRST value for a review-gated field must be parked too — otherwise
@@ -237,6 +255,11 @@ class VaultService:
             current.status = "superseded"
             current.valid_until = _now()
             superseded = True
+
+        # Release the partial unique slot before inserting the new active row.
+        # This ordering matters under PostgreSQL's immediate unique checks.
+        if superseded:
+            self.db.flush()
 
         fact = VaultFact(
             workspace_id=workspace_id,

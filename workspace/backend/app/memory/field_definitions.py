@@ -31,6 +31,15 @@ class VaultFieldError(MemoryDataError):
     """A proposed value does not satisfy its field definition."""
 
 
+def usable_in_counseling(definition) -> bool:
+    """Restricted identifiers never enter routine conversation prompts."""
+    return definition is not None and (
+        definition.sensitivity == "normal" or
+        (definition.sensitivity == "sensitive" and
+         "counseling" in (definition.context_tags or []))
+    )
+
+
 # Seeded by migration 055. Illustrative coverage of the shapes the validator
 # must handle (number with range, enum, string, array, boolean), NOT an
 # attempt to model the domain — Phase 2 adds fields as data.
@@ -176,6 +185,11 @@ class VaultFieldDefinitionService:
             conflict_policy=spec.get("conflict_policy", "latest_wins"),
             sensitivity=spec.get("sensitivity", "normal"),
             searchable=bool(spec.get("searchable", False)),
+            context_tags=spec.get("context_tags"),
+            required_for=spec.get("required_for"),
+            profile_priority=spec.get("profile_priority", 50),
+            extractable_from=spec.get("extractable_from"),
+            verification_policy=spec.get("verification_policy"),
             enabled=True,
             version=version,
             description=spec.get("description"),

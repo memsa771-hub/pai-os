@@ -18,6 +18,7 @@ Two failure modes are handled differently on purpose:
 import json
 import logging
 import re
+import math
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -27,10 +28,10 @@ from app.services.cloud_providers import chat_completion
 
 logger = logging.getLogger(__name__)
 
-CANDIDATE_TYPES = ("vault_fact", "semantic_memory", "episode")
+CANDIDATE_TYPES = ("vault_fact", "semantic_memory", "episode", "student_record")
 OPERATIONS = ("upsert",)          # extraction may only ADD proposals
 MEMORY_TYPES = ("preference", "goal", "constraint", "interest", "context")
-MAX_CANDIDATES = 8                 # a single turn yielding more is a runaway
+MAX_CANDIDATES = 16                # allow a useful multi-fact introduction
 
 
 class ExtractionError(RuntimeError):
@@ -56,25 +57,30 @@ SYSTEM_PROMPT = """\
 You extract durable facts about a student from one turn of conversation with \
 their counsellor, for a long-term student profile.
 
-You are CONSERVATIVE. Most turns contain nothing worth storing. Returning an \
-empty list is the correct answer far more often than not, and a wrong memory \
-is much worse than a missing one — it will be repeated back to the student as \
-fact for months.
+Capture every clearly stated education/career fact, goal, reason, constraint,
+skill and experience that will help future counseling. A student's introduction
+can contain several important facts: do not save only their country or degree
+and miss the budget, motivation or career direction. Empty output is correct
+for a greeting or irrelevant small talk. Be conservative about INFERENCE, not
+about remembering what the student actually told PAI.
 
 STORE only durable information that will still matter weeks from now:
 - a concrete profile fact the student states about themselves
 - a stable preference, goal or constraint they express
 - a decision they made, or an action they took, with a reason
+- education, test attempts, work, projects, or goals that materially describe
+  the student's education or professional journey
 
 NEVER store:
 - greetings, small talk, thanks, acknowledgements
 - anything the ASSISTANT claimed, suggested or recommended, unless the student
   explicitly adopted it in their own words
-- possibilities the student is only considering ("maybe", "I might", "what about")
+- a hypothetical question as a committed personal goal
 - your own inferences about the student's personality or ability
 - anything already present in the existing profile or memories below, unless
   the student is CORRECTING it
 - transient logistics ("let me check", "one moment")
+- casual entertainment preferences unrelated to education or career
 
 EVIDENCE RULE: only the student's own message is evidence. The assistant's \
 reply is provided solely to help you resolve references like "that country" or \
@@ -83,11 +89,39 @@ reply is provided solely to help you resolve references like "that country" or \
 CORRECTIONS: when the student corrects an existing value, propose the NEW value. \
 Do not try to delete or edit the old one.
 
+Exploratory personal ambitions are useful: save a seriously considered path
+with commitment="exploratory" or "considering", never upgrade it to a decision.
+Capture motivations, career direction, target timing and relevant family/cost
+constraints in the record's defined details or a concise semantic memory.
+Casual movie likes do not belong in the profile; studying film or public
+service ambitions do. Understand English, Urdu and Roman Urdu equally.
+
+Use the supplied RECORD SCHEMAS as the authoritative record field list.
+If an existing record is being completed or corrected, put its exact id in
+entities.record_id and propose only changed/new fields. Do not create a fresh
+degree/job every time it is mentioned. Each genuinely new test attempt gets
+its own record. When the student explicitly replaces an old goal, put the old
+goal id in entities.supersedes_record_id on the NEW goal. Parallel education
+and career goals can coexist; do not supersede one simply to add the other.
+Never invent ids. Dates can retain YYYY or YYYY-MM precision. Do not invent
+January 1, a GPA scale, expiry date or committed intake from vague timing.
+Prefer structured records for identified qualifications, attempts, experience
+and goals. An isolated GPA whose qualification cannot be identified may still
+use a registered scalar field; do not manufacture an education identity.
+
 Return ONLY a JSON object, no prose and no markdown fences:
 
 {"candidates": [ ... ]}
 
 Each candidate is one of:
+
+  {"candidate_type": "student_record", "operation": "upsert",
+   "key": "education|test_attempt|work_experience|project|goal|skill|certification|application",
+   "proposed_value": <object with only stated fields>,
+   "confidence": 0.0-1.0, "quote": "<the student's exact words>"}
+
+Use fields from the supplied schema. Preserve original qualification wording.
+Keep separate records separate and leave unstated details unknown.
 
   {"candidate_type": "vault_fact", "operation": "upsert",
    "key": "<copy one key EXACTLY from the VAULT FIELDS list in the user message;
@@ -173,6 +207,12 @@ def build_user_prompt(turn, field_specs=None) -> str:
 
     if field_specs:
         parts.append(_render_field_specs(field_specs))
+    from .student_schema import extraction_specs
+    parts.append("RECORD SCHEMAS (new records require their required fields; existing record patches may be partial):\n"
+                 + json.dumps(extraction_specs(), ensure_ascii=False))
+    if getattr(turn, "records", None):
+        parts.append("EXISTING RECORDS (reuse the exact id when updating; do not duplicate):\n"
+                     + json.dumps(turn.records, ensure_ascii=False))
 
     if turn.vault:
         parts.append(
@@ -249,7 +289,9 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
     # The evidence rule, enforced rather than requested: the quote must
     # actually appear in the student's message. This is what stops the
     # assistant's own words becoming student truth (requirement 7).
-    quote = (raw.get("quote") or "").strip()
+    if not isinstance(raw.get("quote"), str):
+        return drop("quote not a string")
+    quote = raw["quote"].strip()
     if not quote:
         return drop("no quote")
     if _normalize(quote) not in _normalize(turn.user_text):
@@ -259,6 +301,8 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
         confidence = float(raw.get("confidence", 0.5))
     except (TypeError, ValueError):
         return drop("confidence not a number")
+    if not math.isfinite(confidence):
+        return drop("confidence not finite")
     confidence = max(0.0, min(1.0, confidence))
 
     entities = raw.get("entities")
@@ -279,7 +323,36 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
             entities=entities, confidence=confidence, evidence=evidence,
         )
 
-    content = (raw.get("content") or "").strip()
+    if candidate_type == "student_record":
+        from .student_records import ENTITY_MODELS
+        from .student_schema import validate_record
+        from .errors import MemoryDataError
+        kind = raw.get("key")
+        value = raw.get("proposed_value")
+        if not isinstance(kind, str) or kind not in ENTITY_MODELS or kind in ("course", "document") or not isinstance(value, dict):
+            return drop("invalid student record proposal")
+        record_ids = {row["id"] for row in (getattr(turn, "records", {}) or {}).get(kind, [])}
+        clean_entities = {}
+        for reference in ("record_id", "supersedes_record_id"):
+            if reference in entities:
+                if not isinstance(entities[reference], str) or entities[reference] not in record_ids:
+                    return drop("record reference was not in this student's context")
+                clean_entities[reference] = entities[reference]
+        if "supersedes_record_id" in clean_entities and kind != "goal":
+            return drop("only goals may supersede another goal")
+        try:
+            value = validate_record(kind, value, partial="record_id" in clean_entities)
+        except MemoryDataError as exc:
+            return drop(str(exc))
+        return ExtractedCandidate(
+            candidate_type="student_record", operation="upsert", key=kind,
+            proposed_value=value, content=None, entities=clean_entities,
+            confidence=confidence, evidence=evidence,
+        )
+
+    if not isinstance(raw.get("content"), str):
+        return drop("content not a string")
+    content = raw["content"].strip()
     if not content:
         return drop(f"{candidate_type} without content")
 
@@ -326,7 +399,7 @@ async def extract_candidates(
     raw = await chat_completion(
         api_key=api_key, provider=provider, model=model,
         messages=[{"role": "user", "content": build_user_prompt(turn, specs)}],
-        system_prompt=SYSTEM_PROMPT, max_tokens=1200, base_url=base_url,
+        system_prompt=SYSTEM_PROMPT, max_tokens=4000, base_url=base_url,
     )
 
     proposals = _parse_response(raw)

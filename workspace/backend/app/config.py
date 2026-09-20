@@ -215,7 +215,7 @@ class Config:
     # (a very long free-text Vault field) cannot expand the system prompt.
     # Conservative on purpose — this is context, not the conversation.
     PAI_MEMORY_CONTEXT_MAX_CHARS: int = int(
-        os.environ.get("PAI_MEMORY_CONTEXT_MAX_CHARS", "2500")
+        os.environ.get("PAI_MEMORY_CONTEXT_MAX_CHARS", "6000")
     )
     # Retrieval is on the response-critical path. Past this, PAI drops to the
     # PostgreSQL-only fallback rather than making the student wait.
@@ -224,16 +224,12 @@ class Config:
     )
     # Master switch for automatic FOREGROUND injection into PAI Counselor.
     #
-    # OFF by default: the model's behaviour with injected memory has not been
-    # evaluated against a real Counselor yet, and a bad interaction shows up as
-    # PAI confidently asserting stale facts at a student. Background memory
-    # formation (extraction -> reconciliation -> index) is unaffected and keeps
-    # running, so enabling this later needs no backfill.
-    #
+    # ON by default: persistent student context is available across conversations.
+    # Retrieval is bounded and remains optional through this setting.
     # Pilot rollout — see docs/pai-memory-rollout.md:
     #   PAI_MEMORY_CONTEXT_ENABLED=true   (+ MEMORY_VECTOR_BACKEND=qdrant for hybrid)
     PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
-        "PAI_MEMORY_CONTEXT_ENABLED", "false"
+        "PAI_MEMORY_CONTEXT_ENABLED", "true"
     ).lower() in ("true", "1", "yes")
     # Foreground retrieval runs on its own small thread pool so a stalled
     # PostgreSQL cannot block the event loop (see foreground_executor.py).

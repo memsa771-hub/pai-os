@@ -69,7 +69,13 @@ The profile updates asynchronously after the turn, so a correction the student \
 just made will not appear here yet. That is expected — it does not mean the \
 correction was rejected.
 
-If the block is absent, you simply have no stored context for this student yet."""
+Known records can be incomplete, self-reported, expired, or conflicting. Preserve
+these distinctions. Use active goals; superseded goals are history. Never treat
+an extracted document as independently verified. If a relevant issue is listed,
+acknowledge the uncertainty and clarify only when it changes the advice.
+
+If the block is absent, stored context is unavailable for this turn; this can
+be a retrieval failure and does not prove the student has no saved profile."""
 
 # Repeated AFTER the data. Behavioural evaluation (app/memory/eval_behavior.py,
 # scenario C) showed gpt-4o-mini obeying an instruction embedded in a memory
@@ -201,7 +207,17 @@ def render_block(student, budget: Optional[int] = None) -> tuple[str, bool]:
     sections: list[tuple[str, list[str]]] = [
         ("### Profile (canonical)", [
             f"- {escape_value(key)}: {escape_value(value)}"
-            for key, value in sorted(student.vault.items())
+            for key, value in student.vault.items()
+        ]),
+        ("### Current goals and motivations", [
+            f"- {escape_value(record)}" for record in student.records.get("goal", [])
+        ]),
+        ("### Information needing clarification", [
+            f"- {escape_value(issue)}" for issue in student.issues
+        ]),
+        ("### Education and career records", [
+            f"- {escape_value(kind)}: {escape_value(record)}"
+            for kind, records in student.records.items() if kind != "goal" for record in records
         ]),
         ("### Known preferences and goals", [
             f"- {escape_value(m['content'])}" for m in student.memories

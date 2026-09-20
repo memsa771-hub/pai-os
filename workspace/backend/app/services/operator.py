@@ -95,6 +95,10 @@ Rules:
 - You have no memory of your own. Everything you know about this student
   comes from the workspace state below and what PAI Counselor told you for
   this objective.
+- When reviewing a transcript, CV, test report or other student document,
+  distinguish its claims from the student's self-report. Report new records
+  and conflicts as proposals with source evidence; never silently replace a
+  canonical student fact or infer a missing grade, date or test score.
 """
 
 

@@ -46,6 +46,7 @@ class TurnContext:
     assistant_text: str = ""
     recent: list[dict] = field(default_factory=list)      # [{role, text}]
     vault: dict = field(default_factory=dict)
+    records: dict = field(default_factory=dict)
     existing_memories: list[str] = field(default_factory=list)
 
     def is_empty(self) -> bool:
@@ -158,6 +159,8 @@ def build_turn_context(
     from .vault import VaultService
 
     context.vault = VaultService(db).snapshot(workspace_id, include_sensitive=True)
+    from .student_records import StudentRecordService
+    context.records = StudentRecordService(db).snapshot(workspace_id, limit=12)
     context.existing_memories = [
         m.content
         for m in MemoryService(db).list_memories(workspace_id, limit=MAX_EXISTING_MEMORIES)
