@@ -2,9 +2,9 @@
 
 Placement AI is a FastAPI/PostgreSQL backend with a standalone Next.js frontend.
 
-This `v4` branch contains only the production deployment source and assets.
-Development Compose files, test suites, fixtures, and local tooling remain on
-the `v3` branch.
+The `v4-prod-c` branch contains the production deployment source and the
+latest application changes. Use `docker-compose.prod.yml` on the server;
+`docker-compose.local.yml` is for local development only.
 
 ## AWS production architecture
 
@@ -63,6 +63,7 @@ Validate and deploy:
 docker compose --env-file .env -f docker-compose.prod.yml config
 docker compose --env-file .env -f docker-compose.prod.yml build
 docker compose --env-file .env -f docker-compose.prod.yml up -d
+docker compose --env-file .env -f docker-compose.prod.yml ps
 ```
 
 The one-shot `migrate` service runs `alembic upgrade head`. Backend and worker
