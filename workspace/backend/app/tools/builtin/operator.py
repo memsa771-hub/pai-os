@@ -14,6 +14,7 @@ async def delegate(ctx, args):
         args.get("objective", ""),
         args.get("constraints"),
         args.get("context_refs"),
+        args.get("intent"),
     )
 
 

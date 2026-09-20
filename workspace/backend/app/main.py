@@ -398,6 +398,13 @@ async def lifespan(app: FastAPI):
     from app.services.pai import validate_config as validate_pai_config
     validate_pai_config()
 
+    # Pay the OpenAI SDK's lazy `openai.resources` import here, on the main
+    # thread at boot (~2s), instead of inside the first student's retrieval
+    # budget on a worker thread — where it both blew the deadline and raced
+    # the request thread's own import into a _DeadlockError.
+    if config.PAI_MEMORY_CONTEXT_ENABLED:
+        import app.memory.embeddings  # noqa: F401
+
     # Align the threadpool with the DB pool. All DB-bound handlers are `def`
     # (run via anyio's threadpool) while the per-worker connection pool holds
     # pool_size+max_overflow connections (40+8, see app/database.py). If the

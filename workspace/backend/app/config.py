@@ -217,10 +217,47 @@ class Config:
     PAI_MEMORY_CONTEXT_MAX_CHARS: int = int(
         os.environ.get("PAI_MEMORY_CONTEXT_MAX_CHARS", "6000")
     )
+    # --- Per-agent model configuration ---------------------------------
+    # Counselor turns always carry function tools, and /v1/chat/completions
+    # pins a tool-calling request to reasoning_effort="none" (see
+    # cloud_providers._reasoning_effort_for). That is also the fastest
+    # setting, which is what a chat turn wants; this value therefore applies
+    # to Counselor calls made WITHOUT tools, such as the research handoff.
+    PAI_COUNSELOR_REASONING_EFFORT: str = os.environ.get(
+        "PAI_COUNSELOR_REASONING_EFFORT", "low"
+    )
+    # Operator runs in the background, where quality beats latency. Its
+    # UNDERSTAND, PLAN and VERIFY phases carry no tools and so honour this;
+    # its tool-execution loop is pinned to "none" by the same API rule.
+    PAI_OPERATOR_MODEL: str = os.environ.get("PAI_OPERATOR_MODEL", "")
+    PAI_OPERATOR_REASONING_EFFORT: str = os.environ.get(
+        "PAI_OPERATOR_REASONING_EFFORT", "high"
+    )
+    # `max_completion_tokens` counts REASONING tokens as well as visible ones,
+    # so a cap sized for the answer alone can be consumed entirely by thinking
+    # and return an empty string. An empty VERIFY is fatal: the status fails to
+    # parse and the run is marked failed. Observed at the previous cap of 400.
+    # The cap is a ceiling, not a target — raising it showed no latency cost
+    # (3.9s at 400 vs 3.2s at 4000) and bills only tokens actually produced.
+    PAI_OPERATOR_PHASE_MAX_TOKENS: int = int(
+        os.environ.get("PAI_OPERATOR_PHASE_MAX_TOKENS", "2000")
+    )
+    # Retries for upstream model calls. Tokens-per-minute 429s clear on a
+    # ~60s window; the SDK's default of 2 gives up well before that and the
+    # student is told PAI could not reach the language service.
+    LLM_MAX_RETRIES: int = int(os.environ.get("LLM_MAX_RETRIES", "4"))
     # Retrieval is on the response-critical path. Past this, PAI drops to the
     # PostgreSQL-only fallback rather than making the student wait.
+    #
+    # 1500ms was below the floor for a REMOTE embedding provider and made the
+    # vector index dead weight: measured against OpenAI text-embedding-3-small,
+    # the query embedding alone is ~900-1400ms and a warm hybrid search ~800-1000ms,
+    # while build_foreground_context reserves only 70% of this budget for the
+    # hybrid arm. Every turn timed out into the lexical fallback, so memories
+    # were embedded and never read. Set well above the provider's p95; a
+    # co-located embedding service can safely lower it again.
     PAI_MEMORY_CONTEXT_TIMEOUT_MS: int = int(
-        os.environ.get("PAI_MEMORY_CONTEXT_TIMEOUT_MS", "1500")
+        os.environ.get("PAI_MEMORY_CONTEXT_TIMEOUT_MS", "3000")
     )
     # Master switch for automatic FOREGROUND injection into PAI Counselor.
     #

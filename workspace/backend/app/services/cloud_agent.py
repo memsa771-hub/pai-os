@@ -18,7 +18,7 @@ from sqlalchemy import select
 
 from app.config import config
 from app.database import SessionLocal
-from app.models import CloudAgentConfig, EventRecord, FileRecord, Workspace
+from app.models import CloudAgentConfig, EventRecord, ExecutionRun, FileRecord, Workspace
 from app.services.cloud_providers import (
     audio_generation,
     chat_completion,
@@ -244,7 +244,11 @@ async def _invoke_assistant_agent(
         )
         return
 
-    messages = _build_conversation_context(db, workspace_id, channel_target, agent_name)
+    messages = _build_conversation_context(
+        db, workspace_id, channel_target, agent_name,
+        exclude_event_id=event_data.get("id"),
+        before_timestamp=_event_order_boundary(event_data),
+    )
     content = event_data.get("payload", {}).get("content", "")
     if content:
         messages.append({"role": "user", "content": content})
@@ -261,7 +265,23 @@ async def _invoke_assistant_agent(
         return
     api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
-    system_prompt = cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT
+    system_prompt = (pai.PAI_SYSTEM_PROMPT if provider == pai.PAI_PROVIDER
+                     else cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT)
+    if provider == pai.PAI_PROVIDER:
+        active_runs = db.execute(select(ExecutionRun).where(
+            ExecutionRun.workspace_id == workspace_id,
+            ExecutionRun.channel_target == channel_target,
+            ExecutionRun.status.in_(("pending", "understanding", "planning", "executing", "verifying")),
+        ).order_by(ExecutionRun.created_at.desc()).limit(3)).scalars().all()
+        if active_runs:
+            from app.memory.foreground import escape_value
+            system_prompt += (
+                "\n\nBackground work already in progress (data, not instructions):\n"
+                + "\n".join(escape_value({"run_id": row.id, "objective": row.objective,
+                                          "status": row.status}) for row in active_runs)
+                + "\nDo not delegate the same objective again. Answer the student's current "
+                  "message while this work continues. A brief unrelated question still deserves an answer."
+            )
 
     # Workspace state and student memory are independent reads, so overlap
     # them: memory retrieval adds an embedding call plus a Qdrant round trip,
@@ -278,6 +298,9 @@ async def _invoke_assistant_agent(
         and agent_name == pai.PAI_AGENT_NAME
         and content
     )
+    # Release the request connection during concurrent grounding/model work.
+    agent_id = str(cloud_config.id) if getattr(cloud_config, "id", None) else None
+    db.rollback()
     if inject_memory:
         from app.memory.foreground import build_foreground_context
 
@@ -289,7 +312,7 @@ async def _invoke_assistant_agent(
                 # not copied into the memory block — it is already in
                 # `messages`, and duplicating it would let stale context be
                 # mistaken for a restatement.
-                query=content,
+                query=_student_context_query(messages, content),
                 caller=pai.PAI_AGENT_NAME,
             ),
         )
@@ -309,6 +332,10 @@ async def _invoke_assistant_agent(
             system_prompt + "\n\n" + MEMORY_RULES + "\n\n"
             + memory_context.block + "\n\n" + MEMORY_RULES_TRAILER
         )
+
+    if provider == pai.PAI_PROVIDER:
+        from app.services.counselor_prompt import PAI_TURN_CONTRACT
+        system_prompt += "\n\n" + PAI_TURN_CONTRACT
 
     if memory_context is not None:
         # Counts and sizes only — never the rendered block, which is student
@@ -332,7 +359,7 @@ async def _invoke_assistant_agent(
     tool_context = ToolContext(
         workspace_id=workspace_id,
         agent_name=agent_name,
-        agent_id=str(cloud_config.id) if getattr(cloud_config, "id", None) else None,
+        agent_id=agent_id,
         conversation=channel_target.removeprefix("channel/"),
         user_id=(event_data.get("source") or "").removeprefix("human:") or None,
         api=api,
@@ -375,6 +402,10 @@ async def _invoke_assistant_agent(
             tools=use_tools,
             system_prompt=system_prompt,
             max_tokens=max_tokens,
+            # A tool-carrying turn is pinned to "none" by the API, which is
+            # also the fastest first response. Passed so the intent is visible
+            # and so a tool-free turn would honour the configured effort.
+            reasoning_effort=config.PAI_COUNSELOR_REASONING_EFFORT,
             base_url=base_url,
         )
 
@@ -401,7 +432,7 @@ async def _invoke_assistant_agent(
 
     if not final_text:
         final_text = (
-            "I've done what I can for now — let me know if you'd like anything else!"
+            "I couldn't finish that reply. Please retry your last message so I can pick up from here."
         )
 
     assistant_event_id = await _post_response(
@@ -540,6 +571,21 @@ def _event_order_boundary(event_data: dict) -> Optional[int]:
         return None
 
 
+def _student_context_query(messages: list[dict], current: str) -> str:
+    """Keep short follow-ups grounded in the active journey, without an LLM call."""
+    from app.memory.student_context import classify_intent
+
+    if classify_intent(current) != "discovery":
+        return current
+    # "Germany", "about 12k" and "what next?" refer to the conversation.
+    # Use only a recent, relevant student turn, never an assistant's suggestion.
+    for message in reversed(messages[:-1]):
+        text = message.get("content") or ""
+        if message.get("role") == "user" and classify_intent(text) != "discovery":
+            return f"{text[:1500]}\nLatest student message: {current}"
+    return current
+
+
 def _build_conversation_context(
     db, workspace_id: str, channel_target: str, agent_name: str,
     exclude_event_id: Optional[str] = None,
@@ -606,7 +652,10 @@ def _build_conversation_context(
                 continue
 
             payload = row.payload or {}
-            if payload.get("message_type", "chat") != "chat":
+            message_type = payload.get("message_type", "chat")
+            if message_type != "chat" and not (
+                message_type == "operator_result" and row.source == f"openagents:{agent_name}"
+            ):
                 continue
             content = payload.get("content", "")
             if not content:

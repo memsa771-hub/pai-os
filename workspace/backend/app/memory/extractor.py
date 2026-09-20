@@ -95,6 +95,14 @@ Capture motivations, career direction, target timing and relevant family/cost
 constraints in the record's defined details or a concise semantic memory.
 Casual movie likes do not belong in the profile; studying film or public
 service ambitions do. Understand English, Urdu and Roman Urdu equally.
+Short answers such as "Germany", "about €12k", or "AI" can state important
+constraints in an ongoing counseling conversation. Resolve their meaning from
+the preceding student messages and the question being answered. Preserve the
+currency/period only when stated or unambiguously established by that question.
+"Cost is important" expresses affordability as a constraint, not an amount.
+Do not lose these incremental answers because they are short, and do not turn
+a request for one movie into a career interest. A recommendation by PAI remains
+context only, including any research result, until the student adopts it.
 
 Use the supplied RECORD SCHEMAS as the authoritative record field list.
 If an existing record is being completed or corrected, put its exact id in
@@ -121,7 +129,11 @@ Each candidate is one of:
    "confidence": 0.0-1.0, "quote": "<the student's exact words>"}
 
 Use fields from the supplied schema. Preserve original qualification wording.
-Keep separate records separate and leave unstated details unknown.
+Keep separate records separate. OMIT any field the student did not state:
+never write "Unknown", "N/A" or a guessed year, institution, date or score.
+The record kind (education, test_attempt, ...) is the "key". "candidate_type"
+is ALWAYS one of the four names above. "quote" and "confidence" are candidate
+fields at the top level -- never inside "proposed_value".
 
   {"candidate_type": "vault_fact", "operation": "upsert",
    "key": "<copy one key EXACTLY from the VAULT FIELDS list in the user message;
@@ -265,6 +277,160 @@ def _parse_response(raw: str) -> list[dict]:
     return candidates
 
 
+# Fillers models emit for a field they were asked to omit. Storing one would
+# put the string "Unknown" into a canonical student record.
+_PLACEHOLDERS = frozenset({
+    "", "-", "--", "n/a", "na", "none", "null", "nil", "unknown", "unspecified",
+    "not specified", "not stated", "not mentioned", "not provided", "not applicable",
+    "tbd", "to be determined", "unsure", "undecided",
+})
+
+
+def _coerce_proposal(raw: dict) -> dict:
+    """Repair the two transport shapes models reliably get wrong.
+
+    The RECORD SCHEMAS block lists record kinds ("education", "visa", ...) as
+    top-level JSON keys, which pulls models into naming the kind as
+    `candidate_type` and nesting `quote`/`confidence` inside `proposed_value`.
+    Both shapes carry correctly extracted data, so normalize them rather than
+    discard a good record. Nothing here relaxes a check: the repaired quote is
+    still verified against the student's message, and the key is still matched
+    against ENTITY_MODELS by the caller.
+    """
+    from .student_records import ENTITY_MODELS
+
+    kind = raw.get("candidate_type")
+    if isinstance(kind, str) and kind not in CANDIDATE_TYPES and kind in ENTITY_MODELS:
+        raw = {**raw, "candidate_type": "student_record", "key": raw.get("key") or kind}
+
+    value = raw.get("proposed_value")
+    if isinstance(value, dict) and ("quote" in value or "confidence" in value):
+        repaired = dict(raw)
+        for field in ("quote", "confidence"):
+            # A value already stated at the top level wins over the nested copy.
+            if field in value and repaired.get(field) is None:
+                repaired[field] = value[field]
+        repaired["proposed_value"] = {
+            k: v for k, v in value.items() if k not in ("quote", "confidence")
+        }
+        raw = repaired
+    return raw
+
+
+def _strip_placeholders(value):
+    """Drop filler values recursively. None means "nothing worth storing"."""
+    if isinstance(value, dict):
+        cleaned = {}
+        for key, child in value.items():
+            child = _strip_placeholders(child)
+            if child is not None:
+                cleaned[key] = child
+        return cleaned or None
+    if isinstance(value, list):
+        items = [item for item in (_strip_placeholders(v) for v in value) if item is not None]
+        return items or None
+    if isinstance(value, str) and value.strip().casefold() in _PLACEHOLDERS:
+        return None
+    return value
+
+
+# Schema fields that assert a point in time. A model that is told "final year"
+# will happily compute a graduation year; a counselor that believes the student
+# already graduated gives wrong advice for the rest of the relationship.
+_YEAR_FIELDS = ("graduation_year",)
+_DATE_FIELDS = ("start_date", "end_date", "test_date", "expiry_date", "issued_on",
+                "expires_on", "deadline", "target_date", "achieved_on")
+
+
+def _drop_unevidenced_dates(value: dict, user_text: str) -> dict:
+    """Remove a year the student never actually said.
+
+    The module already refuses a quote that is not in the student's message;
+    this applies the same evidence rule to the one field type models infer
+    most confidently. Omitting a date is recoverable — PAI can ask. A wrong
+    one silently poisons every later recommendation.
+    """
+    stated = set(re.findall(r"(?:19|20)\d{2}", user_text or ""))
+    cleaned = dict(value)
+    for field in _YEAR_FIELDS + _DATE_FIELDS:
+        if field not in cleaned:
+            continue
+        if str(cleaned[field])[:4] not in stated:
+            logger.info("memory: dropped inferred %s from a %s proposal", field, "record")
+            cleaned.pop(field)
+    return cleaned
+
+
+# A budget is only comparable if its currency is written one way. Models echo
+# whatever the student typed ("EUR", "eur", "€"), and "€" != "EUR" defeats every
+# later comparison, conversion and affordability check. Only unambiguous symbols
+# are mapped; an ambiguous one is left untouched rather than guessed wrong.
+_CURRENCY_SYMBOLS = {
+    "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR", "₨": "PKR", "₩": "KRW",
+    "₪": "ILS", "₺": "TRY", "₽": "RUB", "₴": "UAH", "₫": "VND", "฿": "THB",
+    # In international education "$" unqualified means USD often enough that
+    # storing the bare symbol is worse than applying the convention.
+    "$": "USD", "US$": "USD", "usd": "USD", "eur": "EUR", "euro": "EUR",
+    "euros": "EUR", "gbp": "GBP", "pkr": "PKR", "inr": "INR",
+}
+
+
+def _normalize_currencies(value):
+    """Rewrite any `currency` field to an ISO-4217-style code, recursively."""
+    if isinstance(value, dict):
+        out = {}
+        for key, child in value.items():
+            if key == "currency" and isinstance(child, str):
+                text = child.strip()
+                mapped = _CURRENCY_SYMBOLS.get(text) or _CURRENCY_SYMBOLS.get(text.casefold())
+                if mapped is None and len(text) == 3 and text.isalpha():
+                    mapped = text.upper()
+                out[key] = mapped or text
+            else:
+                out[key] = _normalize_currencies(child)
+        return out
+    if isinstance(value, list):
+        return [_normalize_currencies(item) for item in value]
+    return value
+
+
+_MONEY_FIELDS = ("amount", "value", "tuition", "cost")
+
+
+def _stated_amounts(text: str) -> set:
+    """Every figure the student actually wrote, with k/thousand expanded.
+
+    "About EUR 12k per year" yields {12, 12000}, so a proposal of 12000 is
+    evidenced and a proposal of 15000 is not.
+    """
+    found = set()
+    for raw, suffix in re.findall(r"(\d[\d,.\s]*)\s*(k|m|thousand|million|lakh|crore)?",
+                                  (text or ""), flags=re.IGNORECASE):
+        digits = re.sub(r"[,\s]", "", raw).rstrip(".")
+        if not digits:
+            continue
+        try:
+            number = float(digits)
+        except ValueError:
+            continue
+        found.add(number)
+        multiplier = {"k": 1e3, "thousand": 1e3, "m": 1e6, "million": 1e6,
+                      "lakh": 1e5, "crore": 1e7}.get((suffix or "").lower())
+        if multiplier:
+            found.add(number * multiplier)
+        # "12,000" also reads as a bare 12 followed by 000 in sloppy output.
+        if "." not in digits:
+            found.add(number * 1000)
+    return found
+
+
+def _money_is_evidenced(figure, text: str) -> bool:
+    """True when this exact figure appears in the student's own words."""
+    if isinstance(figure, bool) or not isinstance(figure, (int, float)):
+        return True  # not a number we can check; other rules apply
+    return any(abs(figure - candidate) < 0.01 for candidate in _stated_amounts(text))
+
+
 def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[ExtractedCandidate]:
     """Validate one proposal. None (with a reason logged) if unusable.
 
@@ -277,6 +443,8 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
 
     if not isinstance(raw, dict):
         return drop("not an object")
+
+    raw = _coerce_proposal(raw)
 
     candidate_type = raw.get("candidate_type")
     if candidate_type not in CANDIDATE_TYPES:
@@ -317,9 +485,29 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
             return drop(f"unknown vault key {key!r}")
         if "proposed_value" not in raw:
             return drop("vault_fact without proposed_value")
+        proposed = _strip_placeholders(raw["proposed_value"])
+        if proposed is None:
+            return drop(f"vault_fact {key!r} stated no actual value")
+        proposed = _normalize_currencies(proposed)
+        # A money field of 0 is a model filling in a blank, not a figure the
+        # student gave ("Cost is important" became {"amount": 0} in testing).
+        # Storing it as canonical makes every affordability check wrong; no
+        # budget at all is recoverable, because PAI can simply ask.
+        if isinstance(proposed, dict):
+            for money in ("amount", "value", "tuition", "cost"):
+                figure = proposed.get(money)
+                if isinstance(figure, bool) or figure is None:
+                    continue
+                if isinstance(figure, (int, float)) and figure <= 0:
+                    return drop(f"vault_fact {key!r} proposed a non-positive {money}")
+                # A figure the student never said is invented, and a wrong
+                # budget is more damaging than a missing one: it looks
+                # legitimate and silently misprices every recommendation.
+                if not _money_is_evidenced(figure, turn.user_text):
+                    return drop(f"vault_fact {key!r} {money}={figure!r} is not in the student's words")
         return ExtractedCandidate(
             candidate_type="vault_fact", operation="upsert", key=key,
-            proposed_value=raw["proposed_value"], content=None,
+            proposed_value=proposed, content=None,
             entities=entities, confidence=confidence, evidence=evidence,
         )
 
@@ -340,6 +528,13 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
                 clean_entities[reference] = entities[reference]
         if "supersedes_record_id" in clean_entities and kind != "goal":
             return drop("only goals may supersede another goal")
+        value = _strip_placeholders(value)
+        if not isinstance(value, dict) or not value:
+            return drop(f"{kind} record stated no actual values")
+        value = _drop_unevidenced_dates(value, turn.user_text)
+        value = _normalize_currencies(value)
+        if not value:
+            return drop(f"{kind} record stated no actual values")
         try:
             value = validate_record(kind, value, partial="record_id" in clean_entities)
         except MemoryDataError as exc:

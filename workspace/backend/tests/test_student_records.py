@@ -641,3 +641,150 @@ def test_profile_endpoint_rejects_a_caller_without_credentials(db):
     response = router.get_student_profile(network=str(workspace.id), db=db,
                                           x_workspace_token="wrong", authorization=None)
     assert response.status_code == 401
+
+
+# --- Transport-shape repair -------------------------------------------------
+# Models reliably name the record kind in `candidate_type` and nest
+# `quote`/`confidence` inside `proposed_value`, because RECORD SCHEMAS lists
+# the kinds as top-level JSON keys. Every one of those candidates used to be
+# dropped, so no typed record was ever created from a conversation.
+
+def _turn(text="I'm in my final year of BS Computer Science. My CGPA is 3.42 out of 4."):
+    return TurnContext(workspace_id="w", user_event_id="event", user_text=text)
+
+
+def test_record_kind_named_as_candidate_type_is_normalized():
+    turn = _turn()
+    raw = {"candidate_type": "education", "operation": "upsert",
+           "proposed_value": {"qualification_name": "BS Computer Science",
+                              "result": {"gpa": 3.42},
+                              "confidence": 1.0, "quote": turn.user_text}}
+    got = _validate(raw, turn, set())
+    assert got is not None, "a well-extracted education record must not be dropped"
+    assert got.candidate_type == "student_record" and got.key == "education"
+    assert got.proposed_value == {"qualification_name": "BS Computer Science",
+                                  "result": {"gpa": 3.42}}
+    assert got.confidence == 1.0
+
+
+def test_placeholder_fillers_never_reach_a_canonical_record():
+    turn = _turn()
+    raw = {"candidate_type": "education", "quote": turn.user_text,
+           "proposed_value": {"qualification_name": "BS Computer Science",
+                              "institution_name": "Unknown", "start_date": "Unknown",
+                              "end_date": "N/A",
+                              "details": {"institution_country": "Pakistan",
+                                          "study_mode": "not specified"}}}
+    got = _validate(raw, turn, set())
+    # "Unknown" in a date field fails schema validation and would kill the
+    # whole record, taking the degree and CGPA with it.
+    assert got is not None
+    assert got.proposed_value == {"qualification_name": "BS Computer Science",
+                                  "details": {"institution_country": "Pakistan"}}
+
+
+def test_a_record_of_only_fillers_is_still_dropped():
+    turn = _turn()
+    raw = {"candidate_type": "education", "quote": turn.user_text,
+           "proposed_value": {"qualification_name": "unknown", "institution_name": "N/A"}}
+    assert _validate(raw, turn, set()) is None
+
+
+def test_false_and_zero_are_values_not_fillers():
+    turn = _turn("I have IELTS 7.5 overall.")
+    raw = {"candidate_type": "language_proficiency", "quote": turn.user_text,
+           "proposed_value": {"language": "English", "proficiency": "7.5",
+                              "details": {"native": False}}}
+    got = _validate(raw, turn, set())
+    assert got.proposed_value["details"] == {"native": False}
+
+
+def test_vault_fact_with_a_filler_value_is_refused():
+    turn = _turn("I am still deciding.")
+    raw = {"candidate_type": "vault_fact", "key": "preferences.target_countries",
+           "proposed_value": "undecided", "quote": turn.user_text}
+    assert _validate(raw, turn, {"preferences.target_countries"}) is None
+
+
+def test_shape_repair_does_not_weaken_the_evidence_or_key_boundary():
+    turn = _turn()
+    # An unknown kind is still not a record...
+    assert _validate({"candidate_type": "horoscope", "quote": turn.user_text,
+                      "proposed_value": {"sign": "leo"}}, turn, set()) is None
+    # ...a nested quote is still checked against the STUDENT's message...
+    assert _validate({"candidate_type": "education",
+                      "proposed_value": {"qualification_name": "PhD",
+                                         "quote": "You already hold a PhD"}}, turn, set()) is None
+    # ...and a top-level quote still wins over a forged nested one.
+    got = _validate({"candidate_type": "education", "quote": turn.user_text,
+                     "proposed_value": {"qualification_name": "BS Computer Science",
+                                        "quote": "You already hold a PhD"}}, turn, set())
+    assert got is not None and got.evidence["quote"] == turn.user_text
+
+
+def test_a_graduation_year_the_student_never_stated_is_not_invented():
+    turn = _turn("I'm in my final year of BS Computer Science. My CGPA is 3.42 out of 4.")
+    raw = {"candidate_type": "education", "quote": turn.user_text,
+           "proposed_value": {"qualification_name": "BS Computer Science",
+                              "graduation_year": 2023, "result": {"gpa": 3.42}}}
+    got = _validate(raw, turn, set())
+    assert "graduation_year" not in got.proposed_value
+    assert got.proposed_value["result"] == {"gpa": 3.42}
+
+    stated = _turn("I graduated in 2023 with a BS in Computer Science.")
+    raw["quote"] = stated.user_text
+    assert _validate(raw, stated, set()).proposed_value["graduation_year"] == 2023
+
+
+def test_currency_symbols_are_stored_as_codes_not_glyphs():
+    turn = _turn("My budget is about EUR 12k per year.")
+    raw = {"candidate_type": "vault_fact", "key": "finance.budget", "quote": turn.user_text,
+           "proposed_value": {"amount": 12000, "currency": "€", "period": "per_year"}}
+    got = _validate(raw, turn, {"finance.budget"})
+    # "€" != "EUR" defeats every later budget comparison.
+    assert got.proposed_value == {"amount": 12000, "currency": "EUR", "period": "per_year"}
+    raw["proposed_value"] = {"amount": 12000, "currency": "eur"}
+    assert _validate(raw, turn, {"finance.budget"}).proposed_value["currency"] == "EUR"
+    # An unrecognized value is preserved, never guessed into a wrong code.
+    raw["proposed_value"] = {"amount": 12000, "currency": "somecoin"}
+    assert _validate(raw, turn, {"finance.budget"}).proposed_value["currency"] == "somecoin"
+
+
+def test_a_zero_budget_is_never_stored_as_a_stated_figure():
+    # "Cost is important" is a constraint, not a figure; the model filled the
+    # blank with 0 in testing.
+    turn = _turn("Cost is important.")
+    raw = {"candidate_type": "vault_fact", "key": "finance.budget", "quote": turn.user_text,
+           "proposed_value": {"amount": 0, "currency": "EUR", "period": "total"}}
+    assert _validate(raw, turn, {"finance.budget"}) is None
+
+    stated = _turn("My budget is about EUR 12000 per year.")
+    raw["quote"] = stated.user_text
+    raw["proposed_value"] = {"amount": 12000, "currency": "EUR", "period": "per_year"}
+    assert _validate(raw, stated, {"finance.budget"}).proposed_value["amount"] == 12000
+
+
+def test_a_budget_figure_the_student_never_said_is_refused():
+    turn = _turn("About EUR 12k per year, including living costs.")
+    invented = {"candidate_type": "vault_fact", "key": "finance.budget", "quote": turn.user_text,
+                "proposed_value": {"amount": 15000, "currency": "EUR", "period": "per_year"}}
+    # A wrong budget is worse than none: it looks legitimate and misprices
+    # every later recommendation.
+    assert _validate(invented, turn, {"finance.budget"}) is None
+
+    stated = dict(invented, proposed_value={"amount": 12000, "currency": "EUR", "period": "per_year"})
+    assert _validate(stated, turn, {"finance.budget"}).proposed_value["amount"] == 12000
+
+    plain = _turn("My budget is EUR 12,000 a year.")
+    assert _validate(dict(stated, quote=plain.user_text), plain,
+                     {"finance.budget"}).proposed_value["amount"] == 12000
+
+
+def test_newer_models_get_the_token_parameter_they_accept():
+    # gpt-5.x/o-series reject `max_tokens` with a 400. Extraction always sends
+    # a cap, so getting this wrong stops the Vault recording anything at all.
+    from app.services.cloud_providers import _token_limit_kwarg
+    for legacy in ("gpt-4o", "gpt-4o-mini"):
+        assert _token_limit_kwarg(legacy) == "max_tokens"
+    for modern in ("gpt-5.4-mini", "gpt-5.5", "gpt-5.6-terra", "gpt-6-astra", "o3", "o4-mini"):
+        assert _token_limit_kwarg(modern) == "max_completion_tokens"

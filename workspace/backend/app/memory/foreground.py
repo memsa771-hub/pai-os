@@ -280,7 +280,9 @@ async def build_foreground_context(
 
     try:
         student, retrieval_mode = await asyncio.wait_for(
-            _hybrid(workspace_id, query, caller), max(0.01, remaining())
+            # Reserve time for canonical PostgreSQL facts even if embeddings
+            # or Qdrant are slow. A timeout must not erase the known profile.
+            _hybrid(workspace_id, query, caller), max(0.01, remaining() * 0.7)
         )
         # Report what the retriever ACTUALLY did. Labelling a lexical fallback
         # as "hybrid" would make Mode 1 rollout telemetry claim a vector

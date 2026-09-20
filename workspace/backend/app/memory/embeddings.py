@@ -27,6 +27,28 @@ from app.config import config
 
 logger = logging.getLogger(__name__)
 
+
+def _warm_sdk_imports() -> None:
+    """Import the OpenAI SDK's lazily-loaded resource modules up front.
+
+    `AsyncOpenAI.embeddings` is a cached_property that imports
+    `openai.resources.embeddings` on first ACCESS, which pulls in the whole
+    `openai.resources` package (including `.chat`). Foreground retrieval
+    reaches that attribute from the bounded worker thread while the request
+    thread may be importing `openai.resources.chat` for the chat call, and two
+    threads walking the same partially-initialized package deadlock on the
+    import lock — a real `_DeadlockError` that killed hybrid retrieval as soon
+    as the budget was large enough for it to get that far. Importing once, at
+    module load on the main thread, means neither thread imports later.
+    """
+    try:
+        import openai.resources  # noqa: F401
+    except Exception:  # SDK absent or restructured: degrade, never break import
+        logger.debug("embeddings: could not pre-import openai resources", exc_info=True)
+
+
+_warm_sdk_imports()
+
 # Endpoints known to expose an OpenAI-compatible /embeddings route. Used only
 # to decide whether reusing PAI credentials is safe.
 _OPENAI_COMPATIBLE_HOSTS = ("api.openai.com",)

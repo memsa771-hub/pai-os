@@ -115,8 +115,8 @@ def register_builtin_tools(registry):
         ToolDefinition(
             "memory.context",
             "Get what you know about this student — profile facts, education "
-            "and career records, preferences and recent history. Call this before "
-            "advising, rather than asking the student to repeat themselves.",
+            "and career records, preferences and recent history. Use the context "
+            "already injected; call this only for a specific missing/stale detail.",
             obj({
                 "query": {"type": "string"},
                 "context_refs": {

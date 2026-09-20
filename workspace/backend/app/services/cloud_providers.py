@@ -364,8 +364,65 @@ async def _refresh_google_token(refresh_token: str) -> str:
         return r.json()["access_token"]
 
 
+REASONING_EFFORTS = ("none", "low", "medium", "high")
+
+
+def _reasoning_effort_for(model: str, effort: Optional[str], has_tools: bool) -> Optional[str]:
+    """The reasoning_effort this call may actually send, or None to omit it.
+
+    Two hard API constraints, both measured against gpt-5.6-sol rather than
+    assumed:
+
+    * Models outside the gpt-5/gpt-6/o-series do not accept the parameter.
+    * On /v1/chat/completions, a request carrying FUNCTION TOOLS accepts only
+      "none" — "low", "medium", "high" and omitting it are all rejected with
+      400 "Function tools with reasoning_effort are not supported". So any
+      tool-calling turn is pinned to "none" regardless of configuration.
+      Raising it would require /v1/responses, a different transport.
+
+    The effect is that Counselor turns (always tool-enabled) run at "none",
+    which is also the lowest-latency setting and what a chat turn wants, while
+    Operator's UNDERSTAND/PLAN/VERIFY phases carry no tools and honour the
+    configured effort.
+    """
+    name = (model or "").lower()
+    if not name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
+        return None
+    if has_tools:
+        return "none"
+    if effort in REASONING_EFFORTS:
+        return effort
+    return None
+
+
+def _token_limit_kwarg(model: str) -> str:
+    """The parameter this model accepts for an output-token cap.
+
+    `max_tokens` was replaced by `max_completion_tokens` for gpt-5.x and the
+    o-series, which reject the old name outright with a 400. Extraction passes
+    a cap on every call, so leaving this unhandled means the Vault silently
+    stops recording the moment PAI_MODEL moves to a current model. Keyed on
+    the model name for the same reason `reasoning_effort` below is: PAI's
+    provider string is "placement_ai", not "openai".
+    """
+    name = (model or "").lower()
+    if name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
+        return "max_completion_tokens"
+    return "max_tokens"
+
+
 def _make_client(api_key: str, provider: str, base_url_override: Optional[str] = None, timeout: float = 120) -> AsyncOpenAI:
-    kwargs: dict = {"api_key": api_key, "timeout": timeout}
+    from app.config import config
+
+    # The SDK retries twice by default, which is not enough to ride out a
+    # tokens-per-minute 429: those clear on a ~60s window, and the failure
+    # surfaces to the student as "could not reach the language service".
+    # The SDK honours Retry-After and only retries what is safe to retry.
+    kwargs: dict = {
+        "api_key": api_key,
+        "timeout": timeout,
+        "max_retries": config.LLM_MAX_RETRIES,
+    }
     if base_url_override:
         base_url = base_url_override.rstrip("/")
         if not base_url.endswith("/v1"):
@@ -385,6 +442,7 @@ async def chat_completion(
     messages: list[dict],
     system_prompt: Optional[str] = None,
     max_tokens: Optional[int] = None,
+    reasoning_effort: Optional[str] = None,
     base_url: Optional[str] = None,
 ) -> str:
     """Call a chat completion API and return the text response."""
@@ -409,8 +467,11 @@ async def chat_completion(
     api_messages.extend(messages)
 
     kwargs: dict = {"model": model, "messages": api_messages}
+    effort = _reasoning_effort_for(model, reasoning_effort, has_tools=False)
+    if effort:
+        kwargs["reasoning_effort"] = effort
     if max_tokens:
-        kwargs["max_tokens"] = max_tokens
+        kwargs[_token_limit_kwarg(model)] = max_tokens
 
     try:
         response = await client.chat.completions.create(**kwargs)
@@ -432,6 +493,7 @@ async def chat_completion_tools(
     system_prompt: Optional[str] = None,
     max_tokens: Optional[int] = None,
     base_url: Optional[str] = None,
+    reasoning_effort: Optional[str] = None,
 ) -> dict:
     """OpenAI-compatible chat completion WITH function/tool calling.
 
@@ -452,16 +514,13 @@ async def chat_completion_tools(
     if tools:
         kwargs["tools"] = tools
         kwargs["tool_choice"] = "auto"
-        if model.startswith("gpt-5"):
-            # gpt-5.* defaults to a non-"none" reasoning_effort, which
-            # /v1/chat/completions rejects together with function tools
-            # ("use /v1/responses or set reasoning_effort to 'none'"). Keyed
-            # on the model name, not `provider` — PAI Counselor's provider
-            # string is "placement_ai", not "openai", even though it talks to
-            # the same OpenAI-compatible /v1/chat/completions endpoint.
-            kwargs["reasoning_effort"] = "none"
+    # Keyed on the model name, not `provider` — PAI's provider string is
+    # "placement_ai", not "openai", though it talks to the same endpoint.
+    effort = _reasoning_effort_for(model, reasoning_effort, has_tools=bool(tools))
+    if effort:
+        kwargs["reasoning_effort"] = effort
     if max_tokens:
-        kwargs["max_tokens"] = max_tokens
+        kwargs[_token_limit_kwarg(model)] = max_tokens
 
     try:
         response = await client.chat.completions.create(**kwargs)
