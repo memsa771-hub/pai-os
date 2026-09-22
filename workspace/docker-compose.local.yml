@@ -2,7 +2,7 @@ services:
   backend:
     environment:
       APP_ENV: development
-      CORS_ORIGINS: http://localhost:3000
+      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       FRONTEND_BASE_URL: http://localhost:3000
       PUBLIC_API_BASE: http://localhost:8000
       WORKSPACE_ENDPOINT: http://localhost:8000
