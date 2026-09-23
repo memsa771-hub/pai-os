@@ -196,6 +196,7 @@ class VaultService:
         subject_user_id: Optional[str] = None,
         claim_origin: Optional[str] = None,
         capture_method: Optional[str] = None,
+        candidate_id: Optional[str] = None,
     ) -> "VaultWriteResult":
         """Validate, resolve against any existing fact, and record.
 
@@ -217,17 +218,27 @@ class VaultService:
         quote = str((evidence or {}).get("quote") or "").casefold()
         explicit_correction = any(marker in quote for marker in
                                   ("actually", "correction", "correct that", "i changed", "now ", "instead"))
-        if (current is not None and _unwrap(current.value) != value and (
-                (source_type == "document" and current.source_type in ("conversation", "user_explicit")) or
-                (source_type == "conversation" and current.source_type == "conversation" and not explicit_correction))):
+        safe_latest_wins = (
+            policy == "latest_wins"
+            and definition.category in ("preferences", "career", "mobility")
+        )
+        if (current is not None and _unwrap(current.value) != value
+                and source_type != "user_explicit" and not safe_latest_wins and (
+                    source_type in ("document", "agent", "system") or
+                    (source_type == "conversation" and not explicit_correction))):
             self.db.add(ProfileIssue(
                 workspace_id=workspace_id, subject_user_id=subject_user_id,
+                candidate_id=candidate_id,
                 issue_type="conflicting_fact",
                 severity="blocking", affected_type="vault_fact", affected_id=current.id,
                 summary=f"Conflicting evidence for {field_key}",
                 clarification_question=f"What is the correct value for {field_key}?",
                 evidence={"field_key": field_key, "current_fact_id": current.id,
-                          "proposed_value": value, "proposed_evidence": evidence},
+                          "current_value": _unwrap(current.value),
+                          "current_source_type": current.source_type,
+                          "proposed_value": value, "proposed_source_type": source_type,
+                          "current_evidence": current.evidence,
+                          "proposed_evidence": evidence},
             ))
             self.db.flush()
             return VaultWriteResult(VaultOutcome.NEEDS_REVIEW, current)
@@ -238,6 +249,25 @@ class VaultService:
         # the policy only applies from the second write onward, which is
         # exactly backwards for a field marked as needing review.
         if policy == "manual_review" and source_type != "user_explicit":
+            self.db.add(ProfileIssue(
+                workspace_id=workspace_id, subject_user_id=subject_user_id,
+                candidate_id=candidate_id, issue_type="conflicting_fact",
+                severity="blocking", affected_type="vault_fact",
+                affected_id=current.id if current else None,
+                summary=f"Confirmation required for {field_key}",
+                clarification_question=f"What is the correct value for {field_key}?",
+                evidence={
+                    "field_key": field_key,
+                    "current_fact_id": current.id if current else None,
+                    "current_value": _unwrap(current.value) if current else None,
+                    "current_source_type": current.source_type if current else None,
+                    "proposed_value": value,
+                    "proposed_source_type": source_type,
+                    "current_evidence": current.evidence if current else None,
+                    "proposed_evidence": evidence,
+                },
+            ))
+            self.db.flush()
             logger.info(
                 "vault fact needs review key=%s workspace=%s source=%s",
                 field_key, workspace_id, source_type,

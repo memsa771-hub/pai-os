@@ -489,11 +489,19 @@ class WorkspaceApi {
     );
   }
 
-  /** Mark an item that needed review as settled, with the student's note. */
-  async resolveProfileIssue(issueId: string, note: string): Promise<{ resolved: boolean }> {
-    return this.request<{ resolved: boolean }>(
+  /** Resolve a conflict through candidate -> reconciler, never by cosmetic dismissal. */
+  async resolveProfileIssue(
+    issueId: string,
+    action: 'keep_current' | 'accept_proposed' | 'provide_new',
+    value?: unknown,
+    note?: string,
+  ): Promise<{ resolved: boolean; action: string; id: string | null }> {
+    return this.request<{ resolved: boolean; action: string; id: string | null }>(
       `/v1/student-profile/issues/${encodeURIComponent(issueId)}/resolve?network=${this.requireWorkspace()}`,
-      { method: 'POST', body: JSON.stringify({ note }) },
+      {
+        method: 'POST',
+        body: JSON.stringify({ action, ...(value !== undefined ? { value } : {}), ...(note ? { note } : {}) }),
+      },
     );
   }
 

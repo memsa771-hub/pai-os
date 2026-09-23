@@ -186,6 +186,104 @@ async def propose_profile(context, args: dict) -> dict:
 # -- writes (Counselor only) ----------------------------------------------
 
 
+def _record_patch(path: str | None, answer):
+    if not path:
+        return answer
+    result = answer
+    for part in reversed(path.split(".")):
+        result = {part: result}
+    return result
+
+
+async def answer_profile_requirement(context, args: dict) -> dict:
+    """Save the one active collection question and recalculate immediately."""
+    from app.memory.profile_completion import ProfileCompletionService
+
+    requirement_key = (args.get("requirement_key") or "").strip()
+    if not requirement_key or "answer" not in args:
+        return {"ok": False, "error": {
+            "code": "invalid_arguments", "message": "requirement_key and answer are required",
+        }}
+    db = _session()
+    try:
+        completion_service = ProfileCompletionService(db)
+        snapshot = completion_service.snapshots.build(context.workspace_id)
+        completion = completion_service.evaluate(context.workspace_id, snapshot=snapshot)
+        active = completion.get("nextRequirement")
+        if not active or active.get("key") != requirement_key:
+            return {"ok": False, "error": {
+                "code": "requirement_not_active",
+                "message": "That requirement is not the active missing profile question",
+            }}
+        requirement = completion_service.registry.get(requirement_key)
+        if requirement is None:
+            return {"ok": False, "error": {
+                "code": "requirement_not_found", "message": "Profile requirement not found",
+            }}
+
+        answer = args["answer"]
+        candidate_type = "vault_fact"
+        key = requirement.source_key
+        entities = {}
+        proposed_value = answer
+        if requirement.source_type == "record_presence":
+            if not isinstance(answer, dict):
+                return {"ok": False, "error": {
+                    "code": "invalid_answer", "message": "This answer must be a structured record",
+                }}
+            candidate_type = "student_record"
+        elif requirement.source_type == "record_field":
+            rows = completion_service.registry.select_records(requirement, snapshot)
+            if not rows:
+                return {"ok": False, "error": {
+                    "code": "record_not_found", "message": "The record to update is missing",
+                }}
+            candidate_type = "student_record"
+            entities = {"record_id": rows[0]["id"]}
+            proposed_value = _record_patch(requirement.source_path, answer)
+        elif requirement.source_type == "journey_gap":
+            if not isinstance(answer, dict) or not requirement.source_path:
+                return {"ok": False, "error": {
+                    "code": "invalid_answer", "message": "This answer must describe the missing qualification",
+                }}
+            candidate_type = "student_record"
+            key = requirement.source_path
+        elif requirement.source_type != "vault_fact":
+            return {"ok": False, "error": {
+                "code": "unsupported_requirement", "message": "This requirement cannot be answered here",
+            }}
+
+        candidate = MemoryCandidateService(db).propose(
+            workspace_id=context.workspace_id,
+            candidate_type=candidate_type,
+            key=key,
+            proposed_value=proposed_value,
+            entities=entities,
+            confidence=1.0,
+            source_type="user_explicit",
+            allow_user_explicit=True,
+            evidence={"profile_requirement_key": requirement_key,
+                      "capture": "counselor_collection"},
+            subject_user_id=context.user_id,
+        )
+        result = MemoryReconciler(db).reconcile(candidate)
+        if not result.accepted:
+            db.commit()
+            return {"ok": False, "error": {
+                "code": "answer_rejected", "message": result.reason or "Profile answer rejected",
+            }}
+        recalculated = completion_service.evaluate(context.workspace_id)
+        db.commit()
+        return {"ok": True, "data": {
+            "saved": True, "id": result.result_id, "completion": recalculated,
+        }}
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+
 async def remember(context, args: dict) -> dict:
     """Explicit "remember that ..." — durably committed before confirming.
 

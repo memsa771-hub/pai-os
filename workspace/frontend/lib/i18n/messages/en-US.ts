@@ -934,9 +934,13 @@ export const messages = {
 
     // Issues
     severityBlocking: 'Blocking',
-    resolve: 'Mark resolved',
-    resolved: 'Marked resolved',
-    resolveNote: 'This is settled',
+    resolve: 'Resolve',
+    keepCurrent: 'Keep current',
+    useProposed: 'Use proposed',
+    useDifferent: 'Use different',
+    differentValue: 'Correct value',
+    differentValueHint: 'Enter the correct value. For a structured record, use JSON.',
+    resolved: 'Resolved',
 
     // Editing
     saved: 'Profile updated',

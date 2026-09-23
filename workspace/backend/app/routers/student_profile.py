@@ -5,8 +5,7 @@ store — and writes through the ordinary candidate/reconciler path, so a
 correction typed into the Profile page carries the same provenance and lands
 in the same canonical records as one PAI extracted from a conversation.
 """
-from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, Header, Query
 from pydantic import BaseModel, Field
@@ -17,6 +16,8 @@ from app.database import get_db
 from app.memory.candidates import MemoryCandidateService
 from app.memory.errors import MemoryDataError
 from app.memory.onboarding import OnboardingService
+from app.memory.profile_completion import ProfileCompletionService
+from app.memory.profile_issues import ProfileIssueService
 from app.memory.readiness import ReadinessService, STAGES
 from app.memory.reconciler import MemoryReconciler
 from app.memory.student_profile_view import StudentProfileView
@@ -38,7 +39,9 @@ class ProfileEdit(BaseModel):
 
 
 class IssueResolution(BaseModel):
-    note: str = Field(min_length=1, max_length=1000)
+    action: Literal["keep_current", "accept_proposed", "provide_new"]
+    value: Any = None
+    note: Optional[str] = Field(default=None, max_length=1000)
 
 
 class OnboardingAnswers(BaseModel):
@@ -105,12 +108,25 @@ def get_raw_student_profile(
     return success_response({
         "facts": VaultService(db).snapshot(workspace_id, include_sensitive=True),
         "records": records.snapshot(workspace_id),
-        "issues": [{"id": i.id, "type": i.issue_type, "severity": i.severity,
+        "issues": [{"id": i.id, "candidate_id": i.candidate_id,
+                    "type": i.issue_type, "severity": i.severity,
                     "summary": i.summary, "clarification_question": i.clarification_question,
                     "status": i.status, "evidence": i.evidence, "resolution": i.resolution}
                    for i in records.issues(workspace_id)],
         "readiness": {stage: ReadinessService(db).evaluate(workspace_id, stage) for stage in STAGES},
     })
+
+
+@router.get("/completion")
+def get_profile_completion(
+    network: str = Query(...), db: Session = Depends(get_db),
+    x_workspace_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None),
+):
+    """Safe completion counts and the next useful question; never raw values."""
+    workspace, error = _workspace(db, network, x_workspace_token, authorization)
+    if error:
+        return error
+    return success_response(ProfileCompletionService(db).evaluate(str(workspace.id)))
 
 
 @router.get("/history")
@@ -169,14 +185,18 @@ def resolve_profile_issue(
     workspace, error = _workspace(db, network, x_workspace_token, authorization)
     if error:
         return error
-    issue = next((i for i in StudentRecordService(db).issues(str(workspace.id)) if i.id == issue_id), None)
-    if issue is None:
-        return json_response(ResponseCode.NOT_FOUND, "Profile issue not found")
-    issue.status = "resolved"
-    issue.resolution = {"note": resolution.note, "resolved_by": "student"}
-    issue.resolved_at = datetime.now(timezone.utc)
+    try:
+        result = ProfileIssueService(db).resolve(
+            str(workspace.id), issue_id, resolution.action,
+            value=resolution.value, note=resolution.note,
+        )
+    except MemoryDataError as exc:
+        db.rollback()
+        return json_response(ResponseCode.BAD_REQUEST, str(exc))
     db.commit()
-    return success_response({"resolved": True})
+    if not result["resolved"]:
+        return json_response(ResponseCode.BAD_REQUEST, result.get("reason") or "Resolution rejected")
+    return success_response(result)
 
 
 # ---------------------------------------------------------------------------
