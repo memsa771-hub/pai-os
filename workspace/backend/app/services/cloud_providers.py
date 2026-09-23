@@ -366,6 +366,23 @@ async def _refresh_google_token(refresh_token: str) -> str:
 
 REASONING_EFFORTS = ("none", "low", "medium", "high")
 
+# Models that reject reasoning_effort="none" outright — "Unsupported value:
+# 'reasoning_effort' does not support 'none' with this model. Supported
+# values are: 'minimal', 'low', 'medium', and 'high'" — confirmed against the
+# live API for gpt-5-mini. gpt-5.6-sol accepts "none" (the assumption the
+# rest of this function was originally measured against); anything else in
+# this family is untested, so it's grouped with gpt-5-mini as the safer
+# default rather than assumed to behave like gpt-5.6-sol.
+_NO_NONE_MODELS_PREFIXES = ("gpt-5-mini",)
+
+
+def _tool_call_effort_for(model: str) -> str:
+    """The lowest reasoning_effort a tool-carrying call can send for `model`."""
+    name = (model or "").lower()
+    if name.startswith(_NO_NONE_MODELS_PREFIXES):
+        return "minimal"
+    return "none"
+
 
 def _reasoning_effort_for(model: str, effort: Optional[str], has_tools: bool) -> Optional[str]:
     """The reasoning_effort this call may actually send, or None to omit it.
@@ -375,21 +392,24 @@ def _reasoning_effort_for(model: str, effort: Optional[str], has_tools: bool) ->
 
     * Models outside the gpt-5/gpt-6/o-series do not accept the parameter.
     * On /v1/chat/completions, a request carrying FUNCTION TOOLS accepts only
-      "none" — "low", "medium", "high" and omitting it are all rejected with
-      400 "Function tools with reasoning_effort are not supported". So any
-      tool-calling turn is pinned to "none" regardless of configuration.
-      Raising it would require /v1/responses, a different transport.
+      the lowest effort value the model supports — "low", "medium", "high"
+      and omitting it are all rejected with 400 "Function tools with
+      reasoning_effort are not supported". Most gpt-5.x models accept "none"
+      for this; gpt-5-mini does not and requires "minimal" instead (see
+      `_tool_call_effort_for`). So any tool-calling turn is pinned to that
+      floor value regardless of configuration. Raising it would require
+      /v1/responses, a different transport.
 
-    The effect is that Counselor turns (always tool-enabled) run at "none",
-    which is also the lowest-latency setting and what a chat turn wants, while
-    Operator's UNDERSTAND/PLAN/VERIFY phases carry no tools and honour the
-    configured effort.
+    The effect is that Counselor turns (always tool-enabled) run at the
+    lowest accepted effort, which is also the lowest-latency setting and what
+    a chat turn wants, while Operator's UNDERSTAND/PLAN/VERIFY phases carry no
+    tools and honour the configured effort.
     """
     name = (model or "").lower()
     if not name.startswith(("gpt-5", "gpt-6", "o1", "o3", "o4")):
         return None
     if has_tools:
-        return "none"
+        return _tool_call_effort_for(model)
     if effort in REASONING_EFFORTS:
         return effort
     return None
