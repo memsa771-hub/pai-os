@@ -283,3 +283,7 @@ workspace/backups/
 
 # End-to-end test credentials (tests/end_to_end/agents.example.json is the template)
 tests/end_to_end/agents.config.json
+
+# Local architecture and planning artifacts
+/graphify-out/
+/PAI_Vault_6_Layer_Implementation_Plan.md
