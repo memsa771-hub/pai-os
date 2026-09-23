@@ -267,6 +267,17 @@ async def _invoke_assistant_agent(
 
     system_prompt = (pai.PAI_SYSTEM_PROMPT if provider == pai.PAI_PROVIDER
                      else cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT)
+    completion = None
+    if agent_name == pai.PAI_AGENT_NAME:
+        from app.memory.profile_completion import ProfileCompletionService
+
+        completion = ProfileCompletionService(db).evaluate(workspace_id)
+        logger.info(
+            "assistant completion: workspace=%s mode=%s eligible=%s enforced=%s next=%s",
+            workspace_id, completion["counselorMode"],
+            completion["personalizedCounselingEligible"], completion["enforced"],
+            (completion.get("nextRequirement") or {}).get("key"),
+        )
     if provider == pai.PAI_PROVIDER:
         active_runs = db.execute(select(ExecutionRun).where(
             ExecutionRun.workspace_id == workspace_id,
@@ -297,6 +308,9 @@ async def _invoke_assistant_agent(
         # permission system.
         and agent_name == pai.PAI_AGENT_NAME
         and content
+        # Collection mode may answer general questions, but must not receive
+        # stored student context that could be turned into personalized advice.
+        and (completion is None or completion["counselorMode"] != "collection")
     )
     # Release the request connection during concurrent grounding/model work.
     agent_id = str(cloud_config.id) if getattr(cloud_config, "id", None) else None
@@ -336,6 +350,12 @@ async def _invoke_assistant_agent(
     if provider == pai.PAI_PROVIDER:
         from app.services.counselor_prompt import PAI_TURN_CONTRACT
         system_prompt += "\n\n" + PAI_TURN_CONTRACT
+    if completion is not None:
+        from app.memory.profile_completion import counselor_policy_prompt
+
+        # Appended last so rollout policy wins over general counseling guidance
+        # that permits personalization with partial information.
+        system_prompt += "\n\n" + counselor_policy_prompt(completion)
 
     if memory_context is not None:
         # Counts and sizes only — never the rendered block, which is student
@@ -350,7 +370,9 @@ async def _invoke_assistant_agent(
         )
     from app.tools import AUDIENCE_COUNSELOR, ToolContext, get_tool_executor, get_tool_registry
     from app.memory.permissions import capabilities_for_agent
-    allowed_tools = frozenset(pai.PAI_ALLOWED_TOOLS)
+    allowed_tools = pai.allowed_tools_for_mode(
+        completion["counselorMode"] if completion is not None else "normal"
+    )
     # Keyed on the agent actually running, not hardcoded to Counselor: this
     # loop serves every cloud agent, and a user-added one must not inherit
     # Counselor's memory grant just by running the same code path. Unlisted

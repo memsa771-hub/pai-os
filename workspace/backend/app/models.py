@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     Column,
     DateTime,
     Float,
@@ -990,6 +991,50 @@ class VaultFieldDefinition(Base):
     )
 
 
+class ProfileRequirement(Base):
+    """Versioned rule used to decide whether counseling may be personalized.
+
+    Student values never live here.  A row only points at canonical Vault or
+    typed-record data and supplies the neutral question to ask when it is
+    missing.
+    """
+    __tablename__ = "pai_profile_requirements"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    key = Column(Text, nullable=False)
+    tier = Column(Text, nullable=False)  # critical | important | enrichment
+    source_type = Column(Text, nullable=False)  # vault_fact | record_presence | record_field | journey_gap
+    source_key = Column(Text, nullable=False)
+    source_path = Column(Text, nullable=True)
+    selector = Column(Text, nullable=False, default="any", server_default=text("'any'"))
+    applicability = Column(JSONB, nullable=True)
+    question = Column(Text, nullable=False)
+    priority = Column(Integer, nullable=False, default=50, server_default=text("50"))
+    enabled = Column(Boolean, nullable=False, default=True, server_default=text("true"))
+    version = Column(Integer, nullable=False, default=1, server_default=text("1"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        CheckConstraint(
+            "tier IN ('critical', 'important', 'enrichment')",
+            name="ck_profile_requirement_tier",
+        ),
+        CheckConstraint(
+            "source_type IN ('vault_fact', 'record_presence', 'record_field', 'journey_gap')",
+            name="ck_profile_requirement_source_type",
+        ),
+        CheckConstraint(
+            "selector IN ('any', 'current_or_highest')",
+            name="ck_profile_requirement_selector",
+        ),
+        CheckConstraint("priority >= 0", name="ck_profile_requirement_priority"),
+        CheckConstraint("version > 0", name="ck_profile_requirement_version"),
+        Index("uq_profile_requirement_key_version", "key", "version", unique=True),
+        Index("idx_profile_requirements_enabled", "enabled"),
+    )
+
+
 class VaultFact(Base):
     """One canonical structured fact about the student, with provenance.
 
@@ -1234,12 +1279,16 @@ class ProfileIssue(Base):
     affected_id = Column(Text, nullable=True)
     summary = Column(Text, nullable=False)
     clarification_question = Column(Text, nullable=True)
+    candidate_id = Column(Text, ForeignKey("pai_memory_candidates.id", ondelete="SET NULL"), nullable=True)
     evidence = Column(JSONB, nullable=True)
     status = Column(Text, nullable=False, default="open", server_default=text("'open'"))
     resolution = Column(JSONB, nullable=True)
     created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
     resolved_at = Column(DateTime(timezone=True), nullable=True)
-    __table_args__ = (Index("idx_pai_issues_ws", "workspace_id", "status"),)
+    __table_args__ = (
+        Index("idx_pai_issues_ws", "workspace_id", "status"),
+        Index("idx_pai_issues_candidate", "candidate_id"),
+    )
 
 
 class StudentRecordRevision(Base):
@@ -1376,7 +1425,7 @@ class MemoryCandidate(Base):
     source_type = Column(Text, nullable=False, default="conversation", server_default=text("'conversation'"))
     source_event_ids = Column(JSONB, nullable=True)
     evidence = Column(JSONB, nullable=True)
-    # pending | accepted | rejected | superseded
+    # pending | needs_review | accepted | rejected | superseded
     status = Column(Text, nullable=False, default="pending", server_default=text("'pending'"))
     rejection_reason = Column(Text, nullable=True)
     reconciled_at = Column(DateTime(timezone=True), nullable=True)

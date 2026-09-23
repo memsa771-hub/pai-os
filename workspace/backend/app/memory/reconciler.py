@@ -116,6 +116,9 @@ class MemoryReconciler:
             evidence=candidate.evidence, subject_user_id=candidate.subject_user_id,
             record_id=(candidate.entities or {}).get("record_id"),
             supersedes_record_id=(candidate.entities or {}).get("supersedes_record_id"),
+            candidate_id=candidate.id,
+            force_new=(candidate.source_type == "user_explicit"
+                       and bool((candidate.entities or {}).get("force_new"))),
         )
         self.candidates.mark_accepted(candidate, record.id)
         return ReconcileResult(True, candidate.id, result_id=record.id)
@@ -159,6 +162,7 @@ class MemoryReconciler:
             source_event_id=(candidate.source_event_ids or [None])[0],
             evidence=candidate.evidence,
             subject_user_id=candidate.subject_user_id,
+            candidate_id=candidate.id,
         )
 
         # A candidate that lost its conflict, or that needs human confirmation,

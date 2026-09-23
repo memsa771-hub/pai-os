@@ -18,6 +18,7 @@ local runs still pick the file up.
 """
 
 import os
+from datetime import datetime
 from pathlib import Path
 
 
@@ -301,6 +302,15 @@ class Config:
     PAI_MEMORY_CONTEXT_ENABLED: bool = os.environ.get(
         "PAI_MEMORY_CONTEXT_ENABLED", "true"
     ).lower() in ("true", "1", "yes")
+    # Personalized-counseling completion gate. Shadow calculates and logs the
+    # policy without changing replies; "new" applies only to accounts created
+    # at/after the ISO-8601 cutoff; "all" enforces for every account.
+    PAI_PROFILE_COMPLETION_ROLLOUT_MODE: str = os.environ.get(
+        "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "shadow"
+    ).strip().lower()
+    PAI_PROFILE_COMPLETION_ROLLOUT_AT: str = os.environ.get(
+        "PAI_PROFILE_COMPLETION_ROLLOUT_AT", ""
+    ).strip()
     # Foreground retrieval runs on its own small thread pool so a stalled
     # PostgreSQL cannot block the event loop (see foreground_executor.py).
     # Threads cannot be killed, so MAX_INFLIGHT — not the pool size — is what
@@ -357,6 +367,25 @@ class Config:
 
     def validate_startup(self) -> None:
         """Reject incomplete production configuration before serving traffic."""
+        if self.PAI_PROFILE_COMPLETION_ROLLOUT_MODE not in {"off", "shadow", "new", "all"}:
+            raise RuntimeError(
+                "PAI_PROFILE_COMPLETION_ROLLOUT_MODE must be off, shadow, new, or all"
+            )
+        if (self.PAI_PROFILE_COMPLETION_ROLLOUT_MODE == "new"
+                and not self.PAI_PROFILE_COMPLETION_ROLLOUT_AT):
+            raise RuntimeError(
+                "PAI_PROFILE_COMPLETION_ROLLOUT_AT is required when rollout mode is new"
+            )
+        if (self.PAI_PROFILE_COMPLETION_ROLLOUT_MODE == "new"
+                and self.PAI_PROFILE_COMPLETION_ROLLOUT_AT):
+            try:
+                datetime.fromisoformat(
+                    self.PAI_PROFILE_COMPLETION_ROLLOUT_AT.replace("Z", "+00:00")
+                )
+            except ValueError as exc:
+                raise RuntimeError(
+                    "PAI_PROFILE_COMPLETION_ROLLOUT_AT must be an ISO-8601 datetime"
+                ) from exc
         if self.APP_ENV.lower() != "production":
             return
         if not os.environ.get("DATABASE_URL", "").strip():

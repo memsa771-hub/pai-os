@@ -76,7 +76,7 @@ PAI_ALLOWED_TOOLS = (
     # (read + manage); remember/forget are the explicit-user-command path and
     # still go through the deterministic reconciler.
     "memory.context", "vault.get", "memory.search", "memory.episodes",
-    "memory.remember", "memory.forget",
+    "memory.remember", "memory.forget", "profile.answer",
 )
 
 
@@ -494,12 +494,29 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
 # Tools (OpenAI function-calling schemas + executor)
 # ---------------------------------------------------------------------------
 
-def build_tools() -> list[dict]:
+def allowed_tools_for_mode(mode: str = "normal") -> frozenset[str]:
+    allowed = set(PAI_ALLOWED_TOOLS)
+    if mode == "collection":
+        # The completion service already supplies the one safe profile
+        # question. Withhold stored-profile reads and unrelated memory writes
+        # so collection mode cannot reconstruct personalized context through a
+        # tool call after foreground injection has been disabled.
+        allowed.difference_update({
+            "operator.delegate",
+            "memory.context", "vault.get", "memory.search", "memory.episodes",
+            "memory.remember", "memory.forget",
+        })
+    else:
+        allowed.discard("profile.answer")
+    return frozenset(allowed)
+
+
+def build_tools(mode: str = "normal") -> list[dict]:
     """Compatibility facade; schemas are owned by the shared ToolRegistry."""
     from app.tools import get_tool_registry
     from app.memory.permissions import COUNSELOR_CAPABILITIES
     return get_tool_registry().openai_tools_for_agent(
-        PAI_ALLOWED_TOOLS, granted_capabilities=COUNSELOR_CAPABILITIES,
+        allowed_tools_for_mode(mode), granted_capabilities=COUNSELOR_CAPABILITIES,
     )
 
 

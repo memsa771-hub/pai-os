@@ -12,7 +12,7 @@ from sqlalchemy import select
 from app.config import config
 from app.memory.context import StudentContext
 from app.memory.foreground import build_foreground_context
-from app.models import BackgroundJob, ExecutionRun
+from app.models import BackgroundJob, ExecutionRun, ProfileRequirement
 from app.services import cloud_agent, operator, pai
 from app.tools import ToolContext
 from scripts.counselor_eval_support import StudentSession
@@ -157,3 +157,65 @@ async def test_result_is_interpreted_by_counselor_and_does_not_create_student_fa
             assert explain.call_args.args[2]["result"]["final_message"] == "Detailed evidence and program constraints"
             assert db.execute(select(BackgroundJob)).scalars().all() == []
             assert student.transcript[-1]["content"].startswith("Given your budget")
+
+
+@pytest.mark.asyncio
+async def test_incomplete_profile_still_answers_but_collection_tools_are_enforced():
+    with StudentSession() as student:
+        with student.factory() as db:
+            db.add(ProfileRequirement(
+                key="education.history", tier="critical", source_type="record_presence",
+                source_key="education", selector="any",
+                question="What is your current or highest qualification?",
+                priority=100, version=1, enabled=True,
+            ))
+            db.commit()
+        received = []
+
+        async def model(**kwargs):
+            received.append(kwargs)
+            return {"role": "assistant", "content": "IELTS is an English-language proficiency test."}
+
+        with patch.object(cloud_agent, "chat_completion_tools", model), \
+                patch.object(config, "PAI_API_KEY", "test"), \
+                patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", True), \
+                patch.object(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "all"), \
+                patch("app.memory.foreground.build_foreground_context", new_callable=AsyncMock) as memory:
+            await student.turn("What is IELTS?")
+
+        tool_names = {tool["function"]["name"] for tool in received[0]["tools"]}
+        assert "operator__delegate" not in tool_names
+        assert "profile__answer" in tool_names
+        assert not ({"memory__context", "vault__get", "memory__search", "memory__episodes",
+                     "memory__remember", "memory__forget"} & tool_names)
+        memory.assert_not_awaited()
+        assert "COLLECTION MODE" in received[0]["system_prompt"]
+        assert student.transcript[-1]["content"].startswith("IELTS is")
+
+
+@pytest.mark.asyncio
+async def test_operator_result_cannot_bypass_collection_gate():
+    with StudentSession() as student:
+        with student.factory() as db:
+            db.add(ProfileRequirement(
+                key="education.history", tier="critical", source_type="record_presence",
+                source_key="education", selector="any",
+                question="What is your current or highest qualification?",
+                priority=100, version=1, enabled=True,
+            ))
+            run = ExecutionRun(
+                workspace_id=student.workspace_id, requested_by="openagents:pai",
+                objective="Rank universities for this student", status="completed",
+                result={"final_message": "Secret personalized ranking", "observations": []},
+            )
+            db.add(run)
+            db.commit()
+            with patch.object(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "all"), \
+                    patch("app.services.counselor_handoff.explain_result", AsyncMock()) as explain:
+                await operator._post_result(
+                    db, student.workspace_id, "channel/pai-counselor", run.id,
+                    "completed", "Secret personalized ranking",
+                )
+        explain.assert_not_awaited()
+        assert "Secret personalized ranking" not in student.transcript[-1]["content"]
+        assert "current or highest qualification" in student.transcript[-1]["content"]

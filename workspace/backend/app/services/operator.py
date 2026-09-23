@@ -285,30 +285,37 @@ async def _post_result(
         db.rollback()
         run = db.get(ExecutionRun, run_id)
         if run is not None and str(run.workspace_id) == workspace_id and run.result:
-            handoff = {
-                "objective": run.objective, "constraints": run.constraints,
-                "status": status, "result": run.result,
-                "verification": run.verification, "missing": run.missing,
-                "approval_required_for": run.approval_required_for,
-            }
-            history = _build_conversation_context(
-                db, workspace_id, channel_target, pai.PAI_AGENT_NAME,
-                exclude_event_id="", max_chars=12000,
+            from app.memory.profile_completion import (
+                ProfileCompletionService, collection_hold_message,
             )
-            db.rollback()
-            try:
-                from app.services.counselor_handoff import explain_result
-                explained = await explain_result(workspace_id, history, handoff)
-                if explained:
-                    message = explained
-            except Exception:
-                # Persisted evidence remains available through operator.status.
-                # Do not send raw internal output as if Counselor interpreted it.
-                logger.exception("operator: counselor handoff failed for %s", run_id)
-                message = (
-                    "The background work has returned, but I couldn't prepare its explanation. "
-                    "Ask me to review the findings and I'll pick up from the saved result."
+            completion = ProfileCompletionService(db).evaluate(workspace_id)
+            if completion["counselorMode"] == "collection":
+                message = collection_hold_message(completion)
+            else:
+                handoff = {
+                    "objective": run.objective, "constraints": run.constraints,
+                    "status": status, "result": run.result,
+                    "verification": run.verification, "missing": run.missing,
+                    "approval_required_for": run.approval_required_for,
+                }
+                history = _build_conversation_context(
+                    db, workspace_id, channel_target, pai.PAI_AGENT_NAME,
+                    exclude_event_id="", max_chars=12000,
                 )
+                db.rollback()
+                try:
+                    from app.services.counselor_handoff import explain_result
+                    explained = await explain_result(workspace_id, history, handoff)
+                    if explained:
+                        message = explained
+                except Exception:
+                    # Persisted evidence remains available through operator.status.
+                    # Do not send raw internal output as if Counselor interpreted it.
+                    logger.exception("operator: counselor handoff failed for %s", run_id)
+                    message = (
+                        "The background work has returned, but I couldn't prepare its explanation. "
+                        "Ask me to review the findings and I'll pick up from the saved result."
+                    )
         await _post_response(
             db, workspace_id, channel_target, pai.PAI_AGENT_NAME, message, depth=0,
             message_type="operator_result",
@@ -462,7 +469,17 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
         run = db.execute(query.limit(1)).scalar_one_or_none()
         if not run:
             return {"ok": True, "data": {"status": "none"}}
-        return {"ok": True, "data": serialize_run(run)}
+        data = serialize_run(run)
+        if run.result:
+            from app.memory.profile_completion import ProfileCompletionService
+
+            completion = ProfileCompletionService(db).evaluate(ctx.workspace_id)
+            if completion["counselorMode"] == "collection":
+                data["result"] = None
+                data["verification"] = None
+                data["result_withheld"] = True
+                data["next_requirement"] = completion.get("nextRequirement")
+        return {"ok": True, "data": data}
     finally:
         db.close()
 

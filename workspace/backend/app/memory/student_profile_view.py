@@ -237,7 +237,8 @@ class StudentProfileView:
         if evidence.get("field_key"):
             if not self._safe_field_key(evidence["field_key"]):
                 return None
-            return {"proposed": evidence.get("proposed_value")}
+            return {"current": evidence.get("current_value"),
+                    "proposed": evidence.get("proposed_value")}
         if evidence.get("record_type") in ENTITY_MODELS:
             return {"current": evidence.get("current"), "proposed": evidence.get("proposed")}
         return None

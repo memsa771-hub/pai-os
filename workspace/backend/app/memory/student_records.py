@@ -31,6 +31,12 @@ class RecordNeedsReview(MemoryDataError):
     """A proposal was retained for review without changing canonical values."""
 
 
+class AmbiguousRecordMatch(RecordNeedsReview):
+    def __init__(self, record_ids: list[str]):
+        super().__init__("Several existing records match; confirm this is a separate record")
+        self.record_ids = record_ids
+
+
 def _same(left, right):
     if isinstance(left, str) and isinstance(right, str):
         return " ".join(left.casefold().split()) == " ".join(right.casefold().split())
@@ -94,7 +100,7 @@ class StudentRecordService:
                 continue
             matches.append(row)
         if len(matches) > 1:
-            raise RecordNeedsReview("Several existing records match; specify the record being updated")
+            raise AmbiguousRecordMatch([row.id for row in matches])
         return matches[0] if matches else None
 
     def _revision(self, workspace_id, kind, row, before, source_type, claim_origin, capture_method, evidence):
@@ -105,13 +111,37 @@ class StudentRecordService:
     def apply(self, workspace_id: str, kind: str, values: dict, *,
               source_type: str, claim_origin: str, capture_method: str,
               evidence: dict | None = None, subject_user_id: str | None = None,
-              record_id: str | None = None, supersedes_record_id: str | None = None):
+              record_id: str | None = None, supersedes_record_id: str | None = None,
+              candidate_id: str | None = None, force_new: bool = False):
         values = validate_record(kind, values, partial=bool(record_id))
         # Serialize even first writes where there is no entity row to lock.
         owner = self.db.execute(select(Workspace).where(Workspace.id == workspace_id).with_for_update()).scalar_one_or_none()
         if owner is None or (subject_user_id is not None and str(owner.owner_user_id) != str(subject_user_id)):
             raise MemoryDataError("Student workspace does not exist or subject does not match")
-        current = self.get(workspace_id, kind, record_id) if record_id else self._match(workspace_id, kind, values)
+        try:
+            if force_new:
+                current = None
+            elif record_id:
+                current = self.get(workspace_id, kind, record_id)
+            else:
+                current = self._match(workspace_id, kind, values)
+        except AmbiguousRecordMatch as exc:
+            self.db.add(ProfileIssue(
+                workspace_id=workspace_id, subject_user_id=subject_user_id,
+                candidate_id=candidate_id, issue_type="conflicting_record",
+                summary=f"Ambiguous {kind.replace('_', ' ')} information",
+                severity="blocking", affected_type=kind,
+                clarification_question=(
+                    f"Should this be added as a separate {kind.replace('_', ' ')} record?"
+                ),
+                evidence={"record_type": kind, "proposed": values,
+                          "matching_record_ids": exc.record_ids,
+                          "force_new_on_accept": True,
+                          "proposed_source_type": source_type,
+                          "proposed_evidence": evidence},
+            ))
+            self.db.flush()
+            raise exc
         if record_id and current is None:
             raise MemoryDataError("Student record does not belong to this workspace or is inactive")
         before = self._values(kind, current) if current else None
@@ -130,15 +160,19 @@ class StudentRecordService:
                 raise MemoryDataError("Only an existing goal in the same journey can be superseded")
         changed = current and _conflicts(before, values)
         if changed and source_type != "user_explicit" and (
-                source_type == "document" or current.source_type == "document" or
+                source_type in ("document", "agent", "system") or
+                current.source_type == "document" or
                 current.verification_status in ("document_supported", "externally_verified", "verified") or
                 (source_type == "conversation" and not _explicit_correction(evidence))):
             self.db.add(ProfileIssue(workspace_id=workspace_id, subject_user_id=subject_user_id,
+                candidate_id=candidate_id,
                 issue_type="conflicting_record", summary=f"Conflicting {kind.replace('_', ' ')} information",
                 severity="blocking", affected_type=kind, affected_id=current.id,
                 clarification_question=f"Which {kind.replace('_', ' ')} information is correct?",
                 evidence={"record_type": kind, "record_id": current.id, "current": before,
-                          "proposed": values, "current_evidence": current.evidence, "proposed_evidence": evidence}))
+                          "proposed": values, "current_source_type": current.source_type,
+                          "proposed_source_type": source_type,
+                          "current_evidence": current.evidence, "proposed_evidence": evidence}))
             self.db.flush()
             raise RecordNeedsReview("The new evidence conflicts with an existing record")
         if current:

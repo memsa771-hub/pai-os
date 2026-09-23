@@ -24,6 +24,7 @@ import {
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { DetailHeader } from '@/components/layout/app-header';
 import { useLayout } from '@/components/layout/layout-context';
 import { useWorkspace } from '@/lib/workspace-context';
@@ -294,13 +295,19 @@ function IssuesBlock({
 }: { profile: StudentProfile; onResolved: () => void }) {
   const t = useT();
   const [busy, setBusy] = React.useState<string | null>(null);
+  const [different, setDifferent] = React.useState<{ issueId: string; value: string } | null>(null);
   if (!profile.issues.length) return null;
 
-  const resolve = async (id: string) => {
+  const resolve = async (
+    id: string,
+    action: 'keep_current' | 'accept_proposed' | 'provide_new',
+    value?: unknown,
+  ) => {
     setBusy(id);
     try {
-      await workspaceApi.resolveProfileIssue(id, t('studentProfile.resolveNote'));
+      await workspaceApi.resolveProfileIssue(id, action, value);
       toast.success(t('studentProfile.resolved'));
+      setDifferent(null);
       onResolved();
     } catch (e) {
       toast.error(extractMessage(e) || t('studentProfile.saveFailed'));
@@ -326,7 +333,7 @@ function IssuesBlock({
           would read as a different product's alert. */}
       <div className="divide-y divide-border/60 border-t border-border/60">
         {profile.issues.map((issue) => (
-          <div key={issue.id} className="flex items-start gap-3 py-2.5">
+          <div key={issue.id} className="flex flex-wrap items-start gap-3 py-2.5">
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <span className="text-sm font-medium">{issue.summary}</span>
@@ -341,16 +348,81 @@ function IssuesBlock({
                   {issue.clarificationQuestion}
                 </p>
               )}
+              {different?.issueId === issue.id && (
+                <div className="mt-3 max-w-xl space-y-2">
+                  <label className="text-xs font-medium" htmlFor={`issue-value-${issue.id}`}>
+                    {t('studentProfile.differentValue')}
+                  </label>
+                  <Textarea
+                    id={`issue-value-${issue.id}`}
+                    value={different.value}
+                    rows={3}
+                    disabled={busy === issue.id}
+                    placeholder={t('studentProfile.differentValueHint')}
+                    onChange={(event) => setDifferent({
+                      issueId: issue.id, value: event.target.value,
+                    })}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      size="sm"
+                      disabled={busy === issue.id || !different.value.trim()}
+                      onClick={() => {
+                        const raw = different.value.trim();
+                        let value: unknown = raw;
+                        try { value = JSON.parse(raw); } catch { /* plain text is valid */ }
+                        void resolve(issue.id, 'provide_new', value);
+                      }}
+                    >
+                      {t('studentProfile.save')}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      disabled={busy === issue.id}
+                      onClick={() => setDifferent(null)}
+                    >
+                      {t('studentProfile.cancel')}
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 shrink-0 px-2 text-xs"
-              disabled={busy === issue.id}
-              onClick={() => resolve(issue.id)}
-            >
-              {t('studentProfile.resolve')}
-            </Button>
+            <div className="flex shrink-0 flex-wrap gap-1">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={busy === issue.id}
+                onClick={() => resolve(issue.id, 'keep_current')}
+              >
+                {t('studentProfile.keepCurrent')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={busy === issue.id}
+                onClick={() => resolve(issue.id, 'accept_proposed')}
+              >
+                {t('studentProfile.useProposed')}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                disabled={busy === issue.id}
+                onClick={() => {
+                  const proposed = issue.values?.proposed ?? '';
+                  const value = typeof proposed === 'string'
+                    ? proposed
+                    : JSON.stringify(proposed, null, 2) ?? '';
+                  setDifferent({ issueId: issue.id, value });
+                }}
+              >
+                {t('studentProfile.useDifferent')}
+              </Button>
+            </div>
           </div>
         ))}
       </div>
