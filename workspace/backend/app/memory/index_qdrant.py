@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 # imported from retriever.py to keep the index layer free of that dependency.
 KIND_SEMANTIC = "semantic_memory"
 KIND_EPISODE = "episode"
+# Derived chunks of an uploaded student document (app/documents/retrieval.py).
+# Shares this index rather than standing up a second vector stack: workspace
+# isolation, dimension checks and the hybrid arms are already enforced here.
+# Never canonical — rebuildable from the stored DocumentArtifact.
+KIND_DOCUMENT_CHUNK = "document_chunk"
 
 DENSE_VECTOR = "dense"
 SPARSE_VECTOR = "sparse"
@@ -267,6 +272,10 @@ class QdrantMemoryIndex(MemoryIndex):
         from qdrant_client import models
 
         filters = filters or {}
+        # Document chunks are NOT in the default set: memory retrieval must
+        # keep returning memories, and document search asks for its kind
+        # explicitly. Adding it to the default would quietly put document text
+        # into every foreground context block.
         kinds = tuple(kinds) if kinds else (KIND_SEMANTIC, KIND_EPISODE)
 
         must = [models.FieldCondition(
@@ -294,6 +303,10 @@ class QdrantMemoryIndex(MemoryIndex):
             branches.append(branch(
                 KIND_EPISODE, "event_type", filters.get("event_type"),
             ))
+        if KIND_DOCUMENT_CHUNK in kinds:
+            branches.append(branch(
+                KIND_DOCUMENT_CHUNK, "document_type", filters.get("document_type"),
+            ))
 
         if len(branches) == 1:
             # Single kind: inline its conditions rather than wrapping one
@@ -308,7 +321,7 @@ class QdrantMemoryIndex(MemoryIndex):
         # Any remaining filter keys are kind-agnostic (e.g. status) and AND
         # normally.
         for key, value in filters.items():
-            if key in ("memory_type", "event_type") or value is None:
+            if key in ("memory_type", "event_type", "document_type") or value is None:
                 continue
             match = (
                 models.MatchAny(any=list(value))

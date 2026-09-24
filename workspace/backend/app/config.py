@@ -207,6 +207,20 @@ class Config:
     MEMORY_EXTRACTOR_API_KEY: str = os.environ.get("MEMORY_EXTRACTOR_API_KEY", "")
     MEMORY_EXTRACTOR_BASE_URL: str = os.environ.get("MEMORY_EXTRACTOR_BASE_URL", "")
 
+    # ---- Student documents (app/documents/) -------------------------------
+    # Document understanding falls back to the PAI_* model configuration, so
+    # uploading a transcript works with no extra setup.
+    DOCUMENT_EXTRACTOR_MODEL: str = os.environ.get("DOCUMENT_EXTRACTOR_MODEL", "")
+    DOCUMENT_EXTRACTOR_API_KEY: str = os.environ.get("DOCUMENT_EXTRACTOR_API_KEY", "")
+    DOCUMENT_EXTRACTOR_BASE_URL: str = os.environ.get("DOCUMENT_EXTRACTOR_BASE_URL", "")
+    # OCR for SCANNED PDFs only; a digital PDF never reaches it. Disabling it
+    # is a supported state: a scanned upload is stored and marked `partial`
+    # rather than failing, and can be reprocessed once OCR is available.
+    DOCUMENT_OCR_ENABLED: bool = os.environ.get("DOCUMENT_OCR_ENABLED", "true").lower() not in ("0", "false", "no")
+    DOCUMENT_OCR_MODEL: str = os.environ.get("DOCUMENT_OCR_MODEL", "")
+    DOCUMENT_OCR_API_KEY: str = os.environ.get("DOCUMENT_OCR_API_KEY", "")
+    DOCUMENT_OCR_BASE_URL: str = os.environ.get("DOCUMENT_OCR_BASE_URL", "")
+
     # ---- Memory retrieval index (app/memory/index_qdrant.py) --------------
     # Qdrant is a DERIVED index. Losing it costs a reindex, never data.
     # Unset backend -> NullMemoryIndex, and retrieval degrades to the existing
