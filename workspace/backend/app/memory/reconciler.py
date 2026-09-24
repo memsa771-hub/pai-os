@@ -31,6 +31,44 @@ logger = logging.getLogger(__name__)
 # instruction bypasses it — see `_min_confidence_for`.
 DEFAULT_MIN_CONFIDENCE = 0.35
 
+# Document authority (who is asserting the document's contents — set by the
+# document pipeline in candidate.evidence["authority"]) -> canonical
+# provenance. `source_type="document"` alone does NOT mean institution-issued:
+# a CV is the student's own claim, a transcript is a registrar's. Mapping on
+# authority is what stops a self-authored document carrying a verified
+# document's weight. A document with no recorded authority is `unknown`,
+# never assumed to be official.
+_DOCUMENT_PROVENANCE = {
+    # authority:            (claim_origin,               verification_status)
+    "institution_issued":   ("institution_document",     "document_supported"),
+    "test_provider_issued": ("test_provider_document",   "document_supported"),
+    "government_issued":    ("government_document",      "document_supported"),
+    "third_party_authored": ("third_party_document",     "extracted"),
+    "student_authored":     ("student_document",         "self_reported"),
+    "agent_generated":      ("agent_generated_document", "extracted"),
+}
+_UNKNOWN_DOCUMENT_PROVENANCE = ("unknown_document", "extracted")
+
+
+def provenance_for(candidate: MemoryCandidate) -> tuple[str, str, Optional[str]]:
+    """(claim_origin, capture_method, verification_status) for a candidate.
+
+    `verification_status` is None when the record service's own default
+    applies (non-document sources).
+    """
+    source = candidate.source_type
+    if source == "document":
+        authority = str((candidate.evidence or {}).get("authority") or "")
+        origin, verification = _DOCUMENT_PROVENANCE.get(authority, _UNKNOWN_DOCUMENT_PROVENANCE)
+        return origin, "document_extraction", verification
+    if source in ("conversation", "user_explicit"):
+        return (
+            "student",
+            "explicit_correction" if source == "user_explicit" else "conversation_extraction",
+            None,
+        )
+    return "agent_inference", "agent_proposal", None
+
 
 @dataclass(frozen=True)
 class ReconcileResult:
@@ -103,16 +141,13 @@ class MemoryReconciler:
         values = self._unwrap(candidate.proposed_value)
         if not isinstance(values, dict):
             return self._reject(candidate, "student record requires an object")
+        claim_origin, capture_method, verification = provenance_for(candidate)
         record = self.records.apply(
             candidate.workspace_id, candidate.key or "", values,
             source_type=candidate.source_type,
-            claim_origin=("institution_document" if candidate.source_type == "document" else
-                          "student" if candidate.source_type in ("conversation", "user_explicit") else
-                          "agent_inference"),
-            capture_method=("document_extraction" if candidate.source_type == "document" else
-                            "conversation_extraction" if candidate.source_type == "conversation" else
-                            "explicit_correction" if candidate.source_type == "user_explicit" else
-                            "agent_proposal"),
+            claim_origin=claim_origin,
+            capture_method=capture_method,
+            verification_status=verification,
             evidence=candidate.evidence, subject_user_id=candidate.subject_user_id,
             record_id=(candidate.entities or {}).get("record_id"),
             supersedes_record_id=(candidate.entities or {}).get("supersedes_record_id"),
@@ -153,7 +188,10 @@ class MemoryReconciler:
 
         # Validates against the field definition; raises VaultFieldError, which
         # `reconcile` converts into a recorded rejection.
+        claim_origin, capture_method, _ = provenance_for(candidate)
         result = self.vault.apply_fact(
+            claim_origin=claim_origin,
+            capture_method=capture_method,
             workspace_id=candidate.workspace_id,
             field_key=candidate.key,
             value=value,
@@ -164,6 +202,16 @@ class MemoryReconciler:
             subject_user_id=candidate.subject_user_id,
             candidate_id=candidate.id,
         )
+
+        # Independent agreement: canonical state is unchanged, but the claim is
+        # now better evidenced. Accepted (it is not a lost conflict) and linked
+        # to the existing fact rather than to a duplicate row.
+        if result.outcome is VaultOutcome.CORROBORATED:
+            self.candidates.mark_accepted(candidate, result.fact.id)
+            return ReconcileResult(
+                True, candidate.id, result_id=result.fact.id,
+                outcome=VaultOutcome.CORROBORATED.value,
+            )
 
         # A candidate that lost its conflict, or that needs human confirmation,
         # did NOT become canonical — marking it accepted would claim a write

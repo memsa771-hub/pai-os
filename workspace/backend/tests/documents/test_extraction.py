@@ -86,6 +86,25 @@ class TestEvidenceEnforcement:
             "confidence": 0.9, "quote": "University of Example", "locator": "p9",
         }) is None
 
+    def test_bracketed_locator_as_rendered_in_the_prompt_is_accepted(self):
+        # Seen in a real gpt-5-mini run: the model echoed "[p1]" exactly as the
+        # document is rendered, and every finding was discarded.
+        finding = _validate({
+            "candidate_type": "student_record", "key": "education",
+            "proposed_value": {"qualification_name": "BS Computer Science"},
+            "confidence": 0.9, "quote": "University of Example", "locator": "[p1]",
+        })
+
+        assert finding is not None
+        assert finding.evidence["locator"] == "p1"
+
+    def test_bracketed_invented_locator_is_still_dropped(self):
+        assert _validate({
+            "candidate_type": "student_record", "key": "education",
+            "proposed_value": {"qualification_name": "BS Computer Science"},
+            "confidence": 0.9, "quote": "University of Example", "locator": "[p9]",
+        }) is None
+
     def test_missing_quote_is_dropped(self):
         assert _validate({
             "candidate_type": "student_record", "key": "education",

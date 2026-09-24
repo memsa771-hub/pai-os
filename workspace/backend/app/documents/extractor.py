@@ -36,7 +36,9 @@ from .untrusted import DOCUMENT_RULES, DOCUMENT_RULES_TRAILER, render_untrusted_
 
 logger = logging.getLogger(__name__)
 
-EXTRACTOR_VERSION = "1"
+#: Bump when the prompt or validation changes meaning: an artifact extracted
+#: under an older version is then eligible for deliberate re-extraction.
+EXTRACTOR_VERSION = "3"
 
 CANDIDATE_TYPES = ("vault_fact", "student_record", "semantic_memory", "episode")
 MAX_CANDIDATES = 40          # a transcript legitimately carries many facts
@@ -96,12 +98,23 @@ guessed institution, date, score or grading scale. A missing value is
 recoverable — PAI can ask the student. A fabricated one silently corrupts
 their profile.
 
+Set `canonical_level` when the qualification's own name states it — "BS",
+"BSc", "Bachelor of" -> bachelor; "MS", "MSc", "MA", "Master of" -> master;
+"PhD", "Doctor of" -> doctorate. That is reading the document, not guessing.
+Leave it out only when the name genuinely does not say.
+
 Do NOT infer educational history that is not evidenced. A Master's transcript
 is not evidence of a Bachelor's degree, even though one normally precedes the
 other. Propose only what the document itself supports.
 
 Do NOT copy the whole document into memory. A transcript's fifty courses are
-not fifty memories. Use:
+not fifty memories — and not fifty records of ANY kind. Individual course
+names, marks and grades are never achievements, skills, projects or
+episodes. They stay in the document, where they remain searchable. What a
+transcript contributes to the profile is the qualification itself and its
+OVERALL result (CGPA/percentage and scale). An `achievement` is a distinction
+the document names as one: an award, prize, honour, dean's list, medal or
+scholarship — not a good grade in a course. Use:
 
   student_record  identified qualifications, test attempts, work, projects,
                   certifications, achievements, applications, visas, sponsors
@@ -109,7 +122,13 @@ not fifty memories. Use:
   semantic_memory ONLY durable context that matters beyond this document
                   (e.g. a motivation stated in an SOP). Not a summary of the
                   document, and not one entry per sentence.
-  episode         a meaningful dated event the document confirms
+  episode         a decision or milestone in the student's journey that the
+                  document confirms — an admission offer, a visa decision, a
+                  scholarship award, a completed degree. NOT a list of results:
+                  semester grades, course marks and score tables are never
+                  episodes. They stay in the document, where they remain
+                  searchable, and belong on the education record only as its
+                  overall result.
 
 Use the supplied RECORD SCHEMAS as the authoritative field list, and the
 VAULT FIELDS list for scalar keys (copy a key EXACTLY; never invent one).
@@ -287,6 +306,12 @@ def _validate_finding(
         return drop("quote does not appear in the document")
 
     locator = raw.get("locator")
+    if isinstance(locator, str):
+        # Models copy the marker as rendered in the prompt ("[p1]") about as
+        # often as the bare locator ("p1"). Both name the same block; strip the
+        # rendering only. The result is still checked against the real parsed
+        # locators below, so an invented page ("[p9]") is still rejected.
+        locator = locator.strip().strip("[]").strip()
     if not isinstance(locator, str) or locator not in locators:
         # An invented page number is as damaging as an invented quote: it
         # makes a fabricated claim look verifiable.

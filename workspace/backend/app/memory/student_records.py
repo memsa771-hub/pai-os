@@ -56,6 +56,15 @@ def _conflicts(previous, patch):
         else not _same(previous[key], value)) for key, value in patch.items())
 
 
+#: Higher is stronger. Corroboration may raise a record's standing, never
+#: lower it — a CV agreeing with a transcript-backed degree must not demote it.
+_VERIFICATION_RANK = {
+    "self_reported": 0, "extracted": 1, "document_supported": 2,
+    "externally_verified": 3, "verified": 3,
+}
+MAX_CORROBORATIONS = 10
+
+
 def _explicit_correction(evidence):
     quote = str((evidence or {}).get("quote") or "").casefold()
     return any(marker in quote for marker in ("actually", "correction", "correct that", "i changed", "now ", "instead"))
@@ -112,7 +121,8 @@ class StudentRecordService:
               source_type: str, claim_origin: str, capture_method: str,
               evidence: dict | None = None, subject_user_id: str | None = None,
               record_id: str | None = None, supersedes_record_id: str | None = None,
-              candidate_id: str | None = None, force_new: bool = False):
+              candidate_id: str | None = None, force_new: bool = False,
+              verification_status: str | None = None):
         values = validate_record(kind, values, partial=bool(record_id))
         # Serialize even first writes where there is no entity row to lock.
         owner = self.db.execute(select(Workspace).where(Workspace.id == workspace_id).with_for_update()).scalar_one_or_none()
@@ -189,9 +199,22 @@ class StudentRecordService:
                 source_type=source_type, claim_origin=claim_origin, capture_method=capture_method,
                 status="active", **merged)
             self.db.add(row)
-        row.evidence = evidence or row.evidence
-        if current is None or merged != before:
-            row.verification_status = "extracted" if source_type in ("document", "agent", "system") else "self_reported"
+        default_verification = (
+            "extracted" if source_type in ("document", "agent", "system") else "self_reported"
+        )
+        if current is not None and merged == before and source_type == "document":
+            # Pure corroboration: a document confirms the record exactly as it
+            # stands. Keep the record's own evidence (who first told us) and
+            # append this document as supporting evidence, instead of the old
+            # behaviour of overwriting the original provenance.
+            self._corroborate(row, evidence)
+            proposed = verification_status or default_verification
+            if _VERIFICATION_RANK.get(proposed, 0) > _VERIFICATION_RANK.get(row.verification_status, 0):
+                row.verification_status = proposed
+        else:
+            row.evidence = evidence or row.evidence
+            if current is None or merged != before:
+                row.verification_status = verification_status or default_verification
         self.db.flush()
         if before != merged or evidence:
             self._revision(workspace_id, kind, row, before, source_type, claim_origin, capture_method, evidence)
@@ -201,6 +224,24 @@ class StudentRecordService:
             self._revision(workspace_id, "goal", old_goal, old_before, source_type, claim_origin, capture_method, evidence)
         self.db.flush()
         return row
+
+    def _corroborate(self, row, evidence) -> None:
+        """Append independent supporting evidence without touching values."""
+        if not evidence:
+            return
+        entry = {k: evidence[k] for k in (
+            "file_id", "locator", "quote", "authority", "document_type",
+        ) if evidence.get(k) is not None}
+        if not entry:
+            return
+        existing = dict(row.evidence or {})
+        corroborations = list(existing.get("corroborations") or [])
+        key = (entry.get("file_id"), entry.get("locator"))
+        if any((c.get("file_id"), c.get("locator")) == key for c in corroborations):
+            return
+        corroborations.append(entry)
+        existing["corroborations"] = corroborations[-MAX_CORROBORATIONS:]
+        row.evidence = existing  # reassigned so the JSONB change is detected
 
     def snapshot(self, workspace_id: str, kinds=None, limit: int | None = None) -> dict:
         return {kind: [{**self._values(kind, record), "id": record.id,

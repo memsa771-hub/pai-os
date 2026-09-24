@@ -63,6 +63,14 @@ class VaultOutcome(str, Enum):
     SUPERSEDED = "superseded"      # replaced a prior value, which is retained
     RETAINED = "retained"          # prior value won the conflict; nothing written
     NEEDS_REVIEW = "needs_review"  # policy requires explicit confirmation
+    # A document independently states the value already on record. Value
+    # unchanged, no duplicate row, no conflict — the evidence is appended to
+    # the existing fact so "how do we know?" can name both sources.
+    CORROBORATED = "corroborated"
+
+#: How many independent corroborations one fact keeps. Bounded so a student
+#: re-uploading the same transcript cannot grow a row without limit.
+MAX_CORROBORATIONS = 10
 
 
 @dataclass(frozen=True)
@@ -213,6 +221,17 @@ class VaultService:
         policy = definition.conflict_policy or "latest_wins"
         current = self.get_fact(workspace_id, field_key)
 
+        # A document agreeing with what is already canonical is corroboration,
+        # not a new value. Without this branch the existing policy either
+        # superseded the fact with an identical duplicate row, or — against a
+        # student-stated value — reported the agreement as a LOST CONFLICT.
+        # Scoped to documents: conversation restatements keep their existing
+        # behaviour.
+        if (current is not None and source_type == "document"
+                and _unwrap(current.value) == value):
+            self._corroborate(current, evidence)
+            return VaultWriteResult(VaultOutcome.CORROBORATED, current)
+
         # An institutional document disagreeing with self-report is evidence
         # of a conflict, not authority to silently replace the student's claim.
         quote = str((evidence or {}).get("quote") or "").casefold()
@@ -317,6 +336,31 @@ class VaultService:
         return VaultWriteResult(
             VaultOutcome.SUPERSEDED if superseded else VaultOutcome.CREATED, fact
         )
+
+    def _corroborate(self, fact: VaultFact, evidence: Optional[dict]) -> None:
+        """Append independent supporting evidence to an existing fact.
+
+        The fact's own evidence (who first told us) is left intact; this only
+        adds "and a document says so too". Deduplicated by file+locator so a
+        reprocessed document does not count twice.
+        """
+        if not evidence:
+            return
+        entry = {k: evidence[k] for k in (
+            "file_id", "locator", "quote", "authority", "document_type",
+        ) if evidence.get(k) is not None}
+        if not entry:
+            return
+        existing = dict(fact.evidence or {})
+        corroborations = list(existing.get("corroborations") or [])
+        key = (entry.get("file_id"), entry.get("locator"))
+        if any((c.get("file_id"), c.get("locator")) == key for c in corroborations):
+            return
+        corroborations.append(entry)
+        existing["corroborations"] = corroborations[-MAX_CORROBORATIONS:]
+        # Reassigned, not mutated in place, so the JSONB change is detected.
+        fact.evidence = existing
+        self.db.flush()
 
     def retract_fact(self, workspace_id: str, field_key: str) -> int:
         """Mark a field's active facts retracted ("that's wrong, drop it").
