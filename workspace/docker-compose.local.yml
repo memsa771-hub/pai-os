@@ -7,6 +7,13 @@ services:
       PUBLIC_API_BASE: http://localhost:8000
       WORKSPACE_ENDPOINT: http://localhost:8000
       FILE_STORAGE_BACKEND: local
+      FILE_STORAGE_PATH: /data/files
+    # Local uploads live on a named volume shared with the worker. Without it
+    # the default path is /tmp inside THIS container: files vanish on every
+    # recreate, and the worker (a separate container) can never read them, so
+    # no uploaded document is ever parsed. Production uses S3 and is unaffected.
+    volumes:
+      - local_files:/data/files
     ports:
       - "127.0.0.1:8000:8000"
 
@@ -14,6 +21,9 @@ services:
     environment:
       APP_ENV: development
       FILE_STORAGE_BACKEND: local
+      FILE_STORAGE_PATH: /data/files
+    volumes:
+      - local_files:/data/files
 
   frontend:
     build:
@@ -25,3 +35,6 @@ services:
   caddy:
     ports:
       - "127.0.0.1:8080:80"
+
+volumes:
+  local_files:
