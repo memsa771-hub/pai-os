@@ -173,6 +173,10 @@ export const messages = {
   },
 
   chat: {
+    documentReading: 'Reading document…',
+    documentUnderstanding: 'Adding to your profile…',
+    documentDone: 'Added to your profile',
+    documentFailed: 'Couldn’t read this file — try uploading it again',
     offlineAllAgents: 'No agent in this thread is online — messages you send now will be answered when an agent reconnects.',
     offlineSomeAgents: 'Offline agents won’t respond until reconnected:',
     noRoutinesTitle: 'No routines yet',

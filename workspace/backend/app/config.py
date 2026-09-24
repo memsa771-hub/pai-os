@@ -213,6 +213,9 @@ class Config:
     DOCUMENT_EXTRACTOR_MODEL: str = os.environ.get("DOCUMENT_EXTRACTOR_MODEL", "")
     DOCUMENT_EXTRACTOR_API_KEY: str = os.environ.get("DOCUMENT_EXTRACTOR_API_KEY", "")
     DOCUMENT_EXTRACTOR_BASE_URL: str = os.environ.get("DOCUMENT_EXTRACTOR_BASE_URL", "")
+    # The student waits on this call. Measured on a real CV with gpt-5-mini:
+    # medium ~70s, low ~26s with the same core records. Empty = model default.
+    DOCUMENT_EXTRACTOR_REASONING_EFFORT: str = os.environ.get("DOCUMENT_EXTRACTOR_REASONING_EFFORT", "low")
     # OCR for SCANNED PDFs only; a digital PDF never reaches it. Disabling it
     # is a supported state: a scanned upload is stored and marked `partial`
     # rather than failing, and can be reprocessed once OCR is available.

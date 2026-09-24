@@ -15,6 +15,21 @@
 
 export const DOCUMENT_EXTENSIONS = ['pdf', 'docx'] as const;
 
+/** Person-facing processing stage, as reported by GET /v1/files/{id}/info. */
+export type DocumentStage = 'reading' | 'understanding' | 'done' | 'failed' | 'unsupported';
+
+/** Stages that will not change on their own — polling can stop. */
+export const SETTLED_DOCUMENT_STAGES: readonly DocumentStage[] = ['done', 'failed', 'unsupported'];
+
+/** True for a chat attachment that goes through the document pipeline. */
+export function isDocumentAttachment(filename: string, contentType: string): boolean {
+  const base = filename.split('/').pop() ?? '';
+  const dot = base.lastIndexOf('.');
+  const extension = dot > 0 ? base.slice(dot + 1).toLowerCase() : '';
+  return (DOCUMENT_EXTENSIONS as readonly string[]).includes(extension)
+    || (DOCUMENT_MIME_TYPES as readonly string[]).includes(contentType);
+}
+
 export const DOCUMENT_MIME_TYPES = [
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',

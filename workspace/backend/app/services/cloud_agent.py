@@ -257,14 +257,16 @@ async def _invoke_assistant_agent(
     # snake_case, and both are in the wild.
     from app.documents.attachments import (
         attachment_prompt_block, describe_attachments, normalize_attachments,
+        wait_until_readable,
     )
 
     attachments = normalize_attachments(event_data.get("payload", {}).get("attachments"))
-    attachments_block = ""
     if attachments:
-        attachments_block = attachment_prompt_block(
-            describe_attachments(db, workspace_id, attachments)
-        )
+        # The student's message usually arrives within a second of the upload,
+        # before the parse job has run. Parsing takes <1s, so a short bounded
+        # wait lets this reply actually read the document instead of saying
+        # "still processing" about a file that is ready moments later.
+        await wait_until_readable(db, workspace_id, [a["file_id"] for a in attachments])
         if not messages:
             # An attachment with no text is still a turn worth answering.
             messages.append({
@@ -373,8 +375,34 @@ async def _invoke_assistant_agent(
     # framing extraction uses and, in collection mode, hand over exactly the
     # personalized material the completion gate withholds. Analysis goes
     # through files.read, under the existing tool policy.
-    if attachments_block:
-        system_prompt += "\n\n" + attachments_block
+    # `files.read` is withheld in collection mode, so the blocks must not
+    # tell the Counselor to use it there.
+    can_read_documents = completion is None or completion["counselorMode"] != "collection"
+    if attachments:
+        try:
+            described = describe_attachments(db, workspace_id, attachments)
+        except Exception:  # noqa: BLE001 — same rule: never lose the reply
+            logger.exception("assistant: attachment status unavailable workspace=%s", workspace_id)
+            db.rollback()
+            described = [{**a, "processing_status": "unknown"} for a in attachments]
+        system_prompt += "\n\n" + attachment_prompt_block(described, can_read=can_read_documents)
+    if agent_name == pai.PAI_AGENT_NAME:
+        # Every turn, not just the upload turn: afterwards the Counselor has
+        # neither a status nor a file_id (history keeps message text only), and
+        # without this it repeated its own stale "still reading" for minutes
+        # after a CV had finished.
+        from app.documents.progress import recent_documents_block
+
+        try:
+            documents_block = recent_documents_block(db, workspace_id, can_read=can_read_documents)
+        except Exception:  # noqa: BLE001 — status context must never cost the student a reply
+            logger.exception("assistant: document status unavailable workspace=%s", workspace_id)
+            # A failed query aborts the transaction on PostgreSQL; clear it so
+            # the rest of the turn can still read.
+            db.rollback()
+            documents_block = ""
+        if documents_block:
+            system_prompt += "\n\n" + documents_block
 
     if provider == pai.PAI_PROVIDER:
         from app.services.counselor_prompt import PAI_TURN_CONTRACT

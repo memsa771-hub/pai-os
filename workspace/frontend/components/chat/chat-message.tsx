@@ -2,9 +2,14 @@
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { Copy, Check, User, FileIcon, Download, Eye, Cog } from 'lucide-react';
+import { Copy, Check, User, FileIcon, Download, Eye, Cog, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  isDocumentAttachment,
+  SETTLED_DOCUMENT_STAGES,
+  type DocumentStage,
+} from '@/lib/document-types';
 import type { WorkspaceMessage, WorkspaceAgent } from '@/lib/types';
 import { AgentAvatar } from '@/components/agents/agent-avatar';
 import { MarkdownContent } from './markdown-content';
@@ -35,6 +40,71 @@ function isPreviewable(contentType: string, filename: string): boolean {
   if (contentType === 'text/markdown' || /\.mdx?$/i.test(filename)) return true;
   if (contentType?.startsWith('text/') || /\.(json|js|ts|tsx|jsx|py|rs|go|java|rb|sh|yaml|yml)$/i.test(filename)) return true;
   return false;
+}
+
+/** Poll every few seconds; stop once the stage settles or after ~5 minutes. */
+const STAGE_POLL_MS = 3000;
+const STAGE_POLL_MAX = 100;
+
+/**
+ * Live processing stage under a PDF/DOCX attachment.
+ *
+ * Reads the server's stage rather than local state, so a student who leaves
+ * the chat and comes back mid-processing sees where the document really is —
+ * previously the file just sat there looking idle for the ~30s extraction.
+ */
+function DocumentStatus({ fileId }: { fileId: string }) {
+  const t = useT();
+  const [stage, setStage] = useState<DocumentStage | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    let polls = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const next = await workspaceApi.getDocumentStage(fileId);
+        if (cancelled) return;
+        setStage(next);
+        if (SETTLED_DOCUMENT_STAGES.includes(next)) return;
+      } catch {
+        // Transient: keep the last known stage and try again.
+      }
+      polls += 1;
+      if (!cancelled && polls < STAGE_POLL_MAX) timer = setTimeout(poll, STAGE_POLL_MS);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [fileId]);
+
+  if (stage === null || stage === 'unsupported') return null;
+
+  const inProgress = stage === 'reading' || stage === 'understanding';
+  const label = stage === 'reading'
+    ? t('chat.documentReading')
+    : stage === 'understanding'
+      ? t('chat.documentUnderstanding')
+      : stage === 'done'
+        ? t('chat.documentDone')
+        : t('chat.documentFailed');
+
+  return (
+    <div
+      className={cn(
+        'mt-1 flex items-center gap-1.5 text-2xs',
+        stage === 'failed' ? 'text-destructive' : 'text-muted-foreground',
+      )}
+      role="status"
+      aria-live="polite"
+    >
+      {inProgress && <Loader2 className="size-3 animate-spin" aria-hidden="true" />}
+      {stage === 'done' && <Check className="size-3 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />}
+      <span>{label}</span>
+    </div>
+  );
 }
 
 function Attachments({ items }: { items: Attachment[] }) {
@@ -82,9 +152,8 @@ function Attachments({ items }: { items: Attachment[] }) {
         <div className="flex flex-wrap gap-2">
           {files.map((file) => {
             const previewable = isPreviewable(file.contentType, file.filename);
-            return previewable ? (
+            const chip = previewable ? (
               <button
-                key={file.fileId}
                 type="button"
                 onClick={() => openPreview(file.fileId)}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg border bg-muted hover:bg-muted/80 transition-colors text-sm cursor-pointer"
@@ -94,7 +163,6 @@ function Attachments({ items }: { items: Attachment[] }) {
               </button>
             ) : (
               <a
-                key={file.fileId}
                 href={file.url}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -104,6 +172,14 @@ function Attachments({ items }: { items: Attachment[] }) {
                 <span className="truncate max-w-[200px]">{file.filename}</span>
                 <Download className="size-3 text-muted-foreground shrink-0" />
               </a>
+            );
+            return (
+              <div key={file.fileId} className="flex flex-col">
+                {chip}
+                {isDocumentAttachment(file.filename, file.contentType) && (
+                  <DocumentStatus fileId={file.fileId} />
+                )}
+              </div>
             );
           })}
         </div>

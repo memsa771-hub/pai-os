@@ -19,7 +19,10 @@ through `files.read`, under the existing tool policy.
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def _first(source: dict, *names: str) -> Optional[Any]:
@@ -56,6 +59,58 @@ def normalize_attachments(raw: Any) -> list[dict]:
     return out
 
 
+#: Upper bound on how long a chat turn waits for an attachment to parse.
+#: Parsing is measured at <1s; the rest is the worker's poll interval. Past
+#: this the turn proceeds and honestly reports "still reading".
+READABLE_WAIT_SECONDS = 6.0
+_READABLE_POLL_SECONDS = 0.5
+
+
+async def wait_until_readable(
+    db, workspace_id: str, file_ids: list[str],
+    timeout: float = READABLE_WAIT_SECONDS,
+) -> bool:
+    """Wait briefly for attached documents to leave queued/processing.
+
+    Bounded, and never an error: the upload request itself never waits, and
+    neither does a turn whose file is slow — it just answers truthfully.
+    Returns True when every attachment reached a settled state.
+    """
+    import asyncio
+    import time
+
+    from sqlalchemy import select
+
+    from app.models import DocumentArtifact
+
+    if not file_ids:
+        return True
+    deadline = time.monotonic() + max(0.0, timeout)
+    while True:
+        # Fresh read each poll: the worker commits in another process.
+        db.rollback()
+        try:
+            pending = db.execute(
+                select(DocumentArtifact.id).where(
+                    DocumentArtifact.workspace_id == workspace_id,
+                    DocumentArtifact.file_id.in_(file_ids),
+                    DocumentArtifact.status.in_(("queued", "processing")),
+                )
+            ).first()
+        except Exception:  # noqa: BLE001 — a wait must never break the turn
+            logger.exception("attachment readiness check failed workspace=%s", workspace_id)
+            db.rollback()
+            return False
+        if pending is None:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        # Release the connection while sleeping (see the note on
+        # idle-in-transaction in the Counselor loop).
+        db.rollback()
+        await asyncio.sleep(_READABLE_POLL_SECONDS)
+
+
 def describe_attachments(db, workspace_id: str, attachments: list[dict]) -> list[dict]:
     """Add server-owned processing state to normalized attachments.
 
@@ -73,7 +128,7 @@ def describe_attachments(db, workspace_id: str, attachments: list[dict]) -> list
     return described
 
 
-def attachment_prompt_block(attachments: list[dict]) -> str:
+def attachment_prompt_block(attachments: list[dict], can_read: bool = True) -> str:
     """Tell the Counselor an attachment exists — not what it says.
 
     The processing state is spelled out so PAI can answer "still reading it"
@@ -124,6 +179,14 @@ def attachment_prompt_block(attachments: list[dict]) -> str:
             "(.docx) files can be read."
         ),
     }
+    if not can_read:
+        # Collection mode withholds files.read; do not point at a tool the
+        # Counselor cannot call. The document is still processed in the
+        # background and may complete the profile.
+        guidance["ready"] = guidance["partial"] = (
+            "The document is being added to the student's profile in the "
+            "background. Do not discuss its contents in this mode."
+        )
     statuses = {a.get("processing_status") for a in attachments}
     notes = [guidance[s] for s in ("queued", "processing", "failed", "unsupported", "partial", "ready")
              if s in statuses and s in guidance]

@@ -37,6 +37,7 @@ JOB_DOCUMENT_PARSE = "document.parse"
 JOB_DOCUMENT_EXTRACT = "document.extract"
 JOB_DOCUMENT_INDEX = "document.index"
 JOB_DOCUMENT_UNINDEX = "document.unindex"
+JOB_DOCUMENT_NOTIFY = "document.notify"
 
 STATUSES = ("queued", "processing", "ready", "partial", "failed", "unsupported")
 

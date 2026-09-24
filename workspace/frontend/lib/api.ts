@@ -1,3 +1,4 @@
+import type { DocumentStage } from './document-types';
 import type {
   AgentCatalogDetail,
   AgentCatalogEntry,
@@ -487,6 +488,18 @@ class WorkspaceApi {
       `/v1/student-profile/onboarding/skip?network=${this.requireWorkspace()}`,
       { method: 'POST' },
     );
+  }
+
+  /**
+   * Where an uploaded PDF/DOCX is up to. `document_stage` is the person-facing
+   * stage (reading -> understanding -> done); it is server-owned, so a chat
+   * reopened mid-processing shows the real state instead of an idle file.
+   */
+  async getDocumentStage(fileId: string): Promise<DocumentStage> {
+    const info = await this.request<{ document_stage?: DocumentStage }>(
+      `/v1/files/${encodeURIComponent(fileId)}/info`,
+    );
+    return info?.document_stage ?? 'unsupported';
   }
 
   /** Resolve a conflict through candidate -> reconciler, never by cosmetic dismissal. */

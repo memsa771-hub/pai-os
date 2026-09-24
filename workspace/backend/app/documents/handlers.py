@@ -25,8 +25,9 @@ from .parsers import (
     render_pdf_page_png, truncate_segments,
 )
 from .service import (
-    JOB_DOCUMENT_EXTRACT, JOB_DOCUMENT_INDEX, JOB_DOCUMENT_PARSE,
-    JOB_DOCUMENT_UNINDEX, PARSER_VERSION, DocumentArtifactService,
+    JOB_DOCUMENT_EXTRACT, JOB_DOCUMENT_INDEX, JOB_DOCUMENT_NOTIFY,
+    JOB_DOCUMENT_PARSE, JOB_DOCUMENT_UNINDEX, PARSER_VERSION,
+    DocumentArtifactService,
 )
 
 logger = logging.getLogger(__name__)
@@ -347,20 +348,33 @@ async def extract_document_job(job, db) -> dict:
         sorted({f.candidate_type for f in understanding.findings}) or None,
     )
 
+    # Which candidates came from THIS document, so progress reporting can say
+    # what it actually changed. Counts and ids only — never content.
+    artifact.extraction_summary = {
+        "findings": len(understanding.findings),
+        "candidate_ids": proposed,
+    }
+    db.flush()
+
     from app.jobs.service import BackgroundJobService
 
     jobs = BackgroundJobService(db)
     if proposed:
         # Reconciliation is the EXISTING durable job — documents converge on
         # the same path as conversation rather than getting their own.
+        # `document_file_id` asks it to report back when it has decided, so
+        # the completion message describes real outcomes, not proposals.
         from app.memory.handlers import JOB_RECONCILE
 
         jobs.enqueue(
             job_type=JOB_RECONCILE,
             workspace_id=workspace_id,
-            payload={"candidate_ids": proposed},
+            payload={"candidate_ids": proposed, "document_file_id": file_id},
             idempotency_key=f"reconcile:document:{file_id}:{EXTRACTOR_VERSION}",
         )
+    else:
+        # Nothing to reconcile: tell the student now rather than never.
+        enqueue_document_notify(db, workspace_id, file_id)
 
     # Indexing is enqueued separately and AFTER extraction, so an index
     # failure can never roll back canonical writes.
@@ -377,6 +391,71 @@ async def extract_document_job(job, db) -> dict:
         "authority": authority,
         "candidates_proposed": len(proposed),
     }
+
+
+def enqueue_document_notify(db, workspace_id: str, file_id: str) -> None:
+    """Queue the "I've finished reading your document" chat message."""
+    from app.jobs.service import BackgroundJobService
+    from .extractor import EXTRACTOR_VERSION
+
+    BackgroundJobService(db).enqueue(
+        job_type=JOB_DOCUMENT_NOTIFY,
+        workspace_id=workspace_id,
+        payload={"file_id": file_id},
+        # One message per document per extractor version: a retried
+        # reconcile must not post twice.
+        idempotency_key=f"document.notify:{file_id}:{EXTRACTOR_VERSION}",
+        max_attempts=3,
+    )
+
+
+async def notify_document_job(job, db) -> dict:
+    """Post a completion message into the chat the document was attached in.
+
+    Without this, a student who navigated away came back to a thread that
+    looked stalled, even though the document had long since been processed.
+    The message is built from what the reconciler actually decided, so it
+    cannot claim a save that did not happen.
+
+    A document uploaded outside a chat (e.g. the file browser) has no thread
+    to post into; its status is still visible to the Counselor each turn.
+    """
+    from sqlalchemy import select
+
+    from app.models import FileRecord
+    from app.services.cloud_agent import _post_response
+    from app.services.pai import PAI_AGENT_NAME
+    from .progress import completion_message, learned_summary
+
+    workspace_id = job.workspace_id
+    file_id = (job.payload or {}).get("file_id")
+    if not workspace_id or not file_id:
+        raise ValueError("document.notify requires workspace_id and file_id")
+
+    artifact = DocumentArtifactService(db).get(workspace_id, file_id)
+    record = db.execute(
+        select(FileRecord).where(
+            FileRecord.id == file_id, FileRecord.workspace_id == workspace_id,
+        )
+    ).scalar_one_or_none()
+    if artifact is None or record is None or record.status != "active":
+        return {"posted": False, "reason": "document_gone"}
+    if not record.channel_name:
+        return {"posted": False, "reason": "no_chat"}
+
+    summary = learned_summary(db, artifact)
+    message = completion_message(record.filename, artifact.classification or "", summary)
+    event_id = await _post_response(
+        db, workspace_id, f"channel/{record.channel_name}", PAI_AGENT_NAME,
+        message, depth=0, message_type="document_processed",
+        metadata={"document_file_id": file_id},
+    )
+    logger.info(
+        "document.notify: workspace=%s file=%s posted=%s learned=%d needs_review=%d",
+        workspace_id, file_id, bool(event_id),
+        sum((summary.get("learned") or {}).values()), summary.get("needs_review", 0),
+    )
+    return {"posted": bool(event_id)}
 
 
 async def index_document_job(job, db) -> dict:
@@ -427,3 +506,4 @@ job_handlers.register(JOB_DOCUMENT_PARSE, parse_document_job)
 job_handlers.register(JOB_DOCUMENT_EXTRACT, extract_document_job)
 job_handlers.register(JOB_DOCUMENT_INDEX, index_document_job)
 job_handlers.register(JOB_DOCUMENT_UNINDEX, unindex_document_job)
+job_handlers.register(JOB_DOCUMENT_NOTIFY, notify_document_job)

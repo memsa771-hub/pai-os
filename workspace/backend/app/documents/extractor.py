@@ -393,6 +393,43 @@ def _validate_finding(
     )
 
 
+#: Per-document ceilings on UNSTRUCTURED findings. The same CV run three times
+#: at one setting produced 1, 2 and 6 semantic memories: the prompt asks for
+#: restraint, and this makes it a guarantee. Structured records are not capped
+#: here — they are deduplicated by identity in the record service instead.
+MAX_SEMANTIC_MEMORIES_PER_DOCUMENT = 3
+MAX_EPISODES_PER_DOCUMENT = 2
+
+
+def _cap_unstructured(findings: list[DocumentFinding]) -> list[DocumentFinding]:
+    """Keep the most confident few memories/episodes; drop the rest.
+
+    A document stays the searchable source for everything it says, so a
+    dropped memory loses nothing — it just stays in the document rather than
+    in every future context block.
+    """
+    limits = {
+        "semantic_memory": MAX_SEMANTIC_MEMORIES_PER_DOCUMENT,
+        "episode": MAX_EPISODES_PER_DOCUMENT,
+    }
+    keep: set[int] = set()
+    for kind, limit in limits.items():
+        ranked = sorted(
+            (i for i, f in enumerate(findings) if f.candidate_type == kind),
+            key=lambda i: -findings[i].confidence,
+        )
+        keep.update(ranked[:limit])
+        if len(ranked) > limit:
+            logger.info(
+                "document extraction: capped %s at %d (dropped %d)",
+                kind, limit, len(ranked) - limit,
+            )
+    return [
+        f for i, f in enumerate(findings)
+        if f.candidate_type not in limits or i in keep
+    ]
+
+
 async def understand_document(
     segments: list[Segment], *, filename: str, document_type: str,
     allowed_vault_keys: set[str], field_specs: list[dict],
@@ -412,10 +449,17 @@ async def understand_document(
         segments, filename=filename, document_type=document_type,
         field_specs=field_specs, existing_records=existing_records,
     )
+    from app.config import config
+
     raw = await chat_completion(
         api_key=api_key, provider=provider, model=model,
         messages=[{"role": "user", "content": prompt}],
         system_prompt=SYSTEM_PROMPT, max_tokens=8000, base_url=base_url,
+        # Measured on a real CV with gpt-5-mini: default (medium) 69.7s,
+        # low 25.6-27.4s over three runs with the same core records, minimal
+        # 82.1s and noisier. This is the student's wait, so low is the
+        # default. Ignored for models that do not take the parameter.
+        reasoning_effort=getattr(config, "DOCUMENT_EXTRACTOR_REASONING_EFFORT", "low") or None,
     )
 
     parsed = _parse_response(raw)
@@ -462,6 +506,7 @@ async def understand_document(
             for raw_finding in findings_raw
         ) if finding is not None
     ]
+    findings = _cap_unstructured(findings)
 
     return DocumentUnderstanding(
         classification=classification,

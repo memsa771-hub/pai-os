@@ -154,11 +154,17 @@ def read_document(
 
 def document_status_payload(db, workspace_id: str, file_id: str) -> dict:
     """Compact status for attachment metadata and clients."""
+    from .progress import document_stage
+
     artifact = DocumentArtifactService(db).get(workspace_id, file_id)
     if artifact is None:
-        return {"processing_status": "unsupported"}
+        return {"processing_status": "unsupported", "document_stage": "unsupported"}
     return {
         "processing_status": artifact.status,
+        # What a PERSON cares about: reading -> understanding -> done. The
+        # storage status alone says "ready" a second after upload, while the
+        # profile update is still running.
+        "document_stage": document_stage(artifact),
         "document_type": artifact.document_type,
         "classification": artifact.classification,
         "page_count": artifact.page_count,

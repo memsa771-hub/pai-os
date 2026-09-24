@@ -261,6 +261,14 @@ async def reconcile_memory(job, db) -> dict:
             idempotency_key=f"embed:{job.id}",
         )
 
+    # A document's candidates are now decided: let the document pipeline tell
+    # the student what actually happened. Enqueued in this transaction, so the
+    # message job exists exactly when the decisions it reports are committed.
+    if payload.get("document_file_id"):
+        from app.documents.handlers import enqueue_document_notify
+
+        enqueue_document_notify(db, workspace_id, payload["document_file_id"])
+
     return {
         "reconciled": len(results),
         "accepted": len(accepted),
