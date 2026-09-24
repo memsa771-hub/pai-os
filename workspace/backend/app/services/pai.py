@@ -505,6 +505,18 @@ def allowed_tools_for_mode(mode: str = "normal") -> frozenset[str]:
             "operator.delegate",
             "memory.context", "vault.get", "memory.search", "memory.episodes",
             "memory.remember", "memory.forget",
+            # `files.read` returns a document's PARSED contents (see
+            # app/documents/). A transcript or CV is exactly the personalized
+            # material the completion gate withholds, so leaving this granted
+            # would let collection mode reconstruct through a file read what
+            # foreground injection and the memory tools already refuse.
+            #
+            # Automatic INGESTION is unaffected: parsing, extraction and
+            # reconciliation are background infrastructure that never runs in
+            # the Counselor's turn. A document uploaded during collection mode
+            # still fills the profile — and may end collection mode — it just
+            # cannot be read back into this turn's answer.
+            "files.read",
         })
     else:
         allowed.discard("profile.answer")
