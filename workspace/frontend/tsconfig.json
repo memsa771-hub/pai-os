@@ -1,6 +1,10 @@
 {
   "compilerOptions": {
-    "target": "es5",
+    // ES5 and node10 resolution are deprecated in TypeScript 6 (errors in any
+    // editor bundling TS 6+, removed in TS 7). ES2017/bundler are what Next.js
+    // itself generates; Next compiles with SWC, so `target` only affects type
+    // checking, never the emitted bundle.
+    "target": "ES2017",
     "lib": [
       "dom",
       "dom.iterable",
@@ -13,9 +17,12 @@
     "noEmit": true,
     "esModuleInterop": true,
     "module": "esnext",
-    "moduleResolution": "node10",
+    "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // TS 6 turns this on by default, which rejects `import './globals.css'`
+    // (no type describes a plain stylesheet). Explicit so TS 5.9 and 6 agree.
+    "noUncheckedSideEffectImports": false,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
@@ -39,10 +46,9 @@
   ],
   "exclude": [
     "node_modules",
-    // Vite's own config, loaded by Vite (esbuild) and never by Next. It imports
-    // plugins that publish their types through package.json `exports`, which
-    // this project's `moduleResolution: node10` cannot follow — so `next build`
-    // failed type-checking a file it neither compiles nor ships.
+    // Vite's own config, loaded by Vite (esbuild) and never by Next, so Next's
+    // type check has no reason to read it. (Originally excluded because the
+    // old `moduleResolution: node10` could not follow its plugins' `exports`.)
     "vite.config.ts"
   ]
 }
