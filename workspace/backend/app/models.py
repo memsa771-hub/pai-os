@@ -1439,6 +1439,81 @@ class MemoryCandidate(Base):
     )
 
 
+class DocumentArtifact(Base):
+    """DERIVED parse state for one uploaded PDF/DOCX. Never student truth.
+
+    Two rules define this table:
+
+    1. **Rebuildable.** Everything here can be recreated from the raw file in
+       workspace storage. Losing the row costs a reprocess, never a fact. The
+       canonical claims a document produced live in Vault/typed records with
+       their own provenance, and they outlive this row on purpose — an
+       evidence file going away does not retract what was learned from it.
+
+    2. **One row per file.** `file_id` is unique, so a retried parse updates
+       in place instead of accumulating near-duplicate extractions. That is
+       what makes the whole document pipeline idempotent.
+
+    `content_sha256` is the idempotency anchor: re-uploading identical bytes,
+    or retrying a job, resolves to the same derived state rather than a second
+    extraction pass. `parser_version` sits beside it so a parser upgrade can
+    invalidate and reprocess deliberately.
+
+    The normalized parse output is stored as JSONB `content` — pages/sections
+    with locators, which is what evidence quotes point at. It stays off
+    FileRecord because FileRecord is hot metadata read by every listing, and a
+    multi-page document body has no business being loaded to render a filename.
+    """
+    __tablename__ = "pai_document_artifacts"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    file_id = Column(Text, ForeignKey("files.id", ondelete="CASCADE"), nullable=False)
+
+    # queued | processing | ready | partial | failed | unsupported
+    #   partial — parsed, but something downstream (a page, OCR) did not land.
+    #             Readable, explicitly incomplete; not a failure.
+    status = Column(Text, nullable=False, default="queued", server_default=text("'queued'"))
+    document_type = Column(Text, nullable=True)      # pdf | docx (detected)
+    detected_content_type = Column(Text, nullable=True)
+    content_sha256 = Column(Text, nullable=True)
+
+    parser = Column(Text, nullable=True)             # pypdf | python-docx | ...
+    parser_version = Column(Text, nullable=True)
+    ocr_used = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    ocr_provider = Column(Text, nullable=True)
+
+    page_count = Column(Integer, nullable=True)
+    char_count = Column(Integer, nullable=True)
+    #: {"pages": [{"locator": "p1", "text": "...", "tables": [...]}, ...]}
+    content = Column(JSONB, nullable=True)
+
+    # Document intelligence, filled by the extract stage.
+    classification = Column(Text, nullable=True)     # transcript | cv_resume | ...
+    classification_confidence = Column(Float, nullable=True)
+    authority = Column(Text, nullable=True)          # institution_issued | student_authored | ...
+    extractor_version = Column(Text, nullable=True)
+    #: Counts only — never extracted student content.
+    extraction_summary = Column(JSONB, nullable=True)
+
+    error_code = Column(Text, nullable=True)         # safe, stable, client-visible
+    error_message = Column(Text, nullable=True)      # safe summary; never raw model/PII text
+    processed_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        # One derived row per file — the idempotency invariant.
+        UniqueConstraint("file_id", name="uq_document_artifact_file"),
+        Index("idx_document_artifacts_ws_status", "workspace_id", "status"),
+        Index("idx_document_artifacts_ws_hash", "workspace_id", "content_sha256"),
+        CheckConstraint(
+            "status IN ('queued', 'processing', 'ready', 'partial', 'failed', 'unsupported')",
+            name="ck_document_artifact_status",
+        ),
+    )
+
+
 class BackgroundJob(Base):
     """Durable work queue. Deliberately generic — not a memory-only table.
 

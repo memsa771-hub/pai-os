@@ -67,6 +67,59 @@ INLINE_SAFE_CONTENT_TYPES = {
 _UPLOAD_READ_CHUNK_SIZE = 1024 * 1024
 
 
+def _register_student_document(
+    db: Session, workspace_id: str, file_id: str, data: bytes,
+    filename: str, content_type: str,
+) -> Optional[dict]:
+    """Queue document processing when an upload looks like a student document.
+
+    Deliberately non-fatal and non-blocking. A file that is not a PDF/DOCX is
+    simply not a document — generic workspace storage keeps working exactly as
+    before, which is what stops this feature from breaking image and code
+    uploads. Returns a small status dict for the response, or None.
+    """
+    from app.documents import is_student_document_candidate
+    from app.documents.service import DocumentArtifactService
+
+    if not is_student_document_candidate(filename, content_type):
+        return None
+    try:
+        artifact = DocumentArtifactService(db).register_and_enqueue(
+            workspace_id, file_id, data, filename, content_type,
+        )
+    except Exception:  # noqa: BLE001 — an upload must not fail over derived state
+        logger.exception("document registration failed file=%s", file_id)
+        return None
+    if artifact is None:
+        return None
+    return {
+        "status": artifact.status,
+        "document_type": artifact.document_type,
+        "error_code": artifact.error_code,
+        "error_message": artifact.error_message,
+    }
+
+
+def _enqueue_document_unindex(db: Session, workspace_id: str, file_ids: list) -> None:
+    """Queue removal of purged documents from the derived search index.
+
+    Enqueued in the caller's transaction so the job exists only if the purge
+    commits. Correctness does not depend on it landing promptly — retrieval
+    re-checks PostgreSQL — but a stale chunk must not stay searchable.
+    """
+    from app.documents.service import JOB_DOCUMENT_UNINDEX
+    from app.jobs.service import BackgroundJobService
+
+    try:
+        BackgroundJobService(db).enqueue(
+            job_type=JOB_DOCUMENT_UNINDEX,
+            workspace_id=workspace_id,
+            payload={"file_ids": list(file_ids)},
+        )
+    except Exception:  # noqa: BLE001 — index tidiness must not fail a purge
+        logger.exception("document unindex enqueue failed workspace=%s", workspace_id)
+
+
 async def _read_upload_limited(upload: UploadFile) -> Optional[bytes]:
     """Read at most MAX_FILE_SIZE bytes, without an unbounded read()."""
     declared_size = getattr(upload, "size", None)
@@ -459,6 +512,11 @@ async def upload_file(
         channel_name=channel_name,
     )
     db.add(record)
+    db.flush()
+
+    document = _register_student_document(
+        db, str(workspace.id), file_id, data, filename, content_type,
+    )
 
     # Emit event
     event = Event(
@@ -481,6 +539,7 @@ async def upload_file(
         "size": len(data),
         "uploaded_by": uploaded_by,
         "created_at": record.created_at.isoformat() if record.created_at else None,
+        **({"document": document} if document else {}),
     })
 
 
@@ -581,6 +640,12 @@ async def upload_file_base64(
         channel_name=body.channel_name,
     )
     db.add(record)
+    db.flush()
+
+    document = _register_student_document(
+        db, str(workspace.id), file_id, data, organized_filename,
+        body.content_type or "",
+    )
 
     event = Event(
         type="workspace.file.uploaded",
@@ -607,6 +672,7 @@ async def upload_file_base64(
         "uploaded_by": actor_source,
         "created_at": record.created_at.isoformat() if record.created_at else None,
         "posted_to_channel": posted,
+        **({"document": document} if document else {}),
     })
 
 
@@ -902,6 +968,23 @@ async def upload_files_to_folder(
                 replaced = True
 
         content_type = upload.content_type or "application/octet-stream"
+
+        # A file NAMED like a student document must actually be one. Rejecting
+        # here — before any bytes are stored — is what keeps a renamed binary
+        # out of the parser, the OCR provider and the extraction prompt.
+        # Files that make no document claim (images, code) skip this entirely
+        # and keep their existing behaviour.
+        from app.documents import DocumentTypeError, detect_document_type, is_student_document_candidate
+
+        if is_student_document_candidate(name, content_type):
+            try:
+                detect_document_type(data, name, content_type)
+            except DocumentTypeError as exc:
+                skipped.append({
+                    "filename": name, "reason": exc.code, "detail": exc.message,
+                })
+                continue
+
         file_id = str(uuid.uuid4())
         try:
             storage_key = await loop.run_in_executor(
@@ -925,6 +1008,10 @@ async def upload_files_to_folder(
         db.flush()
         taken.add(target)
 
+        document = _register_student_document(
+            db, str(workspace.id), file_id, data, target, content_type,
+        )
+
         # Same event as POST /files — existing listeners shouldn't have to
         # learn about a second upload route. They're emitted after the commit
         # below: a rejected event must not cost the user their upload.
@@ -944,6 +1031,8 @@ async def upload_files_to_folder(
         payload = _file_payload(record, _basename(target), kind, KIND_GROUPS[kind])
         payload["replaced"] = replaced
         payload["renamed_from"] = name if _basename(target) != name else None
+        if document:
+            payload["document"] = document
         uploaded.append(payload)
 
     db.commit()
@@ -1338,6 +1427,18 @@ async def purge_trash(
     purged_ids = set()
     storage_errors = 0
 
+    # Derived document state goes with the bytes. Leaving it would keep purged
+    # document text readable through `files.read` and the document index after
+    # the raw file is gone. Canonical facts already learned from these
+    # documents are deliberately NOT retracted — evidence availability and
+    # student truth are different concerns (see DocumentArtifact).
+    from app.documents.service import DocumentArtifactService
+
+    purged_document_state = DocumentArtifactService(db).purge_for_files(
+        str(workspace.id), [r.id for r in records],
+    )
+    indexed_file_ids = [r.id for r in records]
+
     for record in records:
         try:
             await loop.run_in_executor(None, store.delete, record.storage_key)
@@ -1346,6 +1447,9 @@ async def purge_trash(
             logger.warning("Trash purge: could not delete %s", record.storage_key, exc_info=True)
         purged_ids.add(_trash_key(record))
         db.delete(record)
+
+    if indexed_file_ids:
+        _enqueue_document_unindex(db, str(workspace.id), indexed_file_ids)
 
     db.commit()
 
@@ -1366,6 +1470,7 @@ async def purge_trash(
         "purged_count": len(records),
         "entry_count": len(purged_ids),
         "storage_errors": storage_errors,
+        "purged_document_state": purged_document_state,
         "not_found": sorted((wanted or set()) - purged_ids),
     })
 
