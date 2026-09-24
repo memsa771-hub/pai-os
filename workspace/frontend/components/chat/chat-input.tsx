@@ -16,6 +16,11 @@ import { agentLabel } from '@/lib/helpers';
 import { BookOpen } from 'lucide-react';
 import { toast } from 'sonner';
 import { useT } from '@/lib/i18n';
+import {
+  DOCUMENT_ACCEPT,
+  isUnsupportedDocumentType,
+  unsupportedDocumentMessage,
+} from '@/lib/document-types';
 
 // Keep in sync with the backend's MAX_FILE_SIZE (app/config.py); the proxy's
 // /v1/files client_max_body_size allows extra headroom for multipart
@@ -46,8 +51,11 @@ function isImageFile(file: File): boolean {
   return file.type.startsWith('image/');
 }
 
-const FILE_ACCEPT =
-  'image/*,.pdf,.txt,.md,.json,.csv,.xml,.html,.css,.js,.ts,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.hpp,.sh,.yaml,.yml,.toml';
+// Images and student documents. Documents are restricted to PDF/DOCX — the
+// only formats the server can actually read — so a student is not left
+// waiting on an upload that will come back unreadable. See
+// lib/document-types.ts; the server re-validates from the file's bytes.
+const FILE_ACCEPT = `image/*,${DOCUMENT_ACCEPT}`;
 
 export function ChatInput({ onSend, disabled, className, agents = [], knowledge = [], draft, onDraftChange, onFocusChange, focusKey, onCreateRoutine }: ChatInputProps) {
   const t = useT();
@@ -136,6 +144,13 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
     for (const file of Array.from(files)) {
       if (file.size > MAX_FILE_SIZE) {
         toast.error(`"${file.name}" is too large (max 50MB)`);
+        continue;
+      }
+      // Drag-and-drop bypasses the accept attribute entirely, so the same
+      // check has to run here. Only files CLAIMING an unsupported document
+      // format are rejected — an image is not a document and passes through.
+      if (isUnsupportedDocumentType(file)) {
+        toast.error(unsupportedDocumentMessage(file));
         continue;
       }
       if (isImageFile(file)) {

@@ -1766,6 +1766,8 @@ def file_info(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
 
+    from app.documents.reader import document_status_payload
+
     return success_response({
         "id": record.id,
         "filename": record.filename,
@@ -1774,7 +1776,50 @@ def file_info(
         "uploaded_by": record.uploaded_by,
         "channel_name": record.channel_name,
         "created_at": record.created_at.isoformat() if record.created_at else None,
+        **document_status_payload(db, str(record.workspace_id), record.id),
     })
+
+
+# ---------------------------------------------------------------------------
+# GET /v1/files/{file_id}/content — PARSED document text (agent-facing)
+#
+# Deliberately separate from the download route below, which keeps returning
+# raw bytes. An agent asking to "read" a PDF wants its text; a browser
+# fetching the same file wants the file.
+# ---------------------------------------------------------------------------
+
+@router.get("/files/{file_id}/content")
+def read_file_content(
+    file_id: str,
+    max_chars: int = Query(20000, ge=1, le=100000),
+    pages: Optional[str] = Query(None, description="Page/section range, e.g. '2' or '1-3'"),
+    x_workspace_token: Optional[str] = Header(None),
+    authorization: Optional[str] = Header(None),
+    db: Session = Depends(get_db),
+):
+    """Parsed text of a PDF/DOCX, or an explicit not-ready state.
+
+    Never falls back to interpreting bytes as text: a file with no parsed
+    content returns a reason, not mojibake.
+    """
+    record = db.execute(
+        select(FileRecord).where(FileRecord.id == file_id)
+    ).scalar_one_or_none()
+    if not record or record.status != "active":
+        return json_response(ResponseCode.NOT_FOUND, "File not found")
+
+    workspace = _resolve_workspace(db, str(record.workspace_id))
+    if not workspace:
+        return json_response(ResponseCode.NOT_FOUND, "Network not found")
+    if not _verify_workspace_access(workspace, x_workspace_token, authorization):
+        return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
+
+    from app.documents.reader import read_document
+
+    result = read_document(
+        db, str(record.workspace_id), file_id, max_chars=max_chars, pages=pages,
+    )
+    return success_response({"filename": record.filename, **result})
 
 
 # ---------------------------------------------------------------------------

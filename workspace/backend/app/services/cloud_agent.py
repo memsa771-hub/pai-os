@@ -252,6 +252,26 @@ async def _invoke_assistant_agent(
     content = event_data.get("payload", {}).get("content", "")
     if content:
         messages.append({"role": "user", "content": content})
+
+    # Normalized once: clients send camelCase, server-side producers write
+    # snake_case, and both are in the wild.
+    from app.documents.attachments import (
+        attachment_prompt_block, describe_attachments, normalize_attachments,
+    )
+
+    attachments = normalize_attachments(event_data.get("payload", {}).get("attachments"))
+    attachments_block = ""
+    if attachments:
+        attachments_block = attachment_prompt_block(
+            describe_attachments(db, workspace_id, attachments)
+        )
+        if not messages:
+            # An attachment with no text is still a turn worth answering.
+            messages.append({
+                "role": "user",
+                "content": "(The student sent the attached file with no message.)",
+            })
+
     if not messages:
         return
 
@@ -346,6 +366,15 @@ async def _invoke_assistant_agent(
             system_prompt + "\n\n" + MEMORY_RULES + "\n\n"
             + memory_context.block + "\n\n" + MEMORY_RULES_TRAILER
         )
+
+    # The Counselor must KNOW a file was attached — which file, its type, and
+    # whether it has been read yet — without receiving its contents. Full
+    # document text in conversation history would bypass the untrusted-data
+    # framing extraction uses and, in collection mode, hand over exactly the
+    # personalized material the completion gate withholds. Analysis goes
+    # through files.read, under the existing tool policy.
+    if attachments_block:
+        system_prompt += "\n\n" + attachments_block
 
     if provider == pai.PAI_PROVIDER:
         from app.services.counselor_prompt import PAI_TURN_CONTRACT

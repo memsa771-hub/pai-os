@@ -35,7 +35,7 @@ def register_builtin_tools(registry):
         ToolDefinition("workspace.threads.list", "List workspace conversations.", EMPTY, "workspace", ToolRisk.READ, workspace.list_threads, audiences=BOTH),
         ToolDefinition("tasks.list", "List workspace task cards.", EMPTY, "tasks", ToolRisk.READ, tasks.list_tasks, audiences=BOTH),
         ToolDefinition("files.list", "List files in workspace storage.", obj({"path": {"type": "string"}, "recursive": {"type": "boolean"}, "limit": {"type": "integer"}}), "files", ToolRisk.READ, files.list_files, audiences=BOTH),
-        ToolDefinition("files.read", "Read a text file from workspace storage by file ID.", obj({"file_id": {"type": "string"}, "max_chars": {"type": "integer"}}, ["file_id"]), "files", ToolRisk.READ, files.read_file, audiences=BOTH),
+        ToolDefinition("files.read", "Read a file's text by file ID. PDF and Word documents return their parsed contents; if a document is still being processed this reports that instead of text.", obj({"file_id": {"type": "string"}, "max_chars": {"type": "integer"}, "pages": {"type": "string", "description": "Optional page or section range, e.g. '2' or '1-3'."}}, ["file_id"]), "files", ToolRisk.READ, files.read_file, audiences=BOTH),
         ToolDefinition("web.search", "Search the public web using the configured provider.", obj({"query": {"type": "string"}, "limit": {"type": "integer"}}, ["query"]), "web", ToolRisk.READ, web.search, audiences=BOTH),
         ToolDefinition("web.fetch", "Read a public URL through the workspace fetch and safety pipeline.", obj({"url": {"type": "string"}, "mode": {"type": "string", "enum": ["auto", "static", "render"]}, "max_chars": {"type": "integer"}}, ["url"]), "web", ToolRisk.READ, web.fetch, audiences=BOTH),
 
