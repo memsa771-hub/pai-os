@@ -200,6 +200,185 @@ async def parse_document_job(job, db) -> dict:
     }
 
 
+async def extract_document_job(job, db) -> dict:
+    """Understand a parsed document and propose candidates.
+
+    This function may ONLY write `pai_memory_candidates`. It has no access to
+    VaultService or StudentRecordService, so even a compromised extraction
+    prompt cannot change canonical state — the reconciler decides, exactly as
+    it does for conversation.
+    """
+    from app.memory.candidates import MemoryCandidateService
+    from app.memory.field_definitions import (
+        ENTITY_BACKED_LEGACY_FIELDS, VaultFieldDefinitionService,
+    )
+    from app.memory.student_snapshot import StudentSnapshotService
+    from .classify import authority_for, is_journey_document
+    from .extractor import EXTRACTOR_VERSION, DocumentExtractionError, understand_document
+
+    workspace_id = job.workspace_id
+    file_id = (job.payload or {}).get("file_id")
+    if not workspace_id or not file_id:
+        raise ValueError("document.extract requires workspace_id and file_id")
+
+    service = DocumentArtifactService(db)
+    artifact = service.get(workspace_id, file_id)
+    if artifact is None:
+        return {"extracted": False, "reason": "artifact_missing"}
+    if artifact.status not in ("ready", "partial"):
+        return {"extracted": False, "reason": f"not_readable:{artifact.status}"}
+    if artifact.extractor_version == EXTRACTOR_VERSION and artifact.classification:
+        # Already understood at this version — a retry must not propose the
+        # same candidates twice.
+        return {"extracted": False, "reason": "already_extracted"}
+
+    segments = segments_from_content(artifact.content)
+    if not segments:
+        return {"extracted": False, "reason": "no_content"}
+
+    # Existing state comes from the shared snapshot — never a second view of
+    # "what we know", which would drift from the canonical one.
+    snapshot = StudentSnapshotService(db).build(workspace_id)
+    definitions = [
+        d for d in VaultFieldDefinitionService(db).list_definitions()
+        if d.key not in ENTITY_BACKED_LEGACY_FIELDS
+    ]
+    allowed_keys = {d.key for d in definitions}
+    field_specs = [
+        {"key": d.key, "data_type": d.data_type, "description": d.description}
+        for d in definitions
+    ]
+
+    from sqlalchemy import select
+
+    from app.models import FileRecord
+
+    record = db.execute(
+        select(FileRecord).where(FileRecord.id == file_id)
+    ).scalar_one_or_none()
+    filename = (record.filename if record else "").rsplit("/", 1)[-1]
+    uploaded_by = record.uploaded_by if record else ""
+
+    try:
+        understanding = await understand_document(
+            segments, filename=filename,
+            document_type=artifact.document_type or "",
+            allowed_vault_keys=allowed_keys, field_specs=field_specs,
+            existing_records=snapshot.records,
+        )
+    except DocumentExtractionError:
+        # Malformed output fails the job so the durable worker retries, rather
+        # than writing half-trusted rows.
+        logger.warning("document.extract: bad model output file=%s", file_id)
+        raise
+
+    authority = authority_for(understanding.classification, uploaded_by)
+    service.record_classification(
+        artifact,
+        classification=understanding.classification,
+        confidence=understanding.classification_confidence,
+        authority=authority,
+        extractor_version=EXTRACTOR_VERSION,
+        summary={"findings": len(understanding.findings)},
+    )
+
+    candidates = MemoryCandidateService(db)
+    proposed: list[str] = []
+
+    # A StudentDocument record: "this file is a meaningful journey document".
+    # The file_id is SERVER-owned — taken from the job, never from model
+    # output — so a model cannot name a file it was not given.
+    if is_journey_document(understanding.classification) and record is not None:
+        existing_documents = {
+            row.get("file_id") for row in snapshot.records.get("document", [])
+        }
+        if file_id not in existing_documents:
+            candidate = candidates.propose(
+                workspace_id=workspace_id,
+                candidate_type="student_record",
+                key="document",
+                proposed_value={
+                    "file_id": file_id,
+                    "document_type": understanding.classification,
+                    **({"title": understanding.title} if understanding.title else {}),
+                },
+                confidence=max(0.5, understanding.classification_confidence),
+                source_type="document",
+                evidence={
+                    "file_id": file_id, "filename": filename,
+                    "authority": authority,
+                    "extractor_version": EXTRACTOR_VERSION,
+                },
+            )
+            proposed.append(candidate.id)
+
+    for finding in understanding.findings:
+        candidate = candidates.propose(
+            workspace_id=workspace_id,
+            candidate_type=finding.candidate_type,
+            operation="upsert",
+            key=finding.key,
+            proposed_value=finding.proposed_value,
+            content=finding.content,
+            entities=finding.entities or None,
+            confidence=finding.confidence,
+            # Server-assigned, from the channel this job read. The extractor
+            # has no field for it and cannot reach `user_explicit`.
+            source_type="document",
+            evidence={
+                **finding.evidence,
+                "file_id": file_id,
+                "filename": filename,
+                "document_type": understanding.classification,
+                "authority": authority,
+                "parser": artifact.parser,
+                "parser_version": artifact.parser_version,
+                "extractor_version": EXTRACTOR_VERSION,
+                **({"ocr": True} if artifact.ocr_used else {}),
+            },
+        )
+        proposed.append(candidate.id)
+
+    logger.info(
+        "document.extract: workspace=%s file=%s class=%s authority=%s "
+        "findings=%d proposed=%d types=%s",
+        workspace_id, file_id, understanding.classification, authority,
+        len(understanding.findings), len(proposed),
+        sorted({f.candidate_type for f in understanding.findings}) or None,
+    )
+
+    from app.jobs.service import BackgroundJobService
+
+    jobs = BackgroundJobService(db)
+    if proposed:
+        # Reconciliation is the EXISTING durable job — documents converge on
+        # the same path as conversation rather than getting their own.
+        from app.memory.handlers import JOB_RECONCILE
+
+        jobs.enqueue(
+            job_type=JOB_RECONCILE,
+            workspace_id=workspace_id,
+            payload={"candidate_ids": proposed},
+            idempotency_key=f"reconcile:document:{file_id}:{EXTRACTOR_VERSION}",
+        )
+
+    # Indexing is enqueued separately and AFTER extraction, so an index
+    # failure can never roll back canonical writes.
+    jobs.enqueue(
+        job_type=JOB_DOCUMENT_INDEX,
+        workspace_id=workspace_id,
+        payload={"file_id": file_id},
+        idempotency_key=f"document.index:{file_id}:{artifact.content_sha256}",
+    )
+
+    return {
+        "extracted": True,
+        "classification": understanding.classification,
+        "authority": authority,
+        "candidates_proposed": len(proposed),
+    }
+
+
 async def index_document_job(job, db) -> dict:
     """Index a parsed document's chunks for later retrieval (Phase F)."""
     from .retrieval import index_document_chunks
@@ -245,5 +424,6 @@ async def unindex_document_job(job, db) -> dict:
 
 
 job_handlers.register(JOB_DOCUMENT_PARSE, parse_document_job)
+job_handlers.register(JOB_DOCUMENT_EXTRACT, extract_document_job)
 job_handlers.register(JOB_DOCUMENT_INDEX, index_document_job)
 job_handlers.register(JOB_DOCUMENT_UNINDEX, unindex_document_job)
