@@ -372,7 +372,7 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
     >
       {/* @mention autocomplete dropdown */}
       {showMentions && mentionItems.length > 0 && (
-        <div className="absolute bottom-full mb-2 left-0 right-0 bg-popover border rounded-lg shadow-lg z-50 overflow-hidden max-h-[280px] overflow-y-auto">
+        <div className="absolute bottom-full mb-2 left-0 right-0 bg-popover border rounded-lg shadow-lg z-50 overflow-hidden max-h-70 overflow-y-auto">
           {filteredAgents.length > 0 && filteredKnowledge.length > 0 && (
             <div className="px-3 py-1.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider border-b border-border">{t('chatInput.mentionAgents')}</div>
           )}
@@ -469,7 +469,7 @@ export function ChatInput({ onSend, disabled, className, agents = [], knowledge 
                   <img
                     src={pf.preview}
                     alt={pf.file.name}
-                    className="h-20 w-auto max-w-[160px] object-cover"
+                    className="h-20 w-auto max-w-40 object-cover"
                   />
                 ) : (
                   <div className="h-20 w-24 flex flex-col items-center justify-center gap-1 px-2">
