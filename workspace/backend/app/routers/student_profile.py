@@ -238,15 +238,3 @@ def submit_onboarding(
     return success_response(result)
 
 
-@router.post("/onboarding/skip")
-def skip_onboarding(
-    network: str = Query(...), db: Session = Depends(get_db),
-    x_workspace_token: Optional[str] = Header(None), authorization: Optional[str] = Header(None),
-):
-    """Dismiss the form. PAI will learn the same facts through conversation."""
-    workspace, error = _workspace(db, network, x_workspace_token, authorization)
-    if error:
-        return error
-    result = OnboardingService(db).skip(workspace)
-    db.commit()
-    return success_response(result)

@@ -147,16 +147,11 @@ class StudentProfileView:
     # -- header ------------------------------------------------------------
 
     def _header(self, facts: dict, records: dict, account: dict) -> dict:
-        """Account identity first, canonical student data filling the rest.
-
-        The account row owns the name and picture the student chose for the
-        workspace, so it wins over `identity.preferred_name`; the Vault still
-        supplies the preferred name separately for the About block.
-        """
+        """Canonical preferred name first, account identity as fallback."""
         education = records.get("education", [])
         header = {
-            "displayName": (_text(account.get("displayName"))
-                            or _text(facts.get("identity.preferred_name"))
+            "displayName": (_text(facts.get("identity.preferred_name"))
+                            or _text(account.get("displayName"))
                             or _text(facts.get("identity.full_name"))),
             "avatarUrl": _text(account.get("avatarUrl")),
             "email": _text(account.get("email")),

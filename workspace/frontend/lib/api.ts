@@ -482,14 +482,6 @@ class WorkspaceApi {
     );
   }
 
-  /** Dismiss it. PAI will learn the same facts through conversation instead. */
-  async skipOnboarding(): Promise<{ completed: boolean }> {
-    return this.request<{ completed: boolean }>(
-      `/v1/student-profile/onboarding/skip?network=${this.requireWorkspace()}`,
-      { method: 'POST' },
-    );
-  }
-
   /**
    * Where an uploaded PDF/DOCX is up to. `document_stage` is the person-facing
    * stage (reading -> understanding -> done); it is server-owned, so a chat

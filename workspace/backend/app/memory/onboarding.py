@@ -57,19 +57,19 @@ class OnboardingField:
 # The order here is the order the form asks them in.
 ONBOARDING_FIELDS: tuple[OnboardingField, ...] = (
     OnboardingField("fullName", "identity.full_name", required=True),
-    OnboardingField("preferredName", "identity.preferred_name"),
+    OnboardingField("preferredName", "identity.preferred_name", required=True),
     OnboardingField(
         "statusCategory", "identity.status_category", required=True,
         choices=("student", "professional", "other"),
     ),
-    OnboardingField("nationality", "identity.nationality"),
+    OnboardingField("nationality", "identity.nationality", required=True),
     OnboardingField(
-        "gender", "identity.gender",
+        "gender", "identity.gender", required=True,
         choices=("male", "female", "other", "undisclosed"),
     ),
-    OnboardingField("dateOfBirth", "identity.date_of_birth", is_date=True),
-    OnboardingField("currentCountry", "location.current_country"),
-    OnboardingField("currentCity", "location.current_city"),
+    OnboardingField("dateOfBirth", "identity.date_of_birth", required=True, is_date=True),
+    OnboardingField("currentCountry", "location.current_country", required=True),
+    OnboardingField("currentCity", "location.current_city", required=True),
 )
 
 FIELDS_BY_NAME = {field.name: field for field in ONBOARDING_FIELDS}
@@ -139,10 +139,10 @@ class OnboardingService:
             for field in ONBOARDING_FIELDS
             if isinstance(facts.get(field.field_key), str)
         }
-        # The login handle is the closest thing to a chosen name we already
-        # have, so it seeds the preferred-name box instead of a blank.
+        # Full name is deliberately collected here, not at signup, and must
+        # never be guessed from an account handle or OAuth display name.
+        # Preferred name starts as the signup username but remains editable.
         if user is not None:
-            prefill.setdefault("fullName", user.display_name or "")
             prefill.setdefault("preferredName", user.username or "")
         return {
             "required": user is not None and user.onboarded_at is None,
@@ -182,8 +182,15 @@ class OnboardingService:
         workspace_id = str(workspace.id)
         user = self.owner(workspace)
         saved, rejected = [], {}
+        existing_facts = self.vault.snapshot(workspace_id, include_sensitive=True)
         for name, value in cleaned.items():
             field = FIELDS_BY_NAME[name]
+            # A returning student's prefilled canonical answer is already
+            # satisfied. Do not supersede it with an identical onboarding row
+            # or erase its original provenance merely because they continued.
+            if existing_facts.get(field.field_key) == value:
+                saved.append(field.field_key)
+                continue
             candidate = MemoryCandidateService(self.db).propose(
                 workspace_id=workspace_id, candidate_type="vault_fact",
                 key=field.field_key, proposed_value=value, confidence=1.0,
@@ -199,20 +206,18 @@ class OnboardingService:
                 # rejection means canonical state did not move.
                 rejected[field.field_key] = result.reason or "rejected"
 
-        # The account's display name is account identity, not a Vault fact, so
-        # it is set through the account row the rest of the app already reads.
         if user is not None:
-            if "fullName" in cleaned and not user.display_name:
-                user.display_name = cleaned["fullName"]
-            if complete and user.onboarded_at is None:
-                user.onboarded_at = datetime.now(timezone.utc)
+            # Completion is a canonical-state guarantee, not merely a form
+            # submission stamp. Any reconciliation rejection keeps the gate
+            # in place so the UI cannot enter Counselor with missing identity.
+            if complete and not rejected:
+                # Account/workspace surfaces still read this row. Mirror the
+                # successfully reconciled canonical preferred name so the
+                # student's chosen name is consistent everywhere immediately.
+                user.display_name = cleaned["preferredName"]
+                if user.onboarded_at is None:
+                    user.onboarded_at = datetime.now(timezone.utc)
 
         return {"saved": saved, "rejected": rejected,
                 "completed": bool(user and user.onboarded_at)}
 
-    def skip(self, workspace) -> dict:
-        """Dismiss the form without answering. Never asked again."""
-        user = self.owner(workspace)
-        if user is not None and user.onboarded_at is None:
-            user.onboarded_at = datetime.now(timezone.utc)
-        return {"completed": user is not None and user.onboarded_at is not None}

@@ -853,7 +853,6 @@ export const messages = {
     privacy: 'Only you can see this. Your date of birth is kept private and never shown on your profile.',
     choose: 'Select…',
     continue: 'Continue',
-    skip: 'Skip for now',
     saved: 'Welcome to Placement AI',
     partial: "Saved, but {count} answer(s) need a second look on your profile.",
     failed: "Couldn't save that — please try again.",
@@ -861,7 +860,7 @@ export const messages = {
     field: {
       fullName: 'Full name',
       preferredName: 'What should PAI call you?',
-      statusCategory: 'I am a',
+      statusCategory: 'Current status',
       nationality: 'Nationality',
       gender: 'Gender',
       dateOfBirth: 'Date of birth',

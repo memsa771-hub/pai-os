@@ -31,6 +31,7 @@ import { workspaceApi } from '@/lib/api';
 import type { OnboardingState } from '@/lib/onboarding';
 import { useT } from '@/lib/i18n';
 import { NewThreadDialogHost } from '@/components/threads/new-thread-dialog-host';
+import { Button } from '@/components/ui/button';
 
 function WorkspaceLoadingScreen() {
   const t = useT();
@@ -67,6 +68,19 @@ function WorkspaceLoadingScreen() {
   );
 }
 
+function OnboardingLoadError({ retry }: { retry: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col items-center justify-center gap-4 bg-background p-6 text-center">
+      <img src="/pai-emblem.png" alt="Placement AI" className="size-14" />
+      <div>
+        <h1 className="font-semibold">Identity setup could not load</h1>
+        <p className="mt-1 text-sm text-muted-foreground">Please retry to finish setting up your profile.</p>
+      </div>
+      <Button onClick={retry}>Retry</Button>
+    </div>
+  );
+}
+
 export function Wrapper() {
   useDesktopWorkspaceState();
   const {
@@ -82,19 +96,20 @@ export function Wrapper() {
   }, [isMobile, currentSessionId, openMobileDetail]);
 
   // First-run onboarding. Checked once the workspace itself has loaded, and
-  // deliberately fail-open: if this call errors the student still reaches
-  // their workspace. A form we could not fetch must never lock anyone out.
+  // fail-closed: an unavailable check must not bypass mandatory identity setup.
   const [onboarding, setOnboarding] = useState<OnboardingState | null>(null);
   const [onboardingChecked, setOnboardingChecked] = useState(false);
+  const [onboardingAttempt, setOnboardingAttempt] = useState(0);
   useEffect(() => {
     if (loading) return;
     let cancelled = false;
+    setOnboardingChecked(false);
     workspaceApi.getOnboarding()
       .then((state) => { if (!cancelled) setOnboarding(state); })
-      .catch(() => { /* fail open — see above */ })
+      .catch(() => { /* no state means the retry gate below remains active */ })
       .finally(() => { if (!cancelled) setOnboardingChecked(true); });
     return () => { cancelled = true; };
-  }, [loading]);
+  }, [loading, onboardingAttempt]);
 
   // Auto-dismiss the docked agent-profile panel when the user navigates away:
   // switching to another thread (incl. starting a new chat) or to another view
@@ -132,6 +147,10 @@ export function Wrapper() {
 
   if (loading || !onboardingChecked) {
     return <WorkspaceLoadingScreen />;
+  }
+
+  if (!onboarding) {
+    return <OnboardingLoadError retry={() => setOnboardingAttempt((value) => value + 1)} />;
   }
 
   // The student's opening statement, asked once. Gating here rather than on a

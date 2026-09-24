@@ -67,7 +67,7 @@ export const FIELD_LAYOUT: Record<string, { half?: boolean; placeholder?: string
   statusCategory: {},
   nationality: { half: true, placeholder: 'Pakistani' },
   gender: { half: true },
-  dateOfBirth: { half: true, placeholder: 'YYYY-MM-DD' },
+  dateOfBirth: { half: true },
   currentCountry: { half: true, placeholder: 'Pakistan' },
   currentCity: { half: true, placeholder: 'Islamabad' },
 };

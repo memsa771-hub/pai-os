@@ -3,7 +3,7 @@
 /**
  * The first thing a new student sees.
  *
- * One page, eight boxes, two of them required. The point is not to collect a
+ * One page, eight required identity fields. The point is not to collect a
  * profile — PAI builds that over time — it is to make the FIRST conversation
  * useful: knowing someone's name, whether they study or work, and where they
  * are turns a cold "tell me about yourself" into real advice straight away.
@@ -54,7 +54,7 @@ export function OnboardingView({ state, onDone }: {
 }) {
   const t = useT();
   const [answers, setAnswers] = React.useState<OnboardingAnswers>(state.prefill || {});
-  const [busy, setBusy] = React.useState<'save' | 'skip' | null>(null);
+  const [busy, setBusy] = React.useState(false);
 
   const set = (name: string, value: string) =>
     setAnswers((prev) => ({ ...prev, [name]: value }));
@@ -70,33 +70,23 @@ export function OnboardingView({ state, onDone }: {
   );
 
   const submit = async () => {
-    setBusy('save');
+    setBusy(true);
     try {
       const result = await workspaceApi.submitOnboarding(answers);
       // The backend reports per-field rejections rather than failing the whole
       // call. Saying "saved" over a rejected field would be a lie about
       // canonical state, so surface it.
       const rejected = Object.keys(result.rejected || {});
-      if (rejected.length) {
+      if (rejected.length || !result.completed) {
         toast.warning(t('onboarding.partial', { count: rejected.length }));
+        setBusy(false);
       } else {
         toast.success(t('onboarding.saved'));
+        onDone();
       }
-      onDone();
     } catch (e) {
       toast.error(errorMessage(e) || t('onboarding.failed'));
-      setBusy(null);
-    }
-  };
-
-  const skip = async () => {
-    setBusy('skip');
-    try {
-      await workspaceApi.skipOnboarding();
-      onDone();
-    } catch (e) {
-      toast.error(errorMessage(e) || t('onboarding.failed'));
-      setBusy(null);
+      setBusy(false);
     }
   };
 
@@ -140,14 +130,11 @@ export function OnboardingView({ state, onDone }: {
           <Button
             className="flex-1"
             onClick={submit}
-            disabled={busy !== null || missingRequired}
+            disabled={busy || missingRequired}
           >
-            {busy === 'save'
+            {busy
               ? <Loader2 className="size-4 animate-spin" />
               : <>{t('onboarding.continue')}<ArrowRight className="size-4" /></>}
-          </Button>
-          <Button variant="ghost" onClick={skip} disabled={busy !== null}>
-            {t('onboarding.skip')}
           </Button>
         </div>
       </div>
@@ -193,6 +180,14 @@ function Field({ field, label, value, onChange }: {
             })}
           </SelectContent>
         </Select>
+      ) : field.isDate ? (
+        <Input
+          id={id}
+          type="date"
+          value={value}
+          max={new Date().toISOString().slice(0, 10)}
+          onChange={(e) => onChange(e.target.value)}
+        />
       ) : (
         <Input
           id={id}

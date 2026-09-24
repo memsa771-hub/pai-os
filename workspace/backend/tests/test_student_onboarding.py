@@ -214,16 +214,6 @@ def test_bad_answers_are_rejected_with_the_field_named(db, answers, message):
         OnboardingService(db).apply(db.info["workspace"], answers)
 
 
-def test_skipping_never_asks_again_and_writes_nothing(db):
-    workspace = db.info["workspace"]
-    service = OnboardingService(db)
-    service.skip(workspace)
-    db.commit()
-
-    assert service.state(workspace)["required"] is False
-    assert VaultService(db).snapshot(str(workspace.id), include_sensitive=True) == {}
-
-
 def test_returning_student_sees_their_own_values_prefilled(db):
     workspace = db.info["workspace"]
     service = OnboardingService(db)
@@ -241,6 +231,37 @@ def test_untouched_account_prefills_preferred_name_from_the_login_handle(db):
     assert prefill["preferredName"] == "alikhan"
 
 
+def test_account_display_name_does_not_guess_legal_or_preferred_name(db):
+    user = db.info["user"]
+    user.display_name = "Ali Ahmed"
+    db.commit()
+
+    prefill = OnboardingService(db).state(db.info["workspace"])["prefill"]
+    assert "fullName" not in prefill
+    assert prefill["preferredName"] == "alikhan"
+
+
+def test_every_identity_answer_is_required(db):
+    state = OnboardingService(db).state(db.info["workspace"])
+    assert state["fields"]
+    assert all(field["required"] for field in state["fields"])
+
+
+def test_existing_equal_canonical_value_keeps_its_original_provenance(db):
+    workspace = db.info["workspace"]
+    workspace_id = str(workspace.id)
+    vault = VaultService(db)
+    vault.apply_fact(workspace_id, "location.current_city", "Islamabad", "conversation")
+    db.commit()
+
+    OnboardingService(db).apply(workspace, ANSWERS)
+    db.commit()
+
+    history = vault.history(workspace_id, "location.current_city")
+    assert len(history) == 1
+    assert history[0].source_type == "conversation"
+
+
 def test_completing_onboarding_twice_keeps_the_first_timestamp(db):
     workspace = db.info["workspace"]
     service = OnboardingService(db)
@@ -256,18 +277,16 @@ def test_completing_onboarding_twice_keeps_the_first_timestamp(db):
     assert facts["location.current_city"] == "Lahore"
 
 
-def test_display_name_is_seeded_from_the_full_name_but_never_overwritten(db):
+def test_preferred_name_is_used_consistently_on_account_surfaces(db):
     workspace, user = db.info["workspace"], db.info["user"]
     assert user.display_name is None
     OnboardingService(db).apply(workspace, ANSWERS)
     db.commit()
-    assert user.display_name == "Ali Ahmed"
+    assert user.display_name == "Ali"
 
-    user.display_name = "Ali A."
+    OnboardingService(db).apply(workspace, {**ANSWERS, "preferredName": "A. Khan"})
     db.commit()
-    OnboardingService(db).apply(workspace, {**ANSWERS, "fullName": "Ali Ahmed Khan"})
-    db.commit()
-    assert user.display_name == "Ali A.", "a name the student chose must win"
+    assert user.display_name == "A. Khan"
 
 
 def test_every_declared_field_maps_to_a_real_vault_key(db):
