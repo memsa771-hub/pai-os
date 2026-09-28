@@ -2,7 +2,9 @@
 
 import re
 
-from .contract import CapabilityContract
+from app.tools.schema import SchemaValidationError as CapabilitySchemaError
+from app.tools.schema import validate_schema_instance as validate_instance
+from .contract import CapabilityContract, FallbackPolicy
 
 _ID = re.compile(r"^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+$")
 _SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
@@ -11,30 +13,6 @@ _SCHEMA_TYPES = frozenset({"object", "array", "string", "number", "integer", "bo
 
 class InvalidCapabilityManifest(ValueError):
     pass
-
-
-class CapabilitySchemaError(ValueError):
-    pass
-
-
-def validate_instance(schema: dict, value, label: str) -> None:
-    """Small dependency-free root validator for the contract boundary."""
-    expected = schema.get("type")
-    checks = {
-        "object": lambda item: isinstance(item, dict),
-        "array": lambda item: isinstance(item, list),
-        "string": lambda item: isinstance(item, str),
-        "number": lambda item: isinstance(item, (int, float)) and not isinstance(item, bool),
-        "integer": lambda item: isinstance(item, int) and not isinstance(item, bool),
-        "boolean": lambda item: isinstance(item, bool),
-        "null": lambda item: item is None,
-    }
-    if expected in checks and not checks[expected](value):
-        raise CapabilitySchemaError(f"{label} must be {expected}")
-    if expected == "object":
-        missing = [key for key in schema.get("required", []) if key not in value]
-        if missing:
-            raise CapabilitySchemaError(f"{label} missing required field: {missing[0]}")
 
 
 def validate(contract: CapabilityContract) -> None:
@@ -49,6 +27,11 @@ def validate(contract: CapabilityContract) -> None:
             raise InvalidCapabilityManifest(f"{name} schema must declare a supported type")
     if contract.approval not in {"none", "always", "risk_based"}:
         raise InvalidCapabilityManifest("invalid approval policy")
+    if contract.fallback_policy not in set(FallbackPolicy):
+        raise InvalidCapabilityManifest("invalid fallback policy")
+    for task_type in contract.owns_task_types:
+        if not re.fullmatch(r"^[a-z][a-z0-9_]{1,63}$", task_type):
+            raise InvalidCapabilityManifest(f"invalid owned task type: {task_type}")
     if contract.timeout_seconds <= 0 or contract.retry.max_attempts <= 0:
         raise InvalidCapabilityManifest("timeout and retry attempts must be positive")
     if contract.provider != "native":

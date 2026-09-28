@@ -25,6 +25,10 @@ class ToolContext:
     # frozenset means the caller may only use tools whose declared
     # capabilities are a subset of it. See app/tools/policy.py:Capability.
     granted_capabilities: Optional[frozenset[str]] = field(default=None)
+    # Host-validated approvals persisted on the current ExecutionRun. Models
+    # and capability input cannot manufacture this field.
+    approved_capabilities: frozenset[str] = field(default_factory=frozenset)
+    required_capability_id: Optional[str] = field(default=None)
 
     @property
     def source(self) -> str:

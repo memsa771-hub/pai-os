@@ -216,6 +216,7 @@ def serialize_run(run: ExecutionRun) -> dict:
         "workspace_id": run.workspace_id,
         "requested_by": run.requested_by,
         "objective": run.objective,
+        "task_type": run.task_type,
         "constraints": run.constraints or {},
         "context_refs": run.context_refs or [],
         "status": run.status,
@@ -407,7 +408,8 @@ def is_available() -> bool:
 # Tool-facing entry points — called from app/tools/builtin/operator.py
 # ---------------------------------------------------------------------------
 
-async def delegate(ctx, objective: str, constraints: Optional[dict], context_refs: Optional[list], intent: Optional[str] = None) -> dict:
+async def delegate(ctx, objective: str, constraints: Optional[dict], context_refs: Optional[list],
+                   intent: Optional[str] = None, task_type: Optional[str] = None) -> dict:
     """Create an ExecutionRun and schedule its execution in the background.
 
     Returns immediately — the caller (PAI Counselor's tool loop) gets an
@@ -415,8 +417,11 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
     however long the actual work takes.
     """
     objective = (objective or "").strip()
+    task_type = (task_type or "").strip() or None
     if not objective:
         return {"ok": False, "error": {"code": "invalid_arguments", "message": "objective is required"}}
+    if task_type is not None and not re.fullmatch(r"[a-z][a-z0-9_]{1,63}", task_type):
+        return {"ok": False, "error": {"code": "invalid_arguments", "message": "task_type must be a stable lowercase identifier"}}
     if not is_available():
         return {"ok": False, "error": {"code": "operator_unavailable", "message": "PAI Operator is not configured on the server"}}
 
@@ -436,6 +441,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
             ExecutionRun.workspace_id == ctx.workspace_id,
             ExecutionRun.channel_target == channel_target,
             ExecutionRun.objective == objective,
+            ExecutionRun.task_type == task_type,
             ExecutionRun.status.notin_(_TERMINAL),
         ).order_by(ExecutionRun.created_at.desc()).limit(1)).scalar_one_or_none()
         if existing is not None and (existing.constraints or {}) == constraints:
@@ -446,6 +452,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
             requested_by=ctx.source,
             channel_target=channel_target,
             objective=objective,
+            task_type=task_type,
             constraints=constraints or {},
             context_refs=context_refs or [],
             status="pending",
@@ -455,7 +462,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
         db.commit()
         db.refresh(run)
         run_id = run.id
-        data = {"run_id": run_id, "status": run.status, "objective": objective}
+        data = {"run_id": run_id, "status": run.status, "objective": objective, "task_type": task_type}
     finally:
         db.close()
 
@@ -620,11 +627,22 @@ async def _execute(
             constraints.get("student_intent"),
         )
         from app.capabilities import get_capability_registry
-        installed_capabilities = get_capability_registry().all()
+        from app.capabilities.execution_policy import resolve_run_policy
+        capability_registry = get_capability_registry()
+        installed_capabilities = capability_registry.all()
+        run_policy = resolve_run_policy(capability_registry, run.task_type, run.resume_input)
+        owner = run_policy.owner
         capability_catalog = "\n".join(
-            f"- {item.id}@{item.version}: {item.description}"
+            f"- {item.id}@{item.version} owns={sorted(item.owns_task_types)} "
+            f"fallback={item.fallback_policy.value}: {item.description}"
             for item in installed_capabilities
         ) or "(no domain capabilities installed)"
+        routing_statement = (
+            f"Task type {run.task_type!r} is owned by {owner.id}. You MUST use that capability; "
+            "raw domain tools are unavailable. Use capability.describe before capability.invoke."
+            if owner else
+            f"Task type {run.task_type!r} has no installed owner; generic execution is allowed."
+        )
 
         # ---- UNDERSTAND ----
         if resume_payload is None:
@@ -646,6 +664,7 @@ async def _execute(
                         f"Objective from PAI Counselor: {objective}\n"
                         f"Constraints: {constraints}\n\n"
                         f"Installed business capabilities:\n{capability_catalog}\n\n"
+                        f"Deterministic routing: {routing_statement}\n\n"
                         "UNDERSTAND phase only. In 2-4 sentences, restate what is actually "
                         "being asked, note what is already known, and name the biggest "
                         "unknown. Do not plan or act yet."
@@ -674,10 +693,10 @@ async def _execute(
                     f"{memory_block}\n\n" if memory_block else ""
                 ) + (
                     f"Objective: {objective}\nUnderstanding: {understanding}\n\n"
+                    f"Deterministic routing: {routing_statement}\n"
                     "PLAN phase. Reply with ONLY a JSON array of 3-8 step objects — "
                     '[{"id": "short_snake_case_id", "title": "short label"}, ...] — '
-                    "the concrete ordered steps needed, using the tools you have "
-                    "(browser, docs/files, tasks, workflows, web search). No prose, "
+                    "the concrete ordered steps needed, using only the tools exposed for this run. No prose, "
                     "no markdown fences, just the JSON array."
                 )}],
                 system_prompt=OPERATOR_SYSTEM_PROMPT,
@@ -713,11 +732,25 @@ async def _execute(
         # because they are audience=counselor-only and because they declare a
         # capability (manage) Operator's grant does not cover.
         granted_capabilities = OPERATOR_CAPABILITIES
-        allowed_tools = frozenset(
+        all_operator_tools = frozenset(
             t.name for t in tool_registry.for_audience(AUDIENCE_OPERATOR)
             if tool_registry.permits(t, granted_capabilities)
         )
-        tools = tool_registry.openai_tools_for_audience(AUDIENCE_OPERATOR, granted_capabilities)
+        allowed_tools = run_policy.allowed_tools(all_operator_tools)
+        tools = tool_registry.openai_tools_for_names(
+            allowed_tools, audience=AUDIENCE_OPERATOR,
+            granted_capabilities=granted_capabilities,
+        )
+        resume_state = run.resume_input or {}
+        resumed_pending = resume_state.get("pending_action") or {}
+        resumed_response = resume_state.get("response") or {}
+        approved_capabilities = frozenset({
+            resumed_pending.get("capability_id")
+        }) if (
+            resumed_pending.get("purpose") == "capability_invoke"
+            and resumed_response.get("approved") is True
+            and resumed_pending.get("capability_id")
+        ) else frozenset()
         tool_context = ToolContext(
             workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
             api=api, allowed_tools=allowed_tools,
@@ -726,6 +759,8 @@ async def _execute(
             # Operator stays blocked even if it ever ended up in that set.
             audience=AUDIENCE_OPERATOR,
             granted_capabilities=granted_capabilities,
+            approved_capabilities=approved_capabilities,
+            required_capability_id=owner.id if owner and not run_policy.generic_fallback_approved else None,
         )
 
         plan_listing = "\n".join(f"- {s['id']}: {s['title']}" for s in plan)
@@ -741,6 +776,7 @@ async def _execute(
             "\nConstraints from the student/counselor: " + _json.dumps(constraints, default=str)
             + "\nUnderstanding: " + understanding
             + "\nInstalled business capabilities (resolve by id, never package path):\n" + capability_catalog
+            + "\nDeterministic routing policy: " + routing_statement
             + "\nYour final response must contain useful findings with source URLs, "
               "verification gaps and a concrete next step for this student."
         )
@@ -751,6 +787,13 @@ async def _execute(
         tool_call_log: list[dict] = list(run.tool_calls or []) if resume_payload is not None else []
         observations: list[dict] = list((run.result or {}).get("observations") or []) if resume_payload is not None else []
         final_text = ""
+        generic_fallback_active = run_policy.generic_fallback_approved
+        owner_succeeded = any(
+            item.get("tool") == "capability.invoke"
+            and (item.get("arguments") or {}).get("capability_id") == (owner.id if owner else None)
+            and item.get("ok")
+            for item in tool_call_log
+        )
         max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
         for i in range(max_iters):
@@ -772,6 +815,19 @@ async def _execute(
             requested_calls = msg.get("tool_calls")
             if not requested_calls:
                 final_text = msg.get("content", "") or ""
+                if owner and not owner_succeeded and not generic_fallback_active:
+                    summary = f"The installed capability {owner.name} was not successfully invoked."
+                    result = {"summary": summary, "final_message": final_text or None,
+                              "plan": plan, "tool_calls": tool_call_log,
+                              "observations": observations[-12:], "artifact_id": None}
+                    set_status(
+                        STATUS_FAILED, current_step=summary, error="owned capability was not invoked",
+                        completed_at=_now(), plan=plan,
+                        completed_steps=[s["title"] for s in plan if s["status"] == "completed"],
+                        tool_calls=tool_call_log, result=result, result_type="text",
+                    )
+                    await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, summary)
+                    return
                 break
 
             messages.append(msg)
@@ -804,6 +860,73 @@ async def _execute(
                     "role": "tool", "tool_call_id": tc["id"],
                     "content": observation["data"],
                 })
+                error = result.get("error") if isinstance(result, dict) else None
+                error = error if isinstance(error, dict) else {}
+                if error.get("code") == "approval_required" and isinstance(error.get("pending_action"), dict):
+                    pending_action = dict(error["pending_action"])
+                    summary = str(error.get("message") or "Approval is required before this work can continue.")
+                    partial = {"summary": summary, "final_message": None, "plan": plan,
+                               "tool_calls": tool_call_log, "observations": observations[-12:], "artifact_id": None}
+                    set_status(
+                        STATUS_NEEDS_USER_ACTION, current_step=summary,
+                        pending_action=pending_action, completed_at=None,
+                        plan=plan, completed_steps=[s["title"] for s in plan if s["status"] == "completed"],
+                        tool_calls=tool_call_log, result=partial, result_type="text",
+                    )
+                    await _post_result(db, workspace_id, channel_target, run_id,
+                                       STATUS_NEEDS_USER_ACTION, _terminal_message(
+                                           STATUS_NEEDS_USER_ACTION, summary, [],
+                                           {"approval_required_for": pending_action.get("title")},
+                                       ))
+                    return
+                if owner and tool_name == "capability.invoke" and tool_args.get("capability_id") == owner.id:
+                    if result.get("ok"):
+                        owner_succeeded = True
+                    elif run_policy.fallback_policy.value == "forbidden":
+                        summary = f"{owner.name} could not complete the owned task; generic fallback is forbidden."
+                        partial = {"summary": summary, "final_message": None, "plan": plan,
+                                   "tool_calls": tool_call_log, "observations": observations[-12:], "artifact_id": None}
+                        set_status(
+                            STATUS_FAILED, current_step=summary,
+                            error=str(error.get("message") or "owned capability failed")[:500],
+                            completed_at=_now(), plan=plan,
+                            completed_steps=[s["title"] for s in plan if s["status"] == "completed"],
+                            tool_calls=tool_call_log, result=partial, result_type="text",
+                        )
+                        await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, summary)
+                        return
+                    elif run_policy.fallback_policy.value == "approval_required":
+                        pending_action = {
+                            "kind": "approval", "title": "Approve generic fallback",
+                            "prompt": f"{owner.name} failed. Approve continuing with generic platform tools?",
+                            "reason": str(error.get("message") or "The dedicated capability failed."),
+                            "options": ["approve", "decline"], "required": True,
+                            "purpose": "capability_fallback", "capability_id": owner.id,
+                        }
+                        summary = "The dedicated capability failed; approval is required before generic fallback."
+                        partial = {"summary": summary, "final_message": None, "plan": plan,
+                                   "tool_calls": tool_call_log, "observations": observations[-12:], "artifact_id": None}
+                        set_status(
+                            STATUS_NEEDS_USER_ACTION, current_step=summary,
+                            pending_action=pending_action, completed_at=None,
+                            plan=plan, completed_steps=[s["title"] for s in plan if s["status"] == "completed"],
+                            tool_calls=tool_call_log, result=partial, result_type="text",
+                        )
+                        await _post_result(db, workspace_id, channel_target, run_id,
+                                           STATUS_NEEDS_USER_ACTION, summary)
+                        return
+                    else:
+                        generic_fallback_active = True
+                        allowed_tools = all_operator_tools
+                        tools = tool_registry.openai_tools_for_names(
+                            allowed_tools, audience=AUDIENCE_OPERATOR,
+                            granted_capabilities=granted_capabilities,
+                        )
+                        tool_context = ToolContext(
+                            workspace_id=workspace_id, agent_name=PAI_OPERATOR_AGENT_NAME,
+                            api=api, allowed_tools=allowed_tools, audience=AUDIENCE_OPERATOR,
+                            granted_capabilities=granted_capabilities,
+                        )
             set_status(
                 "executing", tool_calls=tool_call_log,
                 current_step=f"Ran {len(tool_call_log)} action(s) so far",

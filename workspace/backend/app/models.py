@@ -652,6 +652,8 @@ class ExecutionRun(Base):
     # callers) simply has nowhere to auto-post to.
     channel_target = Column(Text, nullable=True)
     objective = Column(Text, nullable=False)
+    # Stable routing key; objective remains human-readable context only.
+    task_type = Column(Text, nullable=True)
     constraints = Column(JSONB, nullable=True)              # e.g. {"do_not_submit_without_approval": true}
     context_refs = Column(JSONB, nullable=True)              # e.g. ["student_vault", "application_123"]
     # pending -> understanding -> planning -> executing -> verifying -> one of:
@@ -686,6 +688,7 @@ class ExecutionRun(Base):
     __table_args__ = (
         Index("idx_execution_runs_workspace", "workspace_id"),
         Index("idx_execution_runs_workspace_status", "workspace_id", "status"),
+        Index("idx_execution_runs_workspace_task_type", "workspace_id", "task_type"),
     )
 
 

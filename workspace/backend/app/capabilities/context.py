@@ -9,3 +9,4 @@ class CapabilityExecutionContext:
     journey_context: dict[str, Any]
     permissions: frozenset[str]
     tool_names: frozenset[str]
+    tools: Any = None

@@ -20,6 +20,9 @@ class CapabilityRouter:
             raise CapabilityNotFound(f"unknown capability: {capability_id}")
         return contract
 
+    def resolve_task(self, task_type: str | None):
+        return self.registry.owner_for_task_type(task_type)
+
     async def execute(self, capability_id: str, payload: dict,
                       context: CapabilityExecutionContext) -> dict:
         contract = self.resolve(capability_id)

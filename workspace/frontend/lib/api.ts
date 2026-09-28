@@ -1656,6 +1656,7 @@ class WorkspaceApi {
     return {
       id: r.id as string,
       objective: r.objective as string,
+      taskType: (r.task_type ?? null) as string | null,
       status: r.status as OperatorRun['status'],
       currentStep: (r.current_step ?? null) as string | null,
       plan: (r.plan || []) as OperatorRun['plan'],
@@ -1663,6 +1664,7 @@ class WorkspaceApi {
       toolCalls: (r.tool_calls || []) as OperatorRun['toolCalls'],
       missing: (r.missing || []) as string[],
       approvalRequiredFor: (r.approval_required_for ?? null) as string | null,
+      pendingAction: (r.pending_action ?? null) as Record<string, unknown> | null,
       error: (r.error ?? null) as string | null,
       result: (r.result ?? null) as Record<string, unknown> | null,
       verification: (r.verification ?? null) as Record<string, unknown> | null,

@@ -7,6 +7,7 @@ class CapabilityAccessDenied(PermissionError):
 OPERATOR_PLATFORM_PERMISSIONS = frozenset({
     "files.read", "files.write", "web.read", "browser.read", "browser.write",
     "application.prepare",
+    "profile.propose",
 })
 
 

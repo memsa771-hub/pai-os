@@ -59,6 +59,17 @@ def register_builtin_tools(registry):
         ToolDefinition("browser.close", "Close a shared browser tab.", obj({"tab_id": {"type": "string"}}, ["tab_id"]), "browser", ToolRisk.WRITE, browser.close, audiences=OPERATOR_ONLY),
         ToolDefinition("browser.contexts.list", "List persistent shared browser contexts.", EMPTY, "browser", ToolRisk.READ, browser.list_contexts, audiences=OPERATOR_ONLY),
         ToolDefinition(
+            "capability.list",
+            "List installed business capabilities with task ownership and execution policy.",
+            EMPTY, "capability", ToolRisk.READ, capabilities.list_capabilities, audiences=OPERATOR_ONLY,
+        ),
+        ToolDefinition(
+            "capability.describe",
+            "Describe one capability's input/output schemas, context, tools, permissions, evidence, and policy.",
+            obj({"capability_id": {"type": "string"}}, ["capability_id"]),
+            "capability", ToolRisk.READ, capabilities.describe, audiences=OPERATOR_ONLY,
+        ),
+        ToolDefinition(
             "capability.invoke",
             "Invoke an installed business capability by its manifest id. The host supplies only its declared student scopes, journey fields, permissions, and tools.",
             obj({"capability_id": {"type": "string"}, "input": {"type": "object", "additionalProperties": True}}, ["capability_id", "input"]),
@@ -76,6 +87,7 @@ def register_builtin_tools(registry):
             "for a single quick lookup you can do yourself with one tool call.",
             obj({
                 "objective": {"type": "string"},
+                "task_type": {"type": "string", "pattern": "^[a-z][a-z0-9_]{1,63}$", "description": "Stable machine-readable routing key such as program_research."},
                 "constraints": {"type": "object", "additionalProperties": True},
                 # The vocabulary has to be spelled out: unknown refs are dropped
                 # silently (see MemoryContextService.build_student_context), so an
@@ -98,7 +110,7 @@ def register_builtin_tools(registry):
                     ),
                 },
                 "intent": {"type": "string", "enum": ["discovery", "academic_planning", "study_abroad_matching", "eligibility_analysis", "career_exploration", "scholarship_planning", "application_preparation", "application_execution", "visa_preparation", "enrollment", "document_review"]},
-            }, ["objective"]),
+            }, ["objective", "task_type"]),
             "operator", ToolRisk.WRITE, operator.delegate, audiences=COUNSELOR_ONLY,
         ),
         ToolDefinition(

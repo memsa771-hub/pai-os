@@ -460,6 +460,7 @@ export interface OperatorToolCall {
 export interface OperatorRun {
   id: string;
   objective: string;
+  taskType: string | null;
   status: OperatorRunStatus;
   currentStep: string | null;
   plan: OperatorPlanStep[];
@@ -467,6 +468,7 @@ export interface OperatorRun {
   toolCalls: OperatorToolCall[];
   missing: string[];
   approvalRequiredFor: string | null;
+  pendingAction: Record<string, unknown> | null;
   error: string | null;
   /** The durable result of the run — present once terminal; caller-defined
    * shape (e.g. {summary, final_message, plan, tool_calls, artifact_id}). */

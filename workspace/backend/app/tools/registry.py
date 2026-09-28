@@ -117,6 +117,14 @@ class ToolRegistry:
             and self.permits(tool, granted_capabilities)
         ]
 
+    def openai_tools_for_names(self, names, *, audience: str, granted_capabilities=None) -> list[dict]:
+        """Schemas for an exact host-selected per-run tool surface."""
+        allowed = set(names)
+        return [
+            self._schema(tool) for tool in self.for_audience(audience)
+            if tool.name in allowed and self.permits(tool, granted_capabilities)
+        ]
+
     @staticmethod
     def permits(tool: ToolDefinition, granted_capabilities=None) -> bool:
         """True if a caller holding `granted_capabilities` may use `tool`.
