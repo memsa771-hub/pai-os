@@ -29,12 +29,14 @@ COUNSELOR_CAPABILITIES = frozenset({
     Capability.MEMORY_MANAGE.value,
     Capability.VAULT_READ.value,
     Capability.VAULT_MANAGE.value,
+    *(item.value for item in Capability if item.value.startswith("vault.") and item.value.endswith(".read")),
 })
 
 OPERATOR_CAPABILITIES = frozenset({
     Capability.MEMORY_READ.value,
     Capability.VAULT_READ.value,
     Capability.PROFILE_PROPOSE.value,
+    *(item.value for item in Capability if item.value.startswith("vault.") and item.value.endswith(".read")),
 })
 
 

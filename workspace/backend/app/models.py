@@ -663,6 +663,10 @@ class ExecutionRun(Base):
     tool_calls = Column(JSONB, nullable=True)                # raw action history: [{"tool","ok"}, ...] — NOT plan progress
     missing = Column(JSONB, nullable=True)                   # what verification found incomplete
     approval_required_for = Column(Text, nullable=True)      # e.g. "final_submission"
+    # A run waiting for a human is paused, not finished.  The structured
+    # action is the stable UI/API contract used to resume this same row.
+    pending_action = Column(JSONB, nullable=True)
+    resume_input = Column(JSONB, nullable=True)
     error = Column(Text, nullable=True)
     # The durable result of the run — the actual source of truth even if
     # posting it back into chat fails. Shape is caller-defined (e.g. a
@@ -682,6 +686,57 @@ class ExecutionRun(Base):
     __table_args__ = (
         Index("idx_execution_runs_workspace", "workspace_id"),
         Index("idx_execution_runs_workspace_status", "workspace_id", "status"),
+    )
+
+
+class StudentJourney(Base):
+    """Active intent and progress, deliberately separate from Vault truth."""
+    __tablename__ = "pai_student_journeys"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    subject_user_id = Column(Text, nullable=True)
+    journey_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
+    is_primary = Column(Boolean, nullable=False, default=False, server_default=text("false"))
+    active_goal = Column(JSONB, nullable=True)
+    current_stage = Column(Text, nullable=True)
+    current_objective = Column(Text, nullable=True)
+    target_outcome = Column(JSONB, nullable=True)
+    target_date = Column(DateTime(timezone=True), nullable=True)
+    milestones = Column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    decisions = Column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    unresolved_decisions = Column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    blockers = Column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    next_milestone = Column(JSONB, nullable=True)
+    next_recommended_action = Column(JSONB, nullable=True)
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+    updated_at = Column(DateTime(timezone=True), default=_now, onupdate=_now, server_default=text("NOW()"))
+    completed_at = Column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('active', 'paused', 'completed', 'abandoned')", name="ck_student_journey_status"),
+        Index("idx_student_journeys_workspace", "workspace_id"),
+        Index("idx_student_journeys_workspace_status", "workspace_id", "status"),
+    )
+
+
+class StudentJourneyEvent(Base):
+    """Append-only history for a Student Journey."""
+    __tablename__ = "pai_student_journey_events"
+
+    id = Column(Text, primary_key=True, default=_uuid)
+    journey_id = Column(Text, ForeignKey("pai_student_journeys.id", ondelete="CASCADE"), nullable=False)
+    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    event_type = Column(Text, nullable=False)
+    payload = Column(JSONB, nullable=False, default=dict, server_default=text("'{}'"))
+    actor = Column(Text, nullable=False, default="system", server_default=text("'system'"))
+    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
+
+    __table_args__ = (
+        Index("idx_student_journey_events_journey", "journey_id", "created_at"),
+        Index("idx_student_journey_events_workspace", "workspace_id"),
     )
 
 

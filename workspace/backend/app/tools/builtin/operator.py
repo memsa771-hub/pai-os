@@ -22,3 +22,9 @@ async def status(ctx, args):
     from app.services import operator
 
     return await operator.get_status(ctx, args.get("run_id"))
+
+
+async def resume(ctx, args):
+    from app.services import operator
+
+    return await operator.resume(ctx, args.get("run_id", ""), args.get("action") or {})

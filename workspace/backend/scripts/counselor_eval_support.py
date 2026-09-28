@@ -20,7 +20,7 @@ from app.memory.vault import VaultService
 from app.models import (
     BackgroundJob, CloudAgentConfig, EventRecord, ExecutionRun, FileRecord,
     MemoryCandidate, PaiEpisode, PaiMemory, ProfileIssue, ProfileRequirement, StudentRecordRevision,
-    User, VaultFact, VaultFieldDefinition, Workspace,
+    StudentJourney, StudentJourneyEvent, User, VaultFact, VaultFieldDefinition, Workspace,
 )
 from app.services import cloud_agent, pai
 
@@ -69,6 +69,7 @@ class StudentSession:
         models = [User, Workspace, CloudAgentConfig, ExecutionRun, EventRecord, FileRecord,
                   VaultFact, VaultFieldDefinition, MemoryCandidate, PaiMemory, PaiEpisode,
                   ProfileIssue, ProfileRequirement, StudentRecordRevision, BackgroundJob,
+                  StudentJourney, StudentJourneyEvent,
                   *ENTITY_MODELS.values()]
         Base.metadata.create_all(self.engine, tables=[m.__table__ for m in models])
         self.factory = sessionmaker(bind=self.engine, autoflush=False)

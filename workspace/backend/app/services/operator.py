@@ -74,7 +74,8 @@ PAI_OPERATOR_DISPLAY_NAME = "PAI Operator"
 STATUS_COMPLETED = "completed"
 STATUS_NEEDS_USER_ACTION = "needs_user_action"
 STATUS_FAILED = "failed"
-_TERMINAL = frozenset({STATUS_COMPLETED, STATUS_NEEDS_USER_ACTION, STATUS_FAILED})
+_TERMINAL = frozenset({STATUS_COMPLETED, STATUS_FAILED})
+_OUTCOMES = frozenset({STATUS_COMPLETED, STATUS_NEEDS_USER_ACTION, STATUS_FAILED})
 _running_tasks: set[asyncio.Task] = set()
 
 OPERATOR_SYSTEM_PROMPT = """\
@@ -224,6 +225,7 @@ def serialize_run(run: ExecutionRun) -> dict:
         "tool_calls": run.tool_calls or [],
         "missing": run.missing or [],
         "approval_required_for": run.approval_required_for,
+        "pending_action": run.pending_action,
         "error": run.error,
         "result": run.result,
         "verification": run.verification,
@@ -358,21 +360,34 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list], que
     Counselor does. Sharing the renderer is also what keeps the two from
     drifting: hardening the rules once now protects both callers.
     """
-    if not context_refs:
-        return ""
     db = new_session()
     try:
         from app.memory.student_context import StudentContextBuilder
         from app.memory.foreground import (
-            MEMORY_RULES, MEMORY_RULES_TRAILER, render_block,
+            MEMORY_RULES, MEMORY_RULES_TRAILER, escape_value, render_block,
         )
-
-        student = StudentContextBuilder(db).build_context(
-            workspace_id, query=query, caller=PAI_OPERATOR_AGENT_NAME, intent=intent)
-        block, _truncated = render_block(student)
-        if not block:
-            return ""
-        return f"{MEMORY_RULES}\n\n{block}\n\n{MEMORY_RULES_TRAILER}"
+        sections = []
+        if context_refs:
+            student = StudentContextBuilder(db).build_context(
+                workspace_id, query=query, caller=PAI_OPERATOR_AGENT_NAME, intent=intent)
+            block, _truncated = render_block(student)
+            if block:
+                sections.append(f"{MEMORY_RULES}\n\n{block}\n\n{MEMORY_RULES_TRAILER}")
+        from app.journey import JourneyService
+        journey = JourneyService(db).resolve_primary(workspace_id)
+        if journey is not None:
+            data = journey.to_dict()
+            sections.append(
+                "ACTIVE STUDENT JOURNEY (state, not Vault truth):\n" + escape_value({
+                    key: data.get(key) for key in (
+                        "id", "journey_type", "title", "active_goal", "current_stage",
+                        "current_objective", "target_outcome", "target_date", "milestones",
+                        "decisions", "unresolved_decisions", "blockers", "next_milestone",
+                        "next_recommended_action",
+                    )
+                })
+            )
+        return "\n\n".join(sections)
     except Exception:
         logger.exception(
             "operator: failed to resolve context_refs for workspace %s", workspace_id
@@ -479,9 +494,77 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
                 data["verification"] = None
                 data["result_withheld"] = True
                 data["next_requirement"] = completion.get("nextRequirement")
+                requirement = completion.get("nextRequirement") or {}
+                data["pending_action"] = {
+                    "kind": "text", "title": "One profile detail is needed",
+                    "prompt": requirement.get("question") or "Please complete the required profile detail.",
+                    "reason": "Personalized results stay withheld until the required context is confirmed.",
+                    "options": [], "required": True,
+                }
         return {"ok": True, "data": data}
     finally:
         db.close()
+
+
+async def resume(ctx, run_id: str, action: dict) -> dict:
+    """Resume the same paused ExecutionRun with structured human input."""
+    if not run_id or not isinstance(action, dict) or not action:
+        return {"ok": False, "error": {"code": "invalid_arguments", "message": "run_id and action are required"}}
+    db = new_session()
+    try:
+        run = db.execute(select(ExecutionRun).where(
+            ExecutionRun.id == run_id, ExecutionRun.workspace_id == ctx.workspace_id,
+        ).with_for_update()).scalar_one_or_none()
+        if run is None:
+            return {"ok": False, "error": {"code": "not_found", "message": "run not found"}}
+        if run.status != STATUS_NEEDS_USER_ACTION or not run.pending_action:
+            return {"ok": False, "error": {"code": "not_paused", "message": "run is not waiting for user action"}}
+        pending = dict(run.pending_action)
+        kind = pending.get("kind")
+        if kind == "approval" and action.get("approved") is not True:
+            run.resume_input = {"pending_action": pending, "response": action, "received_at": _now().isoformat()}
+            run.pending_action = None
+            run.status = STATUS_FAILED
+            run.current_step = "The student declined the requested action"
+            run.error = "approval declined"
+            run.completed_at = _now()
+            db.commit()
+            return {"ok": True, "data": {"run_id": run_id, "status": STATUS_FAILED, "resumed": False}}
+        if kind == "text" and not str(action.get("text") or action.get("value") or "").strip():
+            return {"ok": False, "error": {"code": "action_incomplete", "message": "text is required"}}
+        if kind == "file" and not str(action.get("file_id") or "").strip():
+            return {"ok": False, "error": {"code": "action_incomplete", "message": "file_id is required"}}
+        if kind == "choice" and action.get("choice") not in (pending.get("options") or []):
+            return {"ok": False, "error": {"code": "action_incomplete", "message": "a listed choice is required"}}
+        if kind == "profile_conflict":
+            from app.memory.errors import MemoryDataError
+            from app.memory.profile_issues import ProfileIssueService
+            try:
+                resolution = ProfileIssueService(db).resolve(
+                    ctx.workspace_id, str(action.get("issue_id") or ""),
+                    str(action.get("resolution_action") or ""),
+                    value=action.get("value"), note=action.get("note"),
+                )
+            except MemoryDataError as exc:
+                return {"ok": False, "error": {"code": "action_incomplete", "message": str(exc)}}
+            if not resolution.get("resolved"):
+                return {"ok": False, "error": {"code": "conflict_unresolved", "message": str(resolution.get("reason") or "profile conflict remains unresolved")}}
+        run.resume_input = {"pending_action": pending, "response": action, "received_at": _now().isoformat()}
+        run.pending_action = None
+        run.status = "pending"
+        run.current_step = "Resuming with the student's response"
+        run.completed_at = None
+        db.commit()
+        objective, constraints, context_refs, target = run.objective, run.constraints or {}, run.context_refs or [], run.channel_target
+    finally:
+        db.close()
+    task = asyncio.create_task(_execute(
+        run_id, ctx.workspace_id, ctx.api, objective, constraints, context_refs, target,
+        resume_payload=action,
+    ))
+    _running_tasks.add(task)
+    task.add_done_callback(_running_tasks.discard)
+    return {"ok": True, "data": {"run_id": run_id, "status": "pending", "resumed": True}}
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +574,7 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
 async def _execute(
     run_id: str, workspace_id: str, api: Any,
     objective: str, constraints: dict, context_refs: list,
-    channel_target: Optional[str] = None,
+    channel_target: Optional[str] = None, resume_payload: Optional[dict] = None,
 ) -> None:
     db = new_session()
     try:
@@ -536,25 +619,40 @@ async def _execute(
             _resolve_memory_context, workspace_id, context_refs, objective,
             constraints.get("student_intent"),
         )
+        from app.capabilities import get_capability_registry
+        installed_capabilities = get_capability_registry().all()
+        capability_catalog = "\n".join(
+            f"- {item.id}@{item.version}: {item.description}"
+            for item in installed_capabilities
+        ) or "(no domain capabilities installed)"
 
         # ---- UNDERSTAND ----
-        set_status("understanding", current_step="Understanding the objective")
+        if resume_payload is None:
+            set_status("understanding", current_step="Understanding the objective")
         try:
-            db.rollback()
-            understanding = await chat_completion(
-                api_key=api_key, provider=provider, model=model,
-                reasoning_effort=effort,
-                messages=[{"role": "user", "content": (
-                    f"{state_summary}\n{memory_block}\n\n"
-                    f"Objective from PAI Counselor: {objective}\n"
-                    f"Constraints: {constraints}\n\n"
-                    "UNDERSTAND phase only. In 2-4 sentences, restate what is actually "
-                    "being asked, note what is already known, and name the biggest "
-                    "unknown. Do not plan or act yet."
-                )}],
-                system_prompt=OPERATOR_SYSTEM_PROMPT,
-                max_tokens=config.PAI_OPERATOR_PHASE_MAX_TOKENS, base_url=base_url,
-            )
+            if resume_payload is not None:
+                understanding = (
+                    "Resume the saved run using the student's response. Preserve completed "
+                    "steps and do not repeat successful actions. Response: "
+                    + _json.dumps(resume_payload, default=str)
+                )
+            else:
+                db.rollback()
+                understanding = await chat_completion(
+                    api_key=api_key, provider=provider, model=model,
+                    reasoning_effort=effort,
+                    messages=[{"role": "user", "content": (
+                        f"{state_summary}\n{memory_block}\n\n"
+                        f"Objective from PAI Counselor: {objective}\n"
+                        f"Constraints: {constraints}\n\n"
+                        f"Installed business capabilities:\n{capability_catalog}\n\n"
+                        "UNDERSTAND phase only. In 2-4 sentences, restate what is actually "
+                        "being asked, note what is already known, and name the biggest "
+                        "unknown. Do not plan or act yet."
+                    )}],
+                    system_prompt=OPERATOR_SYSTEM_PROMPT,
+                    max_tokens=config.PAI_OPERATOR_PHASE_MAX_TOKENS, base_url=base_url,
+                )
         except Exception as exc:
             logger.exception("operator: understand phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"understand phase failed: {exc}"[:500], completed_at=_now())
@@ -562,10 +660,14 @@ async def _execute(
             return
 
         # ---- PLAN ----
-        set_status("planning", current_step="Planning the steps")
+        if resume_payload is None:
+            set_status("planning", current_step="Planning the steps")
         try:
-            db.rollback()
-            plan_raw = await chat_completion(
+            if resume_payload is not None:
+                plan = list(run.plan or []) or [{"id": "objective", "title": objective, "status": "working"}]
+            else:
+                db.rollback()
+                plan_raw = await chat_completion(
                 api_key=api_key, provider=provider, model=model,
                 reasoning_effort=effort,
                 messages=[{"role": "user", "content": (
@@ -580,13 +682,13 @@ async def _execute(
                 )}],
                 system_prompt=OPERATOR_SYSTEM_PROMPT,
                 max_tokens=config.PAI_OPERATOR_PHASE_MAX_TOKENS, base_url=base_url,
-            )
+                )
+                plan = _parse_plan(plan_raw) or [{"id": "objective", "title": objective, "status": "working"}]
         except Exception as exc:
             logger.exception("operator: plan phase failed for run %s", run_id)
             set_status(STATUS_FAILED, error=f"plan phase failed: {exc}"[:500], completed_at=_now())
             await _post_result(db, workspace_id, channel_target, run_id, STATUS_FAILED, "I ran into an issue starting on that — want me to try again?")
             return
-        plan = _parse_plan(plan_raw) or [{"id": "objective", "title": objective, "status": "working"}]
         set_status("executing", plan=plan, current_step=plan[0]["title"])
 
         # ---- EXECUTE + OBSERVE ----
@@ -638,6 +740,7 @@ async def _execute(
         messages[0]["content"] += (
             "\nConstraints from the student/counselor: " + _json.dumps(constraints, default=str)
             + "\nUnderstanding: " + understanding
+            + "\nInstalled business capabilities (resolve by id, never package path):\n" + capability_catalog
             + "\nYour final response must contain useful findings with source URLs, "
               "verification gaps and a concrete next step for this student."
         )
@@ -645,8 +748,8 @@ async def _execute(
         # separate from `plan` (real step progress, only ever updated by
         # VERIFY below). Conflating the two was the bug: a plan with 3 steps
         # and 5 tool calls is not "5/3 steps done". See ExecutionRun docstring.
-        tool_call_log: list[dict] = []
-        observations: list[dict] = []
+        tool_call_log: list[dict] = list(run.tool_calls or []) if resume_payload is not None else []
+        observations: list[dict] = list((run.result or {}).get("observations") or []) if resume_payload is not None else []
         final_text = ""
         max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
@@ -681,8 +784,15 @@ async def _execute(
                     tool_args = {}
                 # OBSERVE: the executor's own result IS the observation — did
                 # the call actually succeed, not just "was it made".
-                result = await tool_executor.execute(tool_name, tool_args, tool_context)
-                tool_call_log.append({"tool": tool_name, "ok": bool(result.get("ok"))})
+                prior_success = any(
+                    item.get("tool") == tool_name and item.get("arguments") == tool_args and item.get("ok")
+                    for item in tool_call_log
+                )
+                if prior_success:
+                    result = {"ok": True, "data": {"skipped": True, "reason": "identical action already completed"}}
+                else:
+                    result = await tool_executor.execute(tool_name, tool_args, tool_context)
+                    tool_call_log.append({"tool": tool_name, "arguments": tool_args, "ok": bool(result.get("ok"))})
                 observation = {
                     "tool": tool_name, "ok": bool(result.get("ok")),
                     "url": tool_args.get("url"),
@@ -729,6 +839,8 @@ async def _execute(
                     '"completed" | "needs_user_action" | "failed", "completed_step_ids": '
                     '[plan step ids above that are genuinely done], "missing": '
                     '[short strings], "approval_required_for": short string or null, '
+                    '"pending_action": null or {"kind":"approval|text|choice|file|profile_conflict",'
+                    '"title":"...","prompt":"...","reason":"...","options":[],"required":true}, '
                     '"summary": "one short sentence, for the student, via PAI Counselor"}'
                 )}],
                 system_prompt=OPERATOR_SYSTEM_PROMPT,
@@ -740,7 +852,7 @@ async def _execute(
             verification = {}
 
         status = verification.get("status")
-        if status not in _TERMINAL:
+        if status not in _OUTCOMES:
             # A model's final prose does not prove the work was verified.
             status = STATUS_FAILED
             verification = {"status": status, "summary": "I couldn't verify the result of this work."}
@@ -762,12 +874,36 @@ async def _execute(
             "artifact_id": None,
         }
 
+        pending_action = None
+        if status == STATUS_NEEDS_USER_ACTION:
+            approval = verification.get("approval_required_for")
+            proposed_action = verification.get("pending_action")
+            if isinstance(proposed_action, dict) and proposed_action.get("kind") in {
+                "approval", "text", "choice", "file", "profile_conflict",
+            }:
+                pending_action = {
+                    "kind": proposed_action["kind"],
+                    "title": str(proposed_action.get("title") or "Your input is needed to continue"),
+                    "prompt": str(proposed_action.get("prompt") or approval or "Please provide the missing information."),
+                    "reason": str(proposed_action.get("reason") or summary or "The run cannot safely continue without you."),
+                    "options": proposed_action.get("options") if isinstance(proposed_action.get("options"), list) else [],
+                    "required": proposed_action.get("required") is not False,
+                }
+            else:
+                pending_action = {
+                    "kind": "approval" if approval else "text",
+                    "title": "Your input is needed to continue",
+                    "prompt": approval or (str(missing[0]) if isinstance(missing, list) and missing else "Please provide the missing information."),
+                    "reason": summary or "The run cannot safely continue without you.",
+                    "options": [], "required": True,
+                }
         set_status(
             status,
             missing=missing if isinstance(missing, list) else [],
             approval_required_for=verification.get("approval_required_for"),
             current_step=summary,
-            completed_at=_now(),
+            pending_action=pending_action,
+            completed_at=None if status == STATUS_NEEDS_USER_ACTION else _now(),
             plan=plan,
             completed_steps=completed_titles,
             tool_calls=tool_call_log,

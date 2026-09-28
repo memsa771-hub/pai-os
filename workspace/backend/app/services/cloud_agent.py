@@ -290,6 +290,7 @@ async def _invoke_assistant_agent(
     system_prompt = (pai.PAI_SYSTEM_PROMPT if provider == pai.PAI_PROVIDER
                      else cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT)
     completion = None
+    counseling_decision = None
     if agent_name == pai.PAI_AGENT_NAME:
         from app.memory.profile_completion import ProfileCompletionService
 
@@ -304,7 +305,7 @@ async def _invoke_assistant_agent(
         active_runs = db.execute(select(ExecutionRun).where(
             ExecutionRun.workspace_id == workspace_id,
             ExecutionRun.channel_target == channel_target,
-            ExecutionRun.status.in_(("pending", "understanding", "planning", "executing", "verifying")),
+            ExecutionRun.status.in_(("pending", "understanding", "planning", "executing", "verifying", "needs_user_action")),
         ).order_by(ExecutionRun.created_at.desc()).limit(3)).scalars().all()
         if active_runs:
             from app.memory.foreground import escape_value
@@ -314,6 +315,48 @@ async def _invoke_assistant_agent(
                                           "status": row.status}) for row in active_runs)
                 + "\nDo not delegate the same objective again. Answer the student's current "
                   "message while this work continues. A brief unrelated question still deserves an answer."
+            )
+        # Strategy is selected deterministically from canonical context and
+        # journey state. The model receives a bounded move to express, not a
+        # blank invitation to invent the counseling strategy.
+        from app.counseling import CounselingEvaluator, CounselingPolicy
+        from app.journey import JourneyService
+        from app.models import ProfileIssue
+
+        try:
+            active_journey = JourneyService(db).resolve_primary(workspace_id)
+        except Exception:
+            # Mixed-version deploys can briefly run before migration 070.
+            logger.exception("assistant: journey context unavailable workspace=%s", workspace_id)
+            db.rollback()
+            active_journey = None
+        conflict = db.execute(select(ProfileIssue).where(
+            ProfileIssue.workspace_id == workspace_id,
+            ProfileIssue.status == "open",
+            ProfileIssue.severity == "blocking",
+        ).order_by(ProfileIssue.created_at.desc()).limit(1)).scalar_one_or_none()
+        conflict_data = None if conflict is None else {
+            "id": conflict.id, "summary": conflict.summary,
+            "clarification_question": conflict.clarification_question,
+        }
+        state = CounselingEvaluator().derive(
+            message=content or "", vault_context=None,
+            journey=active_journey.to_dict() if active_journey else None,
+            completion=completion, recent_conversation=messages,
+            active_conflict=conflict_data,
+        )
+        counseling_decision = CounselingPolicy().decide(state)
+        if active_journey is not None:
+            from app.memory.foreground import escape_value
+            journey_data = active_journey.to_dict()
+            system_prompt += (
+                "\n\nActive student journey (state, not canonical student facts):\n"
+                + escape_value({key: journey_data.get(key) for key in (
+                    "id", "journey_type", "title", "active_goal", "current_stage",
+                    "current_objective", "target_outcome", "target_date", "milestones",
+                    "decisions", "unresolved_decisions", "blockers", "next_milestone",
+                    "next_recommended_action",
+                )})
             )
 
     # Workspace state and student memory are independent reads, so overlap
@@ -413,6 +456,9 @@ async def _invoke_assistant_agent(
         # Appended last so rollout policy wins over general counseling guidance
         # that permits personalization with partial information.
         system_prompt += "\n\n" + counselor_policy_prompt(completion)
+    if counseling_decision is not None:
+        # Last word on this turn: supersedes older prompt heuristics.
+        system_prompt += "\n\n" + counseling_decision.to_prompt()
 
     if memory_context is not None:
         # Counts and sizes only — never the rendered block, which is student
@@ -430,6 +476,8 @@ async def _invoke_assistant_agent(
     allowed_tools = pai.allowed_tools_for_mode(
         completion["counselorMode"] if completion is not None else "normal"
     )
+    if counseling_decision is not None and not counseling_decision.operator_allowed:
+        allowed_tools = frozenset(set(allowed_tools) - {"operator.delegate"})
     # Keyed on the agent actually running, not hardcoded to Counselor: this
     # loop serves every cloud agent, and a user-added one must not inherit
     # Counselor's memory grant just by running the same code path. Unlisted

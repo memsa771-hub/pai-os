@@ -71,7 +71,7 @@ PAI_ALLOWED_TOOLS = (
     "web.search", "web.fetch",
     # PAI Operator — see app/services/operator.py. Counselor never touches
     # execution tools directly; it delegates and reads status back through these.
-    "operator.delegate", "operator.status",
+    "operator.delegate", "operator.status", "operator.resume",
     # PAI Memory Platform — see app/memory/. Counselor holds the full grant
     # (read + manage); remember/forget are the explicit-user-command path and
     # still go through the deterministic reconciler.

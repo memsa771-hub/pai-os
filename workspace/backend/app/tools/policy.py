@@ -28,6 +28,17 @@ class Capability(str, Enum):
     VAULT_READ = "vault.read"
     VAULT_MANAGE = "vault.manage"
     PROFILE_PROPOSE = "profile.propose"
+    VAULT_IDENTITY_READ = "vault.identity.read"
+    VAULT_EDUCATION_READ = "vault.education.read"
+    VAULT_GOALS_READ = "vault.goals.read"
+    VAULT_PREFERENCES_READ = "vault.preferences.read"
+    VAULT_FINANCE_READ = "vault.finance.read"
+    VAULT_TESTS_READ = "vault.tests.read"
+    VAULT_SKILLS_READ = "vault.skills.read"
+    VAULT_PROJECTS_READ = "vault.projects.read"
+    VAULT_ACHIEVEMENTS_READ = "vault.achievements.read"
+    VAULT_DOCUMENTS_READ = "vault.documents.read"
+    VAULT_APPLICATIONS_READ = "vault.applications.read"
 
 
 @dataclass(frozen=True)

@@ -1,6 +1,6 @@
 from app.tools.policy import Capability, ToolRisk
 from app.tools.registry import AUDIENCE_COUNSELOR, AUDIENCE_OPERATOR, ToolDefinition
-from . import browser, files, memory, operator, tasks, web, workspace
+from . import browser, capabilities, files, memory, operator, tasks, web, workspace
 
 # Capability shorthands. Declared on the tool so a caller's grant decides
 # access — see app/tools/policy.py and app/memory/permissions.py.
@@ -58,6 +58,12 @@ def register_builtin_tools(registry):
         ToolDefinition("browser.screenshot", "Capture a shared browser tab screenshot as base64 PNG.", obj({"tab_id": {"type": "string"}}, ["tab_id"]), "browser", ToolRisk.READ, browser.screenshot, audiences=OPERATOR_ONLY),
         ToolDefinition("browser.close", "Close a shared browser tab.", obj({"tab_id": {"type": "string"}}, ["tab_id"]), "browser", ToolRisk.WRITE, browser.close, audiences=OPERATOR_ONLY),
         ToolDefinition("browser.contexts.list", "List persistent shared browser contexts.", EMPTY, "browser", ToolRisk.READ, browser.list_contexts, audiences=OPERATOR_ONLY),
+        ToolDefinition(
+            "capability.invoke",
+            "Invoke an installed business capability by its manifest id. The host supplies only its declared student scopes, journey fields, permissions, and tools.",
+            obj({"capability_id": {"type": "string"}, "input": {"type": "object", "additionalProperties": True}}, ["capability_id", "input"]),
+            "capability", ToolRisk.WRITE, capabilities.invoke, audiences=OPERATOR_ONLY,
+        ),
 
         # ---- The Counselor <-> Operator boundary itself. ----
         ToolDefinition(
@@ -102,6 +108,12 @@ def register_builtin_tools(registry):
             "the most recent run in this workspace.",
             obj({"run_id": {"type": "string"}}),
             "operator", ToolRisk.READ, operator.status, audiences=COUNSELOR_ONLY,
+        ),
+        ToolDefinition(
+            "operator.resume",
+            "Resume the same paused background run after the student supplies the requested approval, text, choice, file, or conflict resolution. Never create a replacement run.",
+            obj({"run_id": {"type": "string"}, "action": {"type": "object", "additionalProperties": True}}, ["run_id", "action"]),
+            "operator", ToolRisk.WRITE, operator.resume, audiences=COUNSELOR_ONLY,
         ),
 
         # -- PAI Memory Platform ------------------------------------------

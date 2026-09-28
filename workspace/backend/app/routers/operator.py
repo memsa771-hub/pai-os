@@ -46,7 +46,7 @@ async def list_runs(
     query = select(ExecutionRun).where(ExecutionRun.workspace_id == ws_id)
     if status == "active":
         query = query.where(ExecutionRun.status.in_(
-            ["pending", "understanding", "planning", "executing", "verifying"]
+            ["pending", "understanding", "planning", "executing", "verifying", "needs_user_action"]
         ))
     elif status:
         query = query.where(ExecutionRun.status == status)
