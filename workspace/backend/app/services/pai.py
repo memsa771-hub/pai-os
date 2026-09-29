@@ -1,26 +1,17 @@
 # -*- coding: utf-8 -*-
 """
 PAI Counselor — Placement AI's built-in education counselor.
-PAI Counselor is a *cloud agent* (runs in-process on the backend, see
-``services/cloud_agent.py``) but differs from user-added cloud agents in three
-ways:
 
-1. It is **auto-provisioned** into every workspace (see ``provision_pai``),
-   rather than exposed as a user-configurable agent.
-2. Its credentials are **server-held** and shared across all workspaces
-   (``config.PAI_*``) — never entered by the user, never persisted per
-   workspace (the ``api_key`` column stores only a placeholder).
-3. It runs a **tool-calling loop** (category ``"assistant"``) instead of a
-   single chat round-trip, so it can actually help the user set things up.
+It is a fixed system service, auto-provisioned as a workspace participant for
+event routing. Its model credentials are held once in server configuration;
+there is no per-workspace agent or provider configuration.
 
 Tool calls go through the REAL workspace HTTP API via an in-process ASGI
 client (``WorkspaceApi``) — never direct DB queries — so auth, validation,
 serialization, and side effects (SSE publish, background tasks) behave exactly
 as they do for any other client.
 
-The built-in identity is the reserved provider ``"placement_ai"`` — that is what
-``builtin`` is derived from everywhere (discover/workspace serializers,
-frontend gating).
+The built-in participant type is the reserved ``"system:pai"`` value.
 """
 
 import logging
@@ -31,7 +22,7 @@ import httpx
 from sqlalchemy import select
 
 from app.config import config
-from app.models import CloudAgentConfig, WorkspaceMember
+from app.models import WorkspaceMember
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +31,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 PAI_AGENT_NAME = "pai"
-PAI_PROVIDER = "placement_ai"
-PAI_AGENT_TYPE = f"cloud:{PAI_PROVIDER}"     # stored on the WorkspaceMember row
-PAI_CATEGORY = "assistant"                    # triggers the tool loop
-# Placeholder stored in CloudAgentConfig.api_key (NOT NULL). The real key is
-# resolved from config at call time so it can be rotated in one place.
-PAI_KEY_PLACEHOLDER = "__server_managed__"
+PAI_AGENT_TYPE = "system:pai"
 PAI_PRIMARY_CHANNEL = "pai-counselor"
 # PAI Counselor's tool boundary: lightweight reads/context-inspection plus the
 # two Operator hand-off tools — nothing that performs real execution (writes,
@@ -85,30 +71,6 @@ def is_builtin_agent_type(agent_type: Optional[str]) -> bool:
     return (agent_type or "") == PAI_AGENT_TYPE
 
 
-def resolve_credentials(cloud_config: CloudAgentConfig) -> tuple[str, Optional[str]]:
-    """Return (api_key, base_url) to use for a cloud agent.
-
-    For the built-in ``placement_ai`` provider the key/base_url come from
-    server config (shared, rotatable), NOT from the stored row.
-    """
-    if cloud_config.provider == PAI_PROVIDER:
-        return config.PAI_API_KEY, (config.PAI_BASE_URL or None)
-    return cloud_config.api_key, cloud_config.base_url
-
-
-def resolve_model(cloud_config: CloudAgentConfig) -> str:
-    """The model to run a cloud agent with.
-
-    Built-in PAI Counselor is server-managed end to end: the model comes from
-    ``config.PAI_MODEL`` at call time (like the key), NOT from the row
-    persisted at provision time — so one env/config change switches every
-    workspace's PAI Counselor at the next deploy, with no backfill.
-    """
-    if cloud_config.provider == PAI_PROVIDER and config.PAI_MODEL:
-        return config.PAI_MODEL
-    return cloud_config.model
-
-
 # ---------------------------------------------------------------------------
 # Provisioning
 # ---------------------------------------------------------------------------
@@ -130,9 +92,8 @@ def validate_config() -> bool:
 def provision_pai(db, workspace) -> bool:
     """Idempotently add the built-in PAI Counselor agent to a workspace.
 
-    Creates the internal ``WorkspaceMember`` + ``CloudAgentConfig`` rows if PAI
-    Counselor isn't already present. Caller is
-    responsible for committing. Returns True if a row was added.
+    Creates the internal ``WorkspaceMember`` used by event routing if PAI
+    Counselor isn't already present. Caller commits the change.
 
     NOTE: does not run when ``should_provision()`` is False.
     """
@@ -143,7 +104,7 @@ def provision_pai(db, workspace) -> bool:
 
     # Namespace lock BEFORE the reads, so a concurrent rename/join can't
     # invalidate what we read here before we write.
-    from app import naming
+    from app.workspace import naming
     naming.lock_member_namespace(db, workspace.id)
 
     existing_member = db.execute(
@@ -153,17 +114,8 @@ def provision_pai(db, workspace) -> bool:
         )
     ).scalar_one_or_none()
 
-    existing_cfg = db.execute(
-        select(CloudAgentConfig).where(
-            CloudAgentConfig.workspace_id == workspace_id,
-            CloudAgentConfig.agent_name == PAI_AGENT_NAME,
-        )
-    ).scalar_one_or_none()
-
-    # A live PAI Counselor already exists — nothing to do. (If the user removed PAI Counselor it's
-    # a hard delete, so both rows are gone and we'd re-provision; that's only on
-    # explicit re-add, not here.)
-    if existing_member and existing_member.status != "removed" and existing_cfg:
+    # A live PAI Counselor already exists — nothing to do.
+    if existing_member and existing_member.status != "removed":
         return False
 
     # The name may be taken by a REAL agent (a user's daemon that happens to
@@ -193,25 +145,6 @@ def provision_pai(db, workspace) -> bool:
                 "name of member %s", workspace_id, alias_clash,
             )
             return False
-
-    if existing_cfg is None:
-        db.add(CloudAgentConfig(
-            workspace_id=workspace_id,
-            agent_name=PAI_AGENT_NAME,
-            provider=PAI_PROVIDER,
-            model=config.PAI_MODEL,
-            category=PAI_CATEGORY,
-            api_key=PAI_KEY_PLACEHOLDER,
-            base_url=None,
-            system_prompt=None,
-            max_tokens=None,
-        ))
-    else:
-        existing_cfg.provider = PAI_PROVIDER
-        existing_cfg.model = config.PAI_MODEL
-        existing_cfg.category = PAI_CATEGORY
-        existing_cfg.api_key = PAI_KEY_PLACEHOLDER
-        existing_cfg.status = "active"
 
     description = "Placement AI's primary education counselor"
     if existing_member is None:
@@ -373,7 +306,7 @@ class WorkspaceApi:
             ) as client:
                 headers = {"X-Workspace-Token": self.token}
                 if actor:
-                    from app.event_identity import INTERNAL_ACTOR_HEADER, mint_internal_actor
+                    from app.security.event_identity import INTERNAL_ACTOR_HEADER, mint_internal_actor
                     headers[INTERNAL_ACTOR_HEADER] = mint_internal_actor(actor)
                 resp = await client.request(
                     method, path,
@@ -452,7 +385,7 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
     below is safe *today* — but the guarantee callers rely on is this
     function's, not that one's, and an unexpected response shape (``data`` that
     is not a dict) would otherwise raise straight through
-    ``cloud_agent._invoke_assistant_agent``'s ``asyncio.gather``, which has no
+    ``counseling.runtime._run_turn``'s ``asyncio.gather``, which has no
     ``return_exceptions`` and would lose the student's whole turn over a
     grounding nicety. Grounding is an enhancement to a reply, never a
     precondition for one.

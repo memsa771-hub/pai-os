@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
-from app.access import get_or_create_user
+from app.security.access import get_or_create_user
 from app.database import Base
 from app.models import User
 

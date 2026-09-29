@@ -32,24 +32,24 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.config import config
-from app import stream_ticket
+from app.security import stream_ticket
 from app.database import get_db
-from app.file_types import FILTER_GROUPS, KIND_GROUPS, kind_for
-from app.net_security import OUTBOUND_USER_AGENT, UnsafeURLError, safe_fetch
+from app.files.types import FILTER_GROUPS, KIND_GROUPS, kind_for
+from app.security.network import OUTBOUND_USER_AGENT, UnsafeURLError, safe_fetch
 from app.models import FileRecord, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import (
     _emit_event,
     _resolve_workspace,
     _verify_workspace_access,
 )
-from app.storage import get_file_store
+from app.files.storage import get_file_store
 from app.eventing.events import Event
 
 logger = logging.getLogger(__name__)
 
 
-from app.event_identity import request_actor_source as _request_actor_source
+from app.security.event_identity import request_actor_source as _request_actor_source
 
 router = APIRouter(prefix="/v1", tags=["Files"])
 
@@ -552,7 +552,7 @@ async def _post_attachment_message(
 ) -> bool:
     """Post a chat message carrying the file as an inline attachment.
 
-    Same payload shape as the cloud image agents (services/cloud_agent.py),
+    Same attachment payload shape used by Counselor messages,
     which the frontend already renders inline. Returns False when the file
     has no channel to post into.
     """

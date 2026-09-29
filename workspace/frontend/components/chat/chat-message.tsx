@@ -191,7 +191,7 @@ function Attachments({ items }: { items: Attachment[] }) {
 /**
  * Badge for a message posted by `operator._post_result` (message_type
  * "operator_result", metadata.execution_status set — see
- * app/services/operator.py / cloud_agent._post_response). PAI Counselor is
+ * app/services/operator.py / counseling.runtime._post_response). PAI Counselor is
  * still the sender the student sees below this, but the badge makes clear
  * this particular reply is a finished PAI Operator execution result, not an
  * ordinary conversational turn.

@@ -71,8 +71,8 @@ def _current_key_for_source(source: Optional[str], workspace) -> Optional[str]:
         return (workspace.settings or {}).get("browserfabric_api_key")
     if source == SOURCE_GLOBAL:
         # Read at call time (not import time) so env changes and test
-        # monkeypatching of app.browser.BROWSERFABRIC_API_KEY are honoured.
-        from app import browser as browser_module
+        # monkeypatching of app.browser.manager.BROWSERFABRIC_API_KEY are honoured.
+        from app.browser import manager as browser_module
         return browser_module.BROWSERFABRIC_API_KEY or None
     return None
 

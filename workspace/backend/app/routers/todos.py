@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import TodoRecord, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import (
     _emit_event_blocking,
     _resolve_workspace,
@@ -24,7 +24,7 @@ from app.routers.network import (
 )
 from app.eventing.events import Event
 
-from app.event_identity import request_actor_source
+from app.security.event_identity import request_actor_source
 
 logger = logging.getLogger(__name__)
 

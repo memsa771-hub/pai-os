@@ -16,7 +16,7 @@ async def _handle_agent_join(event: Event, ctx: PipelineContext) -> Optional[Eve
     import uuid as _uuid
     from app.models import WorkspaceMember
 
-    from app import naming
+    from app.workspace import naming
 
     db = ctx.extra["db"]
     workspace = ctx.extra["workspace"]

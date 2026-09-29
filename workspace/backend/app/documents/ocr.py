@@ -69,9 +69,9 @@ class VisionModelOcr:
         self.provider = provider
 
     async def transcribe(self, images: list[tuple[int, bytes]]) -> list[OcrPage]:
-        from app.services.cloud_providers import _make_client
+        from app.inference.client import create_client
 
-        client = _make_client(self.api_key, self.provider, base_url_override=self.base_url)
+        client = create_client(self.api_key, base_url=self.base_url)
         pages: list[OcrPage] = []
         try:
             for page_number, png in images:

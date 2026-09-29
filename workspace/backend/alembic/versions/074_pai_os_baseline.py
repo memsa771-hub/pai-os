@@ -332,24 +332,6 @@ def upgrade() -> None:
     op.create_index('idx_channels_status_last_event', 'channels', ['status', 'last_event_at'], unique=False)
     op.create_index('idx_channels_workspace_status', 'channels', ['workspace_id', 'status'], unique=False)
     op.create_index('uq_channels_ws_name', 'channels', ['workspace_id', 'name'], unique=True)
-    op.create_table('cloud_agent_configs',
-    sa.Column('id', sa.Text(), nullable=False),
-    sa.Column('workspace_id', sa.UUID(as_uuid=False), nullable=False),
-    sa.Column('agent_name', sa.Text(), nullable=False),
-    sa.Column('provider', sa.Text(), nullable=False),
-    sa.Column('model', sa.Text(), nullable=False),
-    sa.Column('category', sa.Text(), nullable=False),
-    sa.Column('api_key', sa.Text(), nullable=False),
-    sa.Column('base_url', sa.Text(), nullable=True),
-    sa.Column('system_prompt', sa.Text(), nullable=True),
-    sa.Column('max_tokens', sa.Integer(), nullable=True),
-    sa.Column('status', sa.Text(), nullable=False),
-    sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('NOW()'), nullable=True),
-    sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('workspace_id', 'agent_name', name='uq_cloud_agent_workspace_name')
-    )
-    op.create_index('idx_cloud_agent_workspace', 'cloud_agent_configs', ['workspace_id'], unique=False)
     op.create_table('execution_runs',
     sa.Column('id', sa.Text(), nullable=False),
     sa.Column('workspace_id', sa.UUID(as_uuid=False), nullable=False),
@@ -1334,8 +1316,6 @@ def downgrade() -> None:
     op.drop_index('idx_execution_runs_workspace_status', table_name='execution_runs')
     op.drop_index('idx_execution_runs_workspace', table_name='execution_runs')
     op.drop_table('execution_runs')
-    op.drop_index('idx_cloud_agent_workspace', table_name='cloud_agent_configs')
-    op.drop_table('cloud_agent_configs')
     op.drop_index('uq_channels_ws_name', table_name='channels')
     op.drop_index('idx_channels_workspace_status', table_name='channels')
     op.drop_index('idx_channels_status_last_event', table_name='channels')

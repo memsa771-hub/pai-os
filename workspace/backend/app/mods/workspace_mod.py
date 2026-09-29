@@ -1,7 +1,7 @@
 """Workspace event dispatch mod.
 
 Domain behavior lives in :mod:`app.eventing.handlers`; this module keeps the
-pipeline-facing mod stable for ``app.pipeline_factory``.
+pipeline-facing mod stable for ``app.eventing.factory``.
 """
 
 from typing import List, Optional

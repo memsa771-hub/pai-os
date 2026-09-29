@@ -17,11 +17,11 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.access import resolve_current_user
+from app.security.access import resolve_current_user
 from app.config import config
 from app.database import get_db
 from app.models import Feedback
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.services.email import send_email
 
 router = APIRouter(prefix="/v1/feedback", tags=["feedback"])

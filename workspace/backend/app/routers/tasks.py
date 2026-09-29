@@ -23,7 +23,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Channel, KanbanTask, Workflow, Workspace, WorkspaceMember
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import (
     _emit_event_blocking,
     _resolve_workspace,
@@ -34,7 +34,7 @@ from app.eventing.events import Event
 logger = logging.getLogger(__name__)
 
 
-from app.event_identity import request_actor_source as _request_actor_source
+from app.security.event_identity import request_actor_source as _request_actor_source
 
 router = APIRouter(prefix="/v1", tags=["Tasks"])
 
@@ -169,7 +169,7 @@ def _clean_file_ids(db: Session, workspace_id: str, ids: Optional[List[str]]) ->
 
 def _task_attachments(db: Session, workspace_id: str, task: KanbanTask) -> list:
     """Attachment dicts for the task's files, in the shape chat messages use
-    (see cloud_agent._post_response), so agents/clients render them the same."""
+    (see counseling.runtime._post_response), so clients render them the same."""
     from app.models import FileRecord
 
     if not task.file_ids:

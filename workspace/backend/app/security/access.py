@@ -35,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SqlaSession
 
-from app.human_auth import verify_identity_claims
+from app.security.human_auth import verify_identity_claims
 from app.models import User, Workspace
 
 logger = logging.getLogger(__name__)

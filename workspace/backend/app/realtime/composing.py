@@ -5,7 +5,7 @@ expire after TTL_SECONDS without a refresh. Uses Redis so the signal
 is shared across replicas.
 """
 
-from app import cache
+from app.infrastructure import cache
 
 TTL_SECONDS = 30.0
 _KEY_PREFIX = "composing:"

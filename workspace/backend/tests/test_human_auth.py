@@ -1,6 +1,6 @@
 from unittest.mock import patch
 
-from app import human_auth
+from app.security import human_auth
 
 
 def test_supabase_claims_are_normalized() -> None:

@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 
 from app.jobs.service import job_handlers
-from app.storage import get_file_store
+from app.files.storage import get_file_store
 from .content import ParsedDocument, Segment, segments_from_content
 from .parsers import (
     DocumentParseError, MAX_CONTENT_CHARS, parse_document, pages_needing_ocr,
@@ -423,7 +423,7 @@ async def notify_document_job(job, db) -> dict:
     from sqlalchemy import select
 
     from app.models import FileRecord
-    from app.services.cloud_agent import _post_response
+    from app.counseling.runtime import _post_response
     from app.services.pai import PAI_AGENT_NAME
     from .progress import completion_message, learned_summary
 

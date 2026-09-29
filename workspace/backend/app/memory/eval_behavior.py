@@ -289,9 +289,9 @@ class ScenarioResult:
     graded_by: str          # "deterministic" | "judge" | "error"
 
 
-async def _run_scenario(scenario: Scenario, api_key, provider, model, base_url):
+async def _run_scenario(scenario: Scenario, api_key, model, base_url):
     from app.services import pai
-    from app.services.cloud_providers import chat_completion
+    from app.inference.client import chat_completion
 
     block, _ = render_block(_student_context(scenario))
     system_prompt = pai.PAI_SYSTEM_PROMPT
@@ -329,7 +329,7 @@ async def _run_scenario(scenario: Scenario, api_key, provider, model, base_url):
 
     try:
         response = await chat_completion(
-            api_key=api_key, provider=provider, model=model, messages=messages,
+            api_key=api_key, model=model, messages=messages,
             system_prompt=system_prompt, max_tokens=400, base_url=base_url,
         )
     except Exception as exc:
@@ -340,18 +340,18 @@ async def _run_scenario(scenario: Scenario, api_key, provider, model, base_url):
         return ScenarioResult(scenario, response, passed, detail, "deterministic")
 
     passed, detail = await _judge(
-        scenario, response, api_key, provider, model, base_url
+        scenario, response, api_key, model, base_url
     )
     return ScenarioResult(scenario, response, passed, detail, "judge")
 
 
-async def _judge(scenario, response, api_key, provider, model, base_url):
+async def _judge(scenario, response, api_key, model, base_url):
     """Model-graded check. Only for genuinely semantic properties."""
-    from app.services.cloud_providers import chat_completion
+    from app.inference.client import chat_completion
 
     try:
         verdict = await chat_completion(
-            api_key=api_key, provider=provider, model=model,
+            api_key=api_key, model=model,
             messages=[{"role": "user", "content": (
                 f"Question asked: {scenario.user_message}\n\n"
                 f"Assistant response:\n{response}\n\n"
@@ -372,7 +372,7 @@ async def _main_async(args) -> int:
     from app.services import pai
 
     api_key, base_url = config.PAI_API_KEY, (config.PAI_BASE_URL or None)
-    provider, model = pai.PAI_PROVIDER, config.PAI_MODEL
+    model = config.PAI_MODEL
 
     if not api_key:
         print(
@@ -389,7 +389,7 @@ async def _main_async(args) -> int:
         if args.only and args.only not in scenario.name:
             continue
         results.append(
-            await _run_scenario(scenario, api_key, provider, model, base_url)
+            await _run_scenario(scenario, api_key, model, base_url)
         )
 
     print("=" * 70)

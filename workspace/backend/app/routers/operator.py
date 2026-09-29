@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import ExecutionRun
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 from app.services.operator import serialize_run
 

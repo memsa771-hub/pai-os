@@ -19,12 +19,13 @@ from pydantic import BaseModel
 from sqlalchemy import and_, case, cast, func, or_, select, Text
 from sqlalchemy.orm import Session
 
-from app import cache, stream_ticket
+from app.infrastructure import cache
+from app.security import stream_ticket
 from app.database import SessionLocal, get_db
 from app.models import Channel, ChannelMember, EventRecord, Workspace
-from app.pipeline_factory import pipeline
-from app.event_identity import resolve_actor, session_id_from
-from app.response import ResponseCode, json_response, success_response
+from app.eventing.factory import pipeline
+from app.security.event_identity import resolve_actor, session_id_from
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _verify_workspace_access, _workspace_filter
 from app.eventing.events import Event
 from app.eventing.mods import EventRejected, PipelineContext
@@ -171,7 +172,7 @@ def _resolve_and_auth_cached(db, network, token, authorization):
     Only one thing is ever cache-served: a POSITIVE match between the presented
     token and the workspace's own. Bearer auth, cache misses, token mismatches
     and workspaces with no token all fall through to the DB, where
-    `app.access.verify_workspace_access` is the single authority. A cache may
+    `app.security.access.verify_workspace_access` is the single authority. A cache may
     make an authorized caller faster; it must never make an unauthorized one
     authorized.
 
@@ -383,10 +384,10 @@ def send_event(
     except Exception:
         pass
 
-    # Invoke cloud agents if any are targeted by this message.
+    # Run the built-in Counselor when this message targets it.
     if result.type == "workspace.message.posted":
-        from app.services.cloud_agent import invoke_cloud_agents
-        background_tasks.add_task(invoke_cloud_agents, str(workspace.id), event_snapshot)
+        from app.counseling.runtime import run_counselor
+        background_tasks.add_task(run_counselor, str(workspace.id), event_snapshot)
         # Drive any workflow run bound to this channel (advance to the next step).
         from app.services.workflow import advance_workflow
         background_tasks.add_task(advance_workflow, str(workspace.id), event_snapshot)
@@ -674,7 +675,7 @@ def poll_events(
 
     composing = False
     if not search and not conversation:
-        from app.composing import has_any_composing
+        from app.realtime.composing import has_any_composing
         composing = has_any_composing(workspace_id)
 
     response_data = {

@@ -5,7 +5,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app import stream_ticket
+from app.security import stream_ticket
 
 
 class StreamTicketSecurityTests(unittest.TestCase):

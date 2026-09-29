@@ -27,10 +27,10 @@ from sqlalchemy.orm import Session
 
 from app.config import config
 from app.database import get_db
-from app.human_auth import verify_identity_claims
-from app.access import extract_bearer, get_or_create_user
+from app.security.human_auth import verify_identity_claims
+from app.security.access import extract_bearer, get_or_create_user
 from app.models import User
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 
 logger = logging.getLogger(__name__)
 

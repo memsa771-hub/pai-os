@@ -23,10 +23,10 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Workflow, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
-from app.event_identity import request_actor_source
+from app.security.event_identity import request_actor_source
 
 logger = logging.getLogger(__name__)
 

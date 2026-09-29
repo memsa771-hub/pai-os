@@ -26,10 +26,11 @@ from sqlalchemy.orm import Session
 from app.config import config
 from app.database import get_db
 from app.models import Channel, Workspace, WorkspaceMember
-from app.pipeline_factory import pipeline
-from app.response import ResponseCode, json_response, success_response
+from app.eventing.factory import pipeline
+from app.api.response import ResponseCode, json_response, success_response
 from app.eventing.events import Event
 from app.eventing.mods import EventRejected, PipelineContext
+from app.services.pai import is_builtin_agent_type
 
 logger = logging.getLogger(__name__)
 
@@ -104,12 +105,12 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 def _verify_workspace_access(workspace, token: Optional[str], authorization: Optional[str]) -> bool:
     """Check if the caller has access to a workspace.
 
-    Thin wrapper over the single source of truth in app.access — kept here so
+    Thin wrapper over the single source of truth in app.security.access — kept here so
     the many routers importing this name don't have to change. See
-    app.access.verify_workspace_access for the rule order (token → member
+    app.security.access.verify_workspace_access for the rule order (token → member
     identity → grandfathered open workspace).
     """
-    from app.access import verify_workspace_access
+    from app.security.access import verify_workspace_access
     return verify_workspace_access(workspace, token, authorization)
 
 
@@ -162,7 +163,7 @@ def _emit_event_blocking(event: Event, workspace, db: Session, token: str = None
     """Sync variant of _emit_event for `def` (threadpool) handlers.
 
     The pipeline is async-shaped but everything inside it is synchronous
-    I/O — sync SQLAlchemy, the sync OpenAI/Anthropic router clients, sync
+    I/O — sync SQLAlchemy and sync cryptographic/authentication work — stays
     Redis publish — so when an async handler awaited it, all of that ran ON
     the uvicorn event loop. A 2s pool-checkout wait or a multi-second LLM
     routing call froze the whole worker (even /health and CORS preflights).
@@ -188,7 +189,7 @@ def join_network(
     else:
         # Token-only join: resolve workspace from the token (workspace token
         # or per-node token — same lookup the access check uses).
-        from app.access import resolve_machine_token
+        from app.security.access import resolve_machine_token
 
         workspace, _n = resolve_machine_token(db, body.token)
     if not workspace:
@@ -199,7 +200,7 @@ def join_network(
     # to be refused HERE — otherwise anyone holding the workspace token could
     # join as `pai`, receive a genuine session, and post as PAI Counselor
     # through the front door. The guard on /v1/remove was never enough.
-    from app.event_identity import reserved_agent_names
+    from app.security.event_identity import reserved_agent_names
 
     if body.agent_name.casefold() in reserved_agent_names():
         return json_response(
@@ -388,7 +389,7 @@ def composing_signal(
     if not _verify_workspace_access(workspace, x_workspace_token, authorization):
         return json_response(ResponseCode.UNAUTHORIZED, "Invalid credentials")
 
-    from app.composing import set_composing
+    from app.realtime.composing import set_composing
     set_composing(str(workspace.id), body.channel)
     return success_response({"status": "ok"})
 
@@ -407,7 +408,7 @@ def resolve_token(
     Shares its lookup with verify_workspace_access — the invariant is that any
     token the access check accepts as a machine credential resolves here.
     """
-    from app.access import resolve_machine_token
+    from app.security.access import resolve_machine_token
 
     workspace, _node = resolve_machine_token(db, body.token)
     if not workspace:
@@ -467,20 +468,10 @@ def discover(
         )
     ).scalars().all()
 
-    # Generic server-side cloud agents are no longer a PAI product surface.
-    # Keep only the first-party Counselor visible while legacy rows await a
-    # separate, destructive data migration.
-    members = [
-        member for member in members
-        if not (member.agent_type or "").startswith("cloud:")
-        or (member.agent_type or "") == "cloud:placement_ai"
-    ]
-
     agents = []
     for m in members:
         status = m.status
-        is_cloud = (m.agent_type or "").startswith("cloud:")
-        if not is_cloud and m.last_heartbeat:
+        if not is_builtin_agent_type(m.agent_type) and m.last_heartbeat:
             heartbeat = m.last_heartbeat
             if heartbeat.tzinfo is None:
                 heartbeat = heartbeat.replace(tzinfo=timezone.utc)
@@ -492,7 +483,7 @@ def discover(
             "role": m.role,
             "status": status,
             "agent_type": m.agent_type,
-            "builtin": (m.agent_type or "") == "cloud:placement_ai",
+            "builtin": is_builtin_agent_type(m.agent_type),
             "description": m.description,
             "last_heartbeat_at": m.last_heartbeat.isoformat() if m.last_heartbeat else None,
             "joined_at": m.joined_at.isoformat() if m.joined_at else None,

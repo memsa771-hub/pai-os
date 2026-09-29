@@ -2,18 +2,18 @@
 """Enqueue memory extraction after a PAI Counselor turn has persisted.
 
 The one place that decides "this turn is worth extracting from". Called from
-`cloud_agent._invoke_assistant_agent` AFTER its reply commits, so nothing here
+`counseling.runtime._run_turn` AFTER its reply commits, so nothing here
 is on the chat-response critical path.
 
 Why that call site and not `POST /v1/events`: PAI Counselor's reply never goes
 through that handler. It is produced in a background task and written straight
-to the pipeline by `cloud_agent._post_response`, so a hook on the HTTP route
+to the pipeline by `counseling.runtime._post_response`, so a hook on the HTTP route
 would see the student's message but never the reply, and could not know when a
 *turn* was complete. The assistant path is also the only place that knows the
 reply came from the tool-using assistant rather than an image/audio/error path.
 
-Scoped to PAI Counselor deliberately: a user-added cloud agent is not the
-student's counsellor, and its chatter is not student truth.
+Scoped to PAI Counselor deliberately: only the student's counselor forms this
+kind of long-term memory.
 """
 
 import logging

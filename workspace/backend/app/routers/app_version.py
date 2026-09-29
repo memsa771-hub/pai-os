@@ -29,7 +29,7 @@ from typing import Optional
 from fastapi import APIRouter, Query
 
 from app.config import config
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 
 logger = logging.getLogger(__name__)
 

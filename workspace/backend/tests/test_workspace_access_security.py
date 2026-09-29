@@ -4,7 +4,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
-from app.access import verify_workspace_access
+from app.security.access import verify_workspace_access
 
 
 class WorkspaceAccessSecurityTests(unittest.TestCase):
@@ -21,14 +21,14 @@ class WorkspaceAccessSecurityTests(unittest.TestCase):
 
     def test_verified_other_user_cannot_cross_workspace_boundary(self):
         self.db.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(id="owner-b")
-        with patch("app.access.verify_identity_claims", return_value={"email": "b@example.test"}):
+        with patch("app.security.access.verify_identity_claims", return_value={"email": "b@example.test"}):
             self.assertFalse(verify_workspace_access(self.workspace, None, "Bearer valid-b", self.db))
 
     def test_verified_owner_works_but_unverified_bearer_does_not(self):
         self.db.execute.return_value.scalar_one_or_none.return_value = SimpleNamespace(id="owner-a")
-        with patch("app.access.verify_identity_claims", return_value={"email": "a@example.test"}):
+        with patch("app.security.access.verify_identity_claims", return_value={"email": "a@example.test"}):
             self.assertTrue(verify_workspace_access(self.workspace, None, "Bearer valid-a", self.db))
-        with patch("app.access.verify_identity_claims", return_value=None):
+        with patch("app.security.access.verify_identity_claims", return_value=None):
             self.assertFalse(verify_workspace_access(self.workspace, None, "Bearer forged-a", self.db))
 
 

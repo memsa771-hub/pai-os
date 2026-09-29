@@ -33,15 +33,15 @@ from fastapi import APIRouter, Depends, Header
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.browser import BrowserManager, BrowserNavigationError, classify_navigation_error
+from app.browser.manager import BrowserManager, BrowserNavigationError, classify_navigation_error
 from app.database import get_db
-from app.net_security import (
+from app.security.network import (
     OUTBOUND_USER_AGENT,
     UnsafeURLError,
     safe_fetch,
     validate_public_url,
 )
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.browser import _resolve_bf_key
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
@@ -657,7 +657,7 @@ async def _run_fetch_chain(body: FetchRequest, workspace, db: Session, trace: di
     #
     # The entry URL was validated above, but that constrains only the first
     # request. Where the page goes next is constrained by the egress proxy the
-    # local browser is launched behind (app.browser_egress). In Browser Fabric
+    # local browser is launched behind (app.browser.egress). In Browser Fabric
     # mode the page runs on BF's infrastructure and this process cannot
     # intercept its navigation, so the render tier there is only as confined
     # as BF's own egress policy.

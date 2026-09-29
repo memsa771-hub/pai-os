@@ -13,7 +13,7 @@ import time
 from typing import Optional
 
 from app.config import config
-from app.identity_errors import IdentityUnavailable
+from app.security.errors import IdentityUnavailable
 
 logger = logging.getLogger(__name__)
 

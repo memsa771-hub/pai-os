@@ -23,8 +23,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from app.config import config
-from app.services import pai
-from app.services.cloud_providers import chat_completion
+from app.inference.client import chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -161,22 +160,21 @@ If nothing is worth storing, return {"candidates": []}.
 """
 
 
-def _model_config() -> tuple[str, str, str, Optional[str]]:
-    """(api_key, provider, model, base_url) for extraction.
+def _model_config() -> tuple[str, str, Optional[str]]:
+    """Return ``(api_key, model, base_url)`` for extraction.
 
     Falls back to PAI Counselor's own configuration so this works out of the
     box, while `MEMORY_EXTRACTOR_*` lets extraction move to a cheaper/faster
     model later without touching Counselor.
     """
     api_key = getattr(config, "MEMORY_EXTRACTOR_API_KEY", "") or config.PAI_API_KEY
-    provider = getattr(config, "MEMORY_EXTRACTOR_PROVIDER", "") or pai.PAI_PROVIDER
     model = getattr(config, "MEMORY_EXTRACTOR_MODEL", "") or config.PAI_MODEL
     base_url = (
         getattr(config, "MEMORY_EXTRACTOR_BASE_URL", "")
         or config.PAI_BASE_URL
         or None
     )
-    return api_key, provider, model, base_url
+    return api_key, model, base_url
 
 
 def _render_field_specs(field_specs) -> str:
@@ -586,13 +584,13 @@ async def extract_candidates(
     if turn.is_empty():
         return []
 
-    api_key, provider, model, base_url = _model_config()
+    api_key, model, base_url = _model_config()
     if not api_key:
         raise ExtractionError("no extraction API key configured")
 
     specs = field_specs or [{"key": key} for key in sorted(allowed_vault_keys)]
     raw = await chat_completion(
-        api_key=api_key, provider=provider, model=model,
+        api_key=api_key, model=model,
         messages=[{"role": "user", "content": build_user_prompt(turn, specs)}],
         system_prompt=SYSTEM_PROMPT, max_tokens=4000, base_url=base_url,
     )

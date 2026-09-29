@@ -4,7 +4,7 @@
 Agent names and display names share ONE namespace per workspace: display
 names are routable aliases (the LLM router and the @mention picker resolve
 them), so any writer of either field must go through these helpers — the
-member PATCH, the agent-join event handler, cloud-agent creation, the OAuth
+member PATCH, the agent-join event handler, system-participant provisioning, the OAuth
 callback and the system-agent backfill.
 """
 

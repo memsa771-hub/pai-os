@@ -24,7 +24,7 @@ from app.memory.student_profile_view import StudentProfileView
 from app.memory.student_records import ENTITY_MODELS, StudentRecordService
 from app.memory.vault import VaultService
 from app.models import User
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 
 router = APIRouter(prefix="/v1/student-profile", tags=["Student Profile"])

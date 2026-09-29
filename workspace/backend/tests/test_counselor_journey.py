@@ -13,7 +13,8 @@ from app.config import config
 from app.memory.context import StudentContext
 from app.memory.foreground import build_foreground_context
 from app.models import BackgroundJob, ExecutionRun, ProfileRequirement
-from app.services import cloud_agent, operator, pai
+from app.counseling import runtime
+from app.services import operator, pai
 from app.tools import ToolContext
 from scripts.counselor_eval_support import StudentSession
 
@@ -27,7 +28,7 @@ async def test_multi_turn_history_and_profile_jobs_survive_a_background_result()
             received.append(kwargs)
             return {"role": "assistant", "content": "Let's compare program fit and living costs."}
 
-        with patch.object(cloud_agent, "chat_completion_tools", model), \
+        with patch.object(runtime, "chat_completion_tools", model), \
                 patch.object(config, "PAI_API_KEY", "test"), \
                 patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", False):
             await student.turn("I want to study abroad for a master's.")
@@ -96,8 +97,8 @@ def test_short_followups_retain_the_student_journey_query():
     history = [{"role": "user", "content": "I want to study abroad"},
                {"role": "assistant", "content": "What is your yearly budget?"},
                {"role": "user", "content": "About €12k"}]
-    assert "study abroad" in cloud_agent._student_context_query(history, "About €12k")
-    assert cloud_agent._student_context_query(history, "Help with my career") == "Help with my career"
+    assert "study abroad" in runtime._student_context_query(history, "About €12k")
+    assert runtime._student_context_query(history, "Help with my career") == "Help with my career"
 
 
 @pytest.mark.asyncio
@@ -176,7 +177,7 @@ async def test_incomplete_profile_still_answers_but_collection_tools_are_enforce
             received.append(kwargs)
             return {"role": "assistant", "content": "IELTS is an English-language proficiency test."}
 
-        with patch.object(cloud_agent, "chat_completion_tools", model), \
+        with patch.object(runtime, "chat_completion_tools", model), \
                 patch.object(config, "PAI_API_KEY", "test"), \
                 patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", True), \
                 patch.object(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "all"), \

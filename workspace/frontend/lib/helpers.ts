@@ -53,7 +53,10 @@ export function formatDate(input: Date | string | number): string {
 
 /** Label to show for an agent: user-set display name (any script) or the
  * ASCII agentName. Mentions and API calls must keep using agentName. */
-export function agentLabel(agent: { agentName: string; displayName?: string | null }): string {
+export function agentLabel(agent: {
+  agentName: string;
+  displayName?: string | null;
+}): string {
   return agent.displayName?.trim() || agent.agentName;
 }
 
@@ -63,9 +66,12 @@ export function agentLabel(agent: { agentName: string; displayName?: string | nu
 const STALE_AGENT_THRESHOLD = 60 * 60 * 1000; // 1 hour
 
 /** Returns true if agent should be visible in sidebar (online or recently seen). */
-export function isRecentAgent(agent: { status: string; agentType?: string | null; lastHeartbeatAt: string | null }): boolean {
+export function isRecentAgent(agent: {
+  status: string;
+  agentType?: string | null;
+  lastHeartbeatAt: string | null;
+}): boolean {
   if (agent.status === 'online') return true;
-  if (agent.agentType?.startsWith('cloud:')) return true;
   if (!agent.lastHeartbeatAt) return false;
   const elapsed = Date.now() - new Date(agent.lastHeartbeatAt).getTime();
   return elapsed < STALE_AGENT_THRESHOLD;
@@ -74,16 +80,44 @@ export function isRecentAgent(agent: { status: string; agentType?: string | null
 // ── Multi-agent visual differentiation ──
 
 const AGENT_COLORS = [
-  { bg: 'bg-blue-50 dark:bg-blue-950/30', text: 'text-blue-700 dark:text-blue-300', initials: 'bg-blue-500', border: 'border-blue-200 dark:border-blue-800' },
-  { bg: 'bg-purple-50 dark:bg-purple-950/30', text: 'text-purple-700 dark:text-purple-300', initials: 'bg-purple-500', border: 'border-purple-200 dark:border-purple-800' },
-  { bg: 'bg-emerald-50 dark:bg-emerald-950/30', text: 'text-emerald-700 dark:text-emerald-300', initials: 'bg-emerald-500', border: 'border-emerald-200 dark:border-emerald-800' },
-  { bg: 'bg-amber-50 dark:bg-amber-950/30', text: 'text-amber-700 dark:text-amber-300', initials: 'bg-amber-500', border: 'border-amber-200 dark:border-amber-800' },
-  { bg: 'bg-rose-50 dark:bg-rose-950/30', text: 'text-rose-700 dark:text-rose-300', initials: 'bg-rose-500', border: 'border-rose-200 dark:border-rose-800' },
+  {
+    bg: 'bg-blue-50 dark:bg-blue-950/30',
+    text: 'text-blue-700 dark:text-blue-300',
+    initials: 'bg-blue-500',
+    border: 'border-blue-200 dark:border-blue-800',
+  },
+  {
+    bg: 'bg-purple-50 dark:bg-purple-950/30',
+    text: 'text-purple-700 dark:text-purple-300',
+    initials: 'bg-purple-500',
+    border: 'border-purple-200 dark:border-purple-800',
+  },
+  {
+    bg: 'bg-emerald-50 dark:bg-emerald-950/30',
+    text: 'text-emerald-700 dark:text-emerald-300',
+    initials: 'bg-emerald-500',
+    border: 'border-emerald-200 dark:border-emerald-800',
+  },
+  {
+    bg: 'bg-amber-50 dark:bg-amber-950/30',
+    text: 'text-amber-700 dark:text-amber-300',
+    initials: 'bg-amber-500',
+    border: 'border-amber-200 dark:border-amber-800',
+  },
+  {
+    bg: 'bg-rose-50 dark:bg-rose-950/30',
+    text: 'text-rose-700 dark:text-rose-300',
+    initials: 'bg-rose-500',
+    border: 'border-rose-200 dark:border-rose-800',
+  },
 ];
 
-export type AgentColor = typeof AGENT_COLORS[0];
+export type AgentColor = (typeof AGENT_COLORS)[0];
 
-export function getAgentColor(agentName: string, allAgentNames: string[]): AgentColor {
+export function getAgentColor(
+  agentName: string,
+  allAgentNames: string[],
+): AgentColor {
   const index = allAgentNames.indexOf(agentName);
   return AGENT_COLORS[(index >= 0 ? index : 0) % AGENT_COLORS.length];
 }

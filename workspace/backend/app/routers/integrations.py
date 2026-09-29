@@ -36,11 +36,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import resolve_current_user, verify_workspace_access
+from app.security.access import resolve_current_user, verify_workspace_access
 from app.config import config
 from app.database import get_db
 from app.models import IntegrationBinding, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _workspace_filter
 from app.services import integrations as svc
 

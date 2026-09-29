@@ -172,19 +172,17 @@ list. That is a correct answer.
 """
 
 
-def _model_config() -> tuple[str, str, str, Optional[str]]:
+def _model_config() -> tuple[str, str, Optional[str]]:
     from app.config import config
-    from app.services import pai
 
     api_key = getattr(config, "DOCUMENT_EXTRACTOR_API_KEY", "") or config.PAI_API_KEY
-    provider = pai.PAI_PROVIDER
     model = getattr(config, "DOCUMENT_EXTRACTOR_MODEL", "") or config.PAI_MODEL
     base_url = (
         getattr(config, "DOCUMENT_EXTRACTOR_BASE_URL", "")
         or config.PAI_BASE_URL
         or None
     )
-    return api_key, provider, model, base_url
+    return api_key, model, base_url
 
 
 def _normalize(text: str) -> str:
@@ -436,12 +434,12 @@ async def understand_document(
     existing_records: dict,
 ) -> DocumentUnderstanding:
     """Classify and extract. Raises DocumentExtractionError on bad output."""
-    from app.services.cloud_providers import chat_completion
+    from app.inference.client import chat_completion
 
     if not segments:
         return DocumentUnderstanding("unknown", 0.0, None, [])
 
-    api_key, provider, model, base_url = _model_config()
+    api_key, model, base_url = _model_config()
     if not api_key:
         raise DocumentExtractionError("no document extraction API key configured")
 
@@ -452,7 +450,7 @@ async def understand_document(
     from app.config import config
 
     raw = await chat_completion(
-        api_key=api_key, provider=provider, model=model,
+        api_key=api_key, model=model,
         messages=[{"role": "user", "content": prompt}],
         system_prompt=SYSTEM_PROMPT, max_tokens=8000, base_url=base_url,
         # Measured on a real CV with gpt-5-mini: default (medium) 69.7s,

@@ -1,11 +1,5 @@
 # -*- coding: utf-8 -*-
-"""
-Cloud agent invocation — background task that calls third-party APIs
-when a message is routed to a cloud agent.
-
-Wired into routers/events.py via FastAPI BackgroundTasks, same pattern
-as push.py.
-"""
+"""PAI Counselor runtime for events addressed to the built-in counselor."""
 
 import asyncio
 import json as _json
@@ -16,115 +10,53 @@ from sqlalchemy import select
 
 from app.config import config
 from app.database import SessionLocal
-from app.models import CloudAgentConfig, EventRecord, ExecutionRun, Workspace
-from app.services.cloud_providers import chat_completion_tools
+from app.inference.client import chat_completion_tools
+from app.models import EventRecord, ExecutionRun, Workspace
 
 logger = logging.getLogger(__name__)
 
-async def invoke_cloud_agents(workspace_id: str, event_data: dict) -> None:
-    """Invoke the first-party PAI Counselor targeted by a message event.
-
-    Generic cloud agents are a retired product surface. Legacy configuration
-    rows may remain until a deliberate data migration, but they must not be
-    executable merely because a client knows an old agent name.
-    """
+async def run_counselor(workspace_id: str, event_data: dict) -> None:
+    """Handle one event when its target is the first-party PAI Counselor."""
     from app.services.pai import PAI_AGENT_NAME
 
     metadata = event_data.get("metadata") or {}
     target_agents = metadata.get("target_agents") or []
-    target_agents = [name for name in target_agents if name == PAI_AGENT_NAME]
-
-    if not target_agents or target_agents == ["__no_response__"]:
+    if PAI_AGENT_NAME not in target_agents:
         return
 
-    depth = metadata.get("cloud_agent_depth", 0)
-    if depth >= config.CLOUD_AGENT_MAX_DEPTH:
-        logger.warning("cloud_agent: max depth %d reached, skipping", depth)
+    depth = metadata.get("counselor_depth", 0)
+    if depth >= config.PAI_COUNSELOR_MAX_DEPTH:
+        logger.warning("counselor: max depth %d reached, skipping", depth)
         return
 
     db = SessionLocal()
     try:
-        for agent_name in target_agents:
-            if agent_name == "__no_response__":
-                continue
-
-            cloud_config = db.execute(
-                select(CloudAgentConfig).where(
-                    CloudAgentConfig.workspace_id == workspace_id,
-                    CloudAgentConfig.agent_name == agent_name,
-                    CloudAgentConfig.status == "active",
-                )
-            ).scalar_one_or_none()
-
-            if not cloud_config:
-                continue
-
-            try:
-                await _invoke_single(db, workspace_id, event_data, cloud_config, depth)
-            except Exception as exc:
-                is_pai = cloud_config.provider == "placement_ai"
-                log_args = (
-                    agent_name, cloud_config.provider, cloud_config.model,
-                    type(exc).__name__, getattr(exc, "status_code", None) or "unknown",
-                )
-                if is_pai:
-                    # Upstream exception strings can contain request details.
-                    # Log only a safe diagnostic envelope for the system agent.
-                    logger.error(
-                        "cloud_agent: invocation failed for %s (%s/%s): error_type=%s status=%s",
-                        *log_args,
-                    )
-                else:
-                    logger.error(
-                        "cloud_agent: invocation failed for %s (%s/%s): error_type=%s status=%s",
-                        *log_args, exc_info=True,
-                    )
-                # Use a fresh DB session for error posting — the original
-                # session may be stale after a long async API call.
-                await _post_error_message(
-                    workspace_id, event_data, agent_name,
-                    (
-                        "PAI Counselor could not reach the language service right now. "
-                        "Please try again shortly."
-                        if is_pai else
-                        f"Failed to get a response from {cloud_config.provider}/{cloud_config.model}."
-                    ),
-                )
+        try:
+            await _run_turn(db, workspace_id, event_data, depth)
+        except Exception as exc:
+            logger.error(
+                "counselor: invocation failed: error_type=%s status=%s",
+                type(exc).__name__, getattr(exc, "status_code", None) or "unknown",
+            )
+            await _post_error_message(
+                workspace_id, event_data, PAI_AGENT_NAME,
+                "PAI Counselor could not reach the language service right now. "
+                "Please try again shortly.",
+            )
     finally:
         db.close()
 
 
-async def _invoke_single(
-    db, workspace_id: str, event_data: dict,
-    cloud_config: CloudAgentConfig, depth: int,
-) -> None:
-    """Invoke the first-party PAI Counselor."""
-    await _invoke_assistant_agent(db, workspace_id, event_data, cloud_config, depth)
-
-
-async def _invoke_assistant_agent(
-    db, workspace_id: str, event_data: dict,
-    cloud_config: CloudAgentConfig, depth: int,
-) -> None:
-    """Invoke a tool-using assistant agent (PAI Counselor) with a hand-rolled
-    function-calling loop.
-
-    Unlike the single-shot chat path, this lets the agent call server-side
-    tools (list/create threads, etc.) across several turns before producing a
-    final answer, which is posted as a normal chat message.
-    """
+async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None:
+    """Run the Counselor's tool loop and post its final response."""
     from app.services import pai
 
     channel_target = event_data.get("target", "")
-    agent_name = cloud_config.agent_name
-
-    # Capture config into locals: we release the DB connection between LLM
-    # calls (below), which expires ORM objects, so we must not read from
-    # cloud_config inside the loop.
-    provider = cloud_config.provider
-    model = pai.resolve_model(cloud_config)
-    max_tokens = cloud_config.max_tokens
-    api_key, base_url = pai.resolve_credentials(cloud_config)
+    agent_name = pai.PAI_AGENT_NAME
+    model = config.PAI_MODEL
+    max_tokens = None
+    api_key = config.PAI_API_KEY
+    base_url = config.PAI_BASE_URL or None
     if not api_key:
         logger.error("assistant %s: no API key configured", agent_name)
         await _post_error_message(
@@ -176,8 +108,7 @@ async def _invoke_assistant_agent(
         return
     api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
-    system_prompt = (pai.PAI_SYSTEM_PROMPT if provider == pai.PAI_PROVIDER
-                     else cloud_config.system_prompt or pai.PAI_SYSTEM_PROMPT)
+    system_prompt = pai.PAI_SYSTEM_PROMPT
     completion = None
     counseling_decision = None
     if agent_name == pai.PAI_AGENT_NAME:
@@ -190,7 +121,7 @@ async def _invoke_assistant_agent(
             completion["personalizedCounselingEligible"], completion["enforced"],
             (completion.get("nextRequirement") or {}).get("key"),
         )
-    if provider == pai.PAI_PROVIDER:
+    if agent_name == pai.PAI_AGENT_NAME:
         active_runs = db.execute(select(ExecutionRun).where(
             ExecutionRun.workspace_id == workspace_id,
             ExecutionRun.channel_target == channel_target,
@@ -288,10 +219,7 @@ async def _invoke_assistant_agent(
     memory_context = None
     inject_memory = (
         config.PAI_MEMORY_CONTEXT_ENABLED
-        # Only the BUILT-IN counsellor. A user-created cloud agent runs this
-        # same loop and must never be handed the student's profile — gated on
-        # the same identity constant the capability grants use, not a second
-        # permission system.
+        # Only the built-in Counselor receives the student's stored context.
         and agent_name == pai.PAI_AGENT_NAME
         and content
         # Collection mode may answer general questions, but must not receive
@@ -299,7 +227,7 @@ async def _invoke_assistant_agent(
         and (completion is None or completion["counselorMode"] != "collection")
     )
     # Release the request connection during concurrent grounding/model work.
-    agent_id = str(cloud_config.id) if getattr(cloud_config, "id", None) else None
+    agent_id = None
     db.rollback()
     if inject_memory:
         from app.memory.foreground import build_foreground_context
@@ -368,7 +296,7 @@ async def _invoke_assistant_agent(
         if documents_block:
             system_prompt += "\n\n" + documents_block
 
-    if provider == pai.PAI_PROVIDER:
+    if agent_name == pai.PAI_AGENT_NAME:
         from app.services.counselor_prompt import PAI_TURN_CONTRACT
         system_prompt += "\n\n" + PAI_TURN_CONTRACT
     if completion is not None:
@@ -399,10 +327,8 @@ async def _invoke_assistant_agent(
     )
     if counseling_decision is not None and not counseling_decision.operator_allowed:
         allowed_tools = frozenset(set(allowed_tools) - {"operator.delegate"})
-    # Keyed on the agent actually running, not hardcoded to Counselor: this
-    # loop serves every cloud agent, and a user-added one must not inherit
-    # Counselor's memory grant just by running the same code path. Unlisted
-    # agents get NO_CAPABILITIES, so memory tools are withheld from them.
+    # Capability grants remain explicit even though this runtime only serves
+    # the Counselor.
     granted_capabilities = capabilities_for_agent(agent_name)
     tool_context = ToolContext(
         workspace_id=workspace_id,
@@ -427,8 +353,8 @@ async def _invoke_assistant_agent(
     max_iters = max(1, config.PAI_MAX_TOOL_ITERATIONS)
 
     logger.info(
-        "assistant: invoking %s (%s/%s), %d ctx msgs, max %d tool iters",
-        agent_name, provider, model, len(messages), max_iters,
+        "counselor: invoking %s (%s), %d context messages, max %d tool iterations",
+        agent_name, model, len(messages), max_iters,
     )
 
     final_text = ""
@@ -444,7 +370,6 @@ async def _invoke_assistant_agent(
         db.rollback()
         msg = await chat_completion_tools(
             api_key=api_key,
-            provider=provider,
             model=model,
             messages=messages,
             tools=use_tools,
@@ -558,9 +483,9 @@ def _build_conversation_context(
     max_scanned rows are all noise, older chat history is invisible for
     this turn — a warning is logged when that happens.
     """
-    max_messages = config.CLOUD_AGENT_MAX_CONTEXT_MESSAGES
+    max_messages = config.PAI_COUNSELOR_MAX_CONTEXT_MESSAGES
     if max_chars is None:
-        max_chars = config.CLOUD_AGENT_MAX_CONTEXT_CHARS
+        max_chars = config.PAI_COUNSELOR_MAX_CONTEXT_CHARS
 
     batch_size = max(max_messages * 3, 100)
     max_scanned = batch_size * 10
@@ -633,7 +558,7 @@ def _build_conversation_context(
 
     if len(collected) < max_messages and offset >= max_scanned:
         logger.warning(
-            "cloud_agent: context scan cap (%d rows) reached for %s in %s "
+            "counselor: context scan cap (%d rows) reached for %s in %s "
             "with only %d chat message(s) collected — older history, if any, "
             "is invisible this turn",
             max_scanned, agent_name, channel_target, len(collected),
@@ -650,7 +575,7 @@ async def _post_response(
     message_type: str = "chat",
     metadata: Optional[dict] = None,
 ) -> Optional[str]:
-    """Post the cloud agent's response back through the event pipeline.
+    """Post the Counselor's response through the event pipeline.
 
     ``message_type``/``metadata`` let a caller other than an ordinary chat
     turn attribute its post distinctly — e.g. PAI Operator auto-posting a
@@ -665,7 +590,7 @@ async def _post_response(
     do so without re-querying for it.
     """
     from app.models import Workspace
-    from app.pipeline_factory import pipeline
+    from app.eventing.factory import pipeline
     from app.eventing.events import Event
     from app.eventing.mods import EventRejected, PipelineContext
 
@@ -674,7 +599,7 @@ async def _post_response(
     ).scalar_one_or_none()
 
     if not workspace:
-        logger.error("cloud_agent: workspace %s not found", workspace_id)
+        logger.error("counselor: workspace %s not found", workspace_id)
         return None
 
     payload: dict = {
@@ -689,7 +614,7 @@ async def _post_response(
         source=f"openagents:{agent_name}",
         target=channel_target,
         payload=payload,
-        metadata={"cloud_agent_depth": depth + 1, **(metadata or {})},
+        metadata={"counselor_depth": depth + 1, **(metadata or {})},
         visibility="channel",
         network=workspace_id,
     )
@@ -705,7 +630,7 @@ async def _post_response(
     try:
         await pipeline.process(event, context)
     except EventRejected as exc:
-        logger.warning("cloud_agent: response event rejected: %s", exc.reason)
+        logger.warning("counselor: response event rejected: %s", exc.reason)
         return None
 
     db.commit()
@@ -722,7 +647,7 @@ async def _post_response(
 
     # Publish to Redis so SSE clients receive the event in real-time
     try:
-        from app import cache
+        from app.infrastructure import cache
         cache.publish_event(
             f"ws:{workspace_id}:events",
             _json.dumps(snapshot, default=str, separators=(",", ":")).encode(),
@@ -746,7 +671,7 @@ async def _post_response(
             None, advance_workflow, workspace_id, wf_event,
         )
     except Exception:
-        logger.warning("cloud_agent: failed to schedule workflow advance", exc_info=True)
+        logger.warning("counselor: failed to schedule workflow advance", exc_info=True)
 
     # Cloud replies bypass POST /v1/events, so the route's Slack/Telegram
     # relay hook never sees them either — schedule it here the same way.
@@ -756,7 +681,7 @@ async def _post_response(
             None, relay_for_event, workspace_id, snapshot,
         )
     except Exception:
-        logger.warning("cloud_agent: failed to schedule integration relay", exc_info=True)
+        logger.warning("counselor: failed to schedule integration relay", exc_info=True)
 
     # LAST. Every post-commit hook above must run before this returns —
     # returning early once orphaned the Redis publish, workflow advance and
@@ -768,7 +693,7 @@ async def _post_response(
 async def _post_error_message(
     workspace_id: str, event_data: dict, agent_name: str, error_text: str,
 ) -> None:
-    """Post an error message to the channel on behalf of the cloud agent.
+    """Post an error message to the channel on behalf of the Counselor.
 
     Opens its own short-lived DB session so a stale connection from a
     long-running API call cannot prevent the error from reaching the user.
@@ -783,6 +708,6 @@ async def _post_error_message(
             depth=0,
         )
     except Exception:
-        logger.exception("cloud_agent: failed to post error message for %s", agent_name)
+        logger.exception("counselor: failed to post error message for %s", agent_name)
     finally:
         err_db.close()

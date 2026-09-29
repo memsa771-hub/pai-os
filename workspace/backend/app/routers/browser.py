@@ -28,8 +28,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from app.browser import BROWSERFABRIC_API_KEY, BrowserManager
-from app.browser_creds import (
+from app.browser.manager import BROWSERFABRIC_API_KEY, BrowserManager
+from app.browser.credentials import (
     SOURCE_GLOBAL,
     SOURCE_WORKSPACE,
     BrowserCredentialError,
@@ -37,9 +37,9 @@ from app.browser_creds import (
     resolve_tab_key,
 )
 from app.database import get_db
-from app.net_security import UnsafeURLError
+from app.security.network import UnsafeURLError
 from app.models import BrowserContext, BrowserTab, BrowserUsage, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import (
     _emit_event,
     _resolve_workspace,
@@ -50,7 +50,7 @@ from app.eventing.events import Event
 logger = logging.getLogger(__name__)
 
 
-from app.event_identity import request_actor_source as _request_actor_source
+from app.security.event_identity import request_actor_source as _request_actor_source
 
 router = APIRouter(prefix="/v1/browser", tags=["Browser"])
 

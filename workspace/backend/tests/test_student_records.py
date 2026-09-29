@@ -418,7 +418,7 @@ def test_complex_introduction_extracts_separate_structured_claims(db):
     turn = TurnContext(workspace_id=db.info["workspace"], user_event_id="intro", user_text=text)
     fields = VaultFieldDefinitionService(db).list_definitions()
     with patch("app.memory.extractor.chat_completion", AsyncMock(return_value=json.dumps(raw))), \
-         patch("app.memory.extractor._model_config", return_value=("test", "openai", "test", None)):
+         patch("app.memory.extractor._model_config", return_value=("test", "test", None)):
         extracted = asyncio.run(extract_candidates(
             turn, {field.key for field in fields},
             [{"key": field.key, "data_type": field.data_type,
@@ -783,7 +783,7 @@ def test_a_budget_figure_the_student_never_said_is_refused():
 def test_newer_models_get_the_token_parameter_they_accept():
     # gpt-5.x/o-series reject `max_tokens` with a 400. Extraction always sends
     # a cap, so getting this wrong stops the Vault recording anything at all.
-    from app.services.cloud_providers import _token_limit_kwarg
+    from app.inference.client import _token_limit_kwarg
     for legacy in ("gpt-4o", "gpt-4o-mini"):
         assert _token_limit_kwarg(legacy) == "max_tokens"
     for modern in ("gpt-5.4-mini", "gpt-5.5", "gpt-5.6-terra", "gpt-6-astra", "o3", "o4-mini"):

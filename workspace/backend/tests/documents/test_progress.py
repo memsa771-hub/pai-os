@@ -213,7 +213,7 @@ class TestNotifyChain:
         _extract(db, workspace_id, record.id, _education())
 
         post = AsyncMock(return_value="event-1")
-        with patch("app.services.cloud_agent._post_response", new=post):
+        with patch("app.counseling.runtime._post_response", new=post):
             result = asyncio.run(notify_document_job(
                 SimpleNamespace(id="n1", workspace_id=workspace_id,
                                 payload={"file_id": record.id}), db))
@@ -228,7 +228,7 @@ class TestNotifyChain:
         _parse(db, workspace_id, record, data)
 
         post = AsyncMock()
-        with patch("app.services.cloud_agent._post_response", new=post):
+        with patch("app.counseling.runtime._post_response", new=post):
             result = asyncio.run(notify_document_job(
                 SimpleNamespace(id="n2", workspace_id=workspace_id,
                                 payload={"file_id": record.id}), db))

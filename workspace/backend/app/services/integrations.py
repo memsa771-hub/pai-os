@@ -35,7 +35,7 @@ from typing import Optional
 import httpx
 from sqlalchemy import select
 
-from app import cache
+from app.infrastructure import cache
 from app.database import SessionLocal
 from app.models import Channel, ChannelMember, IntegrationBinding, Workspace
 
@@ -148,9 +148,9 @@ def ingest_external_message(
 
     Runs in a background task (threadpool) — opens its own DB session and
     mirrors what ``POST /v1/events`` does after the pipeline: commit, poll-
-    cache invalidation, Redis publish, cloud-agent + workflow hooks.
+    cache invalidation, Redis publish, Counselor and workflow hooks.
     """
-    from app.pipeline_factory import pipeline
+    from app.eventing.factory import pipeline
     from app.routers.events import _invalidate_poll_cache
     from app.eventing.events import Event
     from app.eventing.mods import EventRejected, PipelineContext
@@ -226,13 +226,13 @@ def ingest_external_message(
         except Exception:
             pass
 
-        # Cloud agents / workflow runs never poll — invoke them like the
-        # POST /v1/events route does.
+        # The Counselor and workflow runs never poll, so dispatch them after
+        # the inbound event is committed.
         try:
-            from app.services.cloud_agent import invoke_cloud_agents
-            asyncio.run(invoke_cloud_agents(str(workspace.id), snapshot))
+            from app.counseling.runtime import run_counselor
+            asyncio.run(run_counselor(str(workspace.id), snapshot))
         except Exception:
-            logger.exception("integrations: cloud agent invoke failed")
+            logger.exception("integrations: counselor invoke failed")
         try:
             from app.services.workflow import advance_workflow
             advance_workflow(str(workspace.id), snapshot)

@@ -25,13 +25,13 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.access import (
+from app.security.access import (
     get_or_create_owned_workspace,
     resolve_current_user,
     resolve_owned_workspace,
 )
 from app.database import get_db
-from app.human_auth import verify_identity_token
+from app.security.human_auth import verify_identity_token
 from app.models import (
     ChannelHumanMember,
     EventRecord,
@@ -39,10 +39,10 @@ from app.models import (
     User,
     Workspace,
 )
-from app.response import ResponseCode, json_response, success_response
-from app.storage import get_file_store
-from app.stream_ticket import TICKET_TTL_SECONDS
-from app.stream_ticket import mint as mint_stream_ticket
+from app.api.response import ResponseCode, json_response, success_response
+from app.files.storage import get_file_store
+from app.security.stream_ticket import TICKET_TTL_SECONDS
+from app.security.stream_ticket import mint as mint_stream_ticket
 from app.routers.network import _extract_bearer
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ def get_account_workspace(
     identified by `workspaces.owner_user_id`. Creates it — with PAI Counselor
     and the canonical welcome conversation — the first time this is called for
     a given user; every call after that returns the same workspace.
-    Concurrency-safe (see `app.access.get_or_create_owned_workspace`): two
+    Concurrency-safe (see `app.security.access.get_or_create_owned_workspace`): two
     simultaneous first logins (two tabs, web + desktop) can never create two
     workspaces for the same user.
     """

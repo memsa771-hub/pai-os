@@ -21,13 +21,13 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import NotificationRecord, Workspace
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _resolve_workspace, _verify_workspace_access
 from app.services.notify import notify
 
 logger = logging.getLogger(__name__)
 
-from app.event_identity import request_actor_source
+from app.security.event_identity import request_actor_source
 
 router = APIRouter(prefix="/v1", tags=["Notifications"])
 

@@ -5,17 +5,16 @@ PAI Operator — Placement AI's hidden execution intelligence.
 PAI Counselor (see ``services/pai.py``) is the student's only conversational
 agent. PAI Operator is what Counselor delegates real work to when a request
 needs more than a reply — research, filling a draft, running a multi-step
-plan through the browser/docs/tasks tools. It is never a WorkspaceMember and
-never a CloudAgentConfig row: it has no channel, no membership, nothing that
+plan through the browser/docs/tasks tools. It is never a WorkspaceMember: it
+has no channel, no membership, nothing that
 ``/v1/discover`` or the ``workspace.agents.list`` tool could ever surface, so
 it is structurally impossible for it to appear in any agent picker or roster
 — not a UI filter someone could forget to apply, an absence of the row those
 filters read from.
 
 Provisioning is therefore implicit: Operator's model/credentials are the same
-server-managed ``config.PAI_*`` values PAI Counselor already uses (see
-``pai.resolve_credentials``/``pai.resolve_model``) — nothing to seed per
-workspace, nothing to backfill, nothing to migrate if PAI is disabled.
+server-managed ``config.PAI_*`` values PAI Counselor already uses — nothing
+to seed per workspace or backfill.
 
 Counselor delegates to it through two ordinary tools in the SAME shared tool
 runtime (``operator.delegate`` / ``operator.status`` — see
@@ -58,7 +57,7 @@ from app.config import config
 from app.database import new_session
 from app.models import ExecutionRun
 from app.services import pai
-from app.services.cloud_providers import chat_completion, chat_completion_tools
+from app.inference.client import chat_completion, chat_completion_tools
 
 logger = logging.getLogger(__name__)
 
@@ -242,7 +241,7 @@ def _publish_run_updated(workspace_id: str, run: ExecutionRun) -> None:
     """Best-effort SSE nudge so the frontend can refetch instead of polling
     blind. Never allowed to fail the run it's reporting on."""
     try:
-        from app import cache
+        from app.infrastructure import cache
         event = {
             "id": str(uuid.uuid4()),
             "type": "workspace.operator.run_updated",
@@ -265,8 +264,8 @@ async def _post_result(
     run_id: str, status: str, message: str,
 ) -> None:
     """Auto-post the finished run's outcome into the thread it was delegated
-    from — the same event-pipeline path a normal cloud-agent reply already
-    uses (see ``cloud_agent._post_response``), so the student sees the result
+    from — the same event-pipeline path a Counselor reply already
+    uses (see ``counseling.runtime._post_response``), so the student sees the result
     the moment it's ready instead of having to ask "did it work?" in a later
     turn. Posted as PAI Counselor (``pai.PAI_AGENT_NAME``): Operator never
     speaks to the student directly, only Counselor does.
@@ -284,7 +283,7 @@ async def _post_result(
     if not channel_target or not message:
         return
     try:
-        from app.services.cloud_agent import _build_conversation_context, _post_response
+        from app.counseling.runtime import _build_conversation_context, _post_response
         db.rollback()
         run = db.get(ExecutionRun, run_id)
         if run is not None and str(run.workspace_id) == workspace_id and run.result:
@@ -427,7 +426,7 @@ async def delegate(ctx, objective: str, constraints: Optional[dict], context_ref
         return {"ok": False, "error": {"code": "operator_unavailable", "message": "PAI Operator is not configured on the server"}}
 
     # `ctx.conversation` is the same thread id PAI Counselor's own tool
-    # context carries (see cloud_agent._invoke_assistant_agent) — reconstruct
+    # context carries (see counseling.runtime._run_turn) — reconstruct
     # the event target so the finished run can post its result back into the
     # exact thread the objective came from, the way any other agent reply does.
     channel_target = f"channel/{ctx.conversation}" if getattr(ctx, "conversation", None) else None
@@ -600,7 +599,6 @@ async def _execute(
             _publish_run_updated(workspace_id, run)
 
         api_key = config.PAI_API_KEY
-        provider = pai.PAI_PROVIDER
         # Operator may run a different model from Counselor; empty reuses it.
         model = config.PAI_OPERATOR_MODEL or config.PAI_MODEL
         # UNDERSTAND/PLAN/VERIFY carry no tools and honour this. The execute
@@ -658,7 +656,7 @@ async def _execute(
             else:
                 db.rollback()
                 understanding = await chat_completion(
-                    api_key=api_key, provider=provider, model=model,
+                    api_key=api_key, model=model,
                     reasoning_effort=effort,
                     messages=[{"role": "user", "content": (
                         f"{state_summary}\n{memory_block}\n\n"
@@ -688,7 +686,7 @@ async def _execute(
             else:
                 db.rollback()
                 plan_raw = await chat_completion(
-                api_key=api_key, provider=provider, model=model,
+                api_key=api_key, model=model,
                 reasoning_effort=effort,
                 messages=[{"role": "user", "content": (
                     f"{memory_block}\n\n" if memory_block else ""
@@ -802,7 +800,7 @@ async def _execute(
             db.rollback()
             try:
                 msg = await chat_completion_tools(
-                    api_key=api_key, provider=provider, model=model,
+                    api_key=api_key, model=model,
                     reasoning_effort=effort,
                     messages=messages, tools=use_tools,
                     system_prompt=system_prompt, max_tokens=None, base_url=base_url,
@@ -938,7 +936,7 @@ async def _execute(
         try:
             db.rollback()
             verify_raw = await chat_completion(
-                api_key=api_key, provider=provider, model=model,
+                api_key=api_key, model=model,
                 reasoning_effort=effort,
                 messages=[{"role": "user", "content": (
                     f"Objective: {objective}\nPlan steps:\n{plan_listing}\n"

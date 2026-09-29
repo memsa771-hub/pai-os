@@ -3,7 +3,7 @@
 
 A ``WorkflowRun`` drives one thread (channel) through a snapshot of workflow
 steps. The engine is event-driven: after each ``workspace.message.posted`` the
-router schedules :func:`advance_workflow` (like ``invoke_cloud_agents``), which
+router schedules :func:`advance_workflow`, which
 
   1. checks the message is the current step's output (from its assignee),
   2. asks the fast model whether the step is complete,
@@ -28,7 +28,6 @@ from app.database import SessionLocal
 from app.models import (
     Channel,
     ChannelMember,
-    CloudAgentConfig,
     KanbanTask,
     Workflow,
     WorkflowRun,
@@ -47,12 +46,9 @@ WORKFLOW_SOURCE = "system:workflow"
 def _spawn(fn, *args) -> None:
     """Fire-and-forget a callable on a daemon thread.
 
-    Step messages are emitted through the pipeline directly (not the
-    POST /v1/events route), so the route's ``invoke_cloud_agents`` /
-    ``advance_workflow`` hooks never see them. Daemon agents are unaffected
-    (they poll for the step and reply through the route), but cloud/built-in
-    agents like PAI Counselor must be invoked explicitly — and without blocking the
-    caller (a full tool loop takes seconds; /assign must return immediately).
+    Step messages are emitted through the pipeline directly, so the event
+    route's Counselor/workflow hooks never see them. The built-in Counselor
+    must be invoked explicitly without blocking the caller.
     """
     import threading
 
@@ -71,25 +67,19 @@ def _run_coro(coro_fn, *args) -> None:
     asyncio.run(coro_fn(*args))
 
 
-def _maybe_invoke_cloud_agent(db, workspace, channel_name: str, content: str, agent: str) -> None:
-    """If the step's agent is a cloud agent, invoke it (detached, non-blocking)."""
-    cfg = db.execute(
-        select(CloudAgentConfig).where(
-            CloudAgentConfig.workspace_id == str(workspace.id),
-            CloudAgentConfig.agent_name == agent,
-            CloudAgentConfig.status == "active",
-        )
-    ).scalar_one_or_none()
-    if cfg is None:
-        return  # daemon agent — it polls for the step and replies via the route
-    from app.services.cloud_agent import invoke_cloud_agents
+def _maybe_run_counselor(workspace, channel_name: str, content: str, agent: str) -> None:
+    """Invoke a workflow step assigned to the built-in Counselor."""
+    from app.services.pai import PAI_AGENT_NAME
+    if agent != PAI_AGENT_NAME:
+        return
+    from app.counseling.runtime import run_counselor
     snapshot = {
         "target": f"channel/{channel_name}",
         "source": WORKFLOW_SOURCE,
         "payload": {"content": content, "message_type": "chat"},
         "metadata": {"target_agents": [agent]},
     }
-    _spawn(_run_coro, invoke_cloud_agents, str(workspace.id), snapshot)
+    _spawn(_run_coro, run_counselor, str(workspace.id), snapshot)
 
 
 # ---------------------------------------------------------------------------
@@ -370,8 +360,8 @@ def _deliver_step(db, workspace, run: WorkflowRun, step: dict, prev_output: str,
         db.flush()
         _emit(db, workspace, run.channel_name, body, metadata={"workflow_step": step["id"]},
               attachments=attachments)
-        # Cloud agents (e.g. PAI Counselor) don't poll — invoke them explicitly.
-        _maybe_invoke_cloud_agent(db, workspace, run.channel_name, body, agent)
+        # PAI Counselor does not poll — invoke it explicitly.
+        _maybe_run_counselor(workspace, run.channel_name, body, agent)
     else:
         # Human step — nobody is auto-targeted; notify + park on Need Input.
         human = assignee.get("human")
@@ -534,7 +524,7 @@ def advance_workflow(workspace_id: str, event_data: dict) -> None:
     """Background hook: react to a message in a workflow channel and advance.
 
     Opens its own DB session (the request session is gone by now), mirroring
-    ``invoke_cloud_agents``. Never raises — a workflow bug must not break the
+    the Counselor runtime. Never raises — a workflow bug must not break the
     event that triggered it.
     """
     db = SessionLocal()

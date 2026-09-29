@@ -26,13 +26,13 @@ async def create_thread(ctx, args):
     """Create a thread as the calling agent.
 
     Goes through `emit_internal_event` rather than POST /v1/events. Public
-    ingress now derives identity from credentials, and a cloud agent like PAI
+    ingress now derives identity from credentials, and the built-in Counselor
     Operator has no join session to present — it is server-side code, so it
     takes the server-side path instead of trying to authenticate to its own
     API as if it were a client.
     """
     from app.database import new_session
-    from app.event_identity import emit_internal_event
+    from app.security.event_identity import emit_internal_event
     from app.models import Workspace
 
     title = args["title"].strip() or "New thread"

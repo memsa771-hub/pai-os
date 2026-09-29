@@ -42,13 +42,24 @@ def _load_env_file() -> None:
 _load_env_file()
 
 
+def normalize_database_url(value: str) -> str:
+    """Select the PostgreSQL driver that is installed by requirements.txt."""
+    if value.startswith("postgresql://"):
+        return value.replace("postgresql://", "postgresql+psycopg2://", 1)
+    if value.startswith("postgres://"):
+        return value.replace("postgres://", "postgresql+psycopg2://", 1)
+    return value
+
+
 class Config:
     """Application configuration loaded from environment variables."""
 
     # Database
-    DATABASE_URL: str = os.environ.get(
-        "DATABASE_URL",
-        "postgresql://postgres:dev@localhost:5432/openagents_workspace",
+    DATABASE_URL: str = normalize_database_url(
+        os.environ.get(
+            "DATABASE_URL",
+            "postgresql+psycopg2://postgres:dev@localhost:5432/openagents_workspace",
+        )
     )
     DB_POOL_SIZE: int = int(os.environ.get("DB_POOL_SIZE", "10"))
     DB_MAX_OVERFLOW: int = int(os.environ.get("DB_MAX_OVERFLOW", "5"))
@@ -60,7 +71,7 @@ class Config:
     # later, mobile). SUPABASE_ANON_KEY is the public/publishable key that also
     # ships in every client bundle, so it is not a secret; there is
     # deliberately no service-role key or JWT signing secret here (see
-    # app.human_auth.verify_identity_claims, which verifies tokens via
+    # app.security.human_auth.verify_identity_claims, which verifies tokens via
     # Supabase's own JWKS/introspection instead of a shared secret).
     #
     # Required from the environment (see workspace/.env.example) — no default
@@ -139,24 +150,19 @@ class Config:
     APP_IOS_UPDATE_URL: str = os.environ.get("APP_IOS_UPDATE_URL", "")
     APP_IOS_RELEASE_NOTES: str = os.environ.get("APP_IOS_RELEASE_NOTES", "")
 
-    # LLM Router — uses a small model to decide agent turn-taking in multi-agent threads
-    # Provider: "anthropic" (default) or "openai" (any OpenAI-compatible endpoint)
+    # Optional turn router. It uses the same server-managed inference endpoint
+    # as the rest of PAI; there is no second provider credential path.
     ROUTER_LLM_ENABLED: bool = os.environ.get("ROUTER_LLM_ENABLED", "true").lower() in ("true", "1", "yes")
-    ROUTER_LLM_PROVIDER: str = os.environ.get("ROUTER_LLM_PROVIDER", "anthropic")  # "anthropic" or "openai"
-    ROUTER_LLM_MODEL: str = os.environ.get("ROUTER_LLM_MODEL", "")  # auto-detected from provider if empty
-    ROUTER_LLM_API_KEY: str = os.environ.get("ROUTER_LLM_API_KEY", "")  # universal key (checked first)
-    ROUTER_LLM_BASE_URL: str = os.environ.get("ROUTER_LLM_BASE_URL", "")  # custom endpoint for openai provider
-    ANTHROPIC_API_KEY: str = os.environ.get("ANTHROPIC_API_KEY", "")  # fallback for anthropic provider
 
-    # Cloud agents
-    CLOUD_AGENT_MAX_CONTEXT_MESSAGES: int = int(os.environ.get("CLOUD_AGENT_MAX_CONTEXT_MESSAGES", "100"))
+    # Counselor conversation bounds
+    PAI_COUNSELOR_MAX_CONTEXT_MESSAGES: int = int(os.environ.get("PAI_COUNSELOR_MAX_CONTEXT_MESSAGES", "100"))
     # Whole-request char budget (system prompt + history + trigger message).
     # Chars are a rough token proxy and the ratio varies by language (CJK text
     # can approach 1 token per char) — the default assumes frontier models
     # with 200K+ windows and leaves output-token headroom; lower it when
     # targeting small custom models.
-    CLOUD_AGENT_MAX_CONTEXT_CHARS: int = int(os.environ.get("CLOUD_AGENT_MAX_CONTEXT_CHARS", "60000"))
-    CLOUD_AGENT_MAX_DEPTH: int = int(os.environ.get("CLOUD_AGENT_MAX_DEPTH", "3"))
+    PAI_COUNSELOR_MAX_CONTEXT_CHARS: int = int(os.environ.get("PAI_COUNSELOR_MAX_CONTEXT_CHARS", "60000"))
+    PAI_COUNSELOR_MAX_DEPTH: int = int(os.environ.get("PAI_COUNSELOR_MAX_DEPTH", "3"))
 
     # PAI Counselor — Placement AI's primary education counselor (auto-added
     # to every workspace). Its credentials are SERVER-HELD and shared across all
@@ -176,7 +182,6 @@ class Config:
     # matching PAI_* value, so extraction works with no extra configuration —
     # but extraction is a cheap structured-output task that runs on every turn,
     # so it can be moved to a smaller/faster model independently of Counselor.
-    MEMORY_EXTRACTOR_PROVIDER: str = os.environ.get("MEMORY_EXTRACTOR_PROVIDER", "")
     MEMORY_EXTRACTOR_MODEL: str = os.environ.get("MEMORY_EXTRACTOR_MODEL", "")
     MEMORY_EXTRACTOR_API_KEY: str = os.environ.get("MEMORY_EXTRACTOR_API_KEY", "")
     MEMORY_EXTRACTOR_BASE_URL: str = os.environ.get("MEMORY_EXTRACTOR_BASE_URL", "")
@@ -245,7 +250,7 @@ class Config:
     # --- Per-agent model configuration ---------------------------------
     # Counselor turns always carry function tools, and /v1/chat/completions
     # pins a tool-calling request to reasoning_effort="none" (see
-    # cloud_providers._reasoning_effort_for). That is also the fastest
+    # inference.client._reasoning_effort_for). That is also the fastest
     # setting, which is what a chat turn wants; this value therefore applies
     # to Counselor calls made WITHOUT tools, such as the research handoff.
     PAI_COUNSELOR_REASONING_EFFORT: str = os.environ.get(

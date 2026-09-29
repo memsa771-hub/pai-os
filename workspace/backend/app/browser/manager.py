@@ -15,9 +15,9 @@ from typing import Optional
 
 import httpx
 
-from app.browser_creds import redact
-from app.browser_egress import DENY_MARKER_HEADER, EgressPolicyProxy
-from app.net_security import UnsafeURLError, validate_public_url
+from app.browser.credentials import redact
+from app.browser.egress import DENY_MARKER_HEADER, EgressPolicyProxy
+from app.security.network import UnsafeURLError, validate_public_url
 
 logger = logging.getLogger(__name__)
 
@@ -498,7 +498,7 @@ class BrowserManager:
         Validating the entry URL constrains only the first request. Everything
         the page does afterwards — redirects, meta-refresh, JS navigation,
         XHR, iframes, subresources, WebSockets — is constrained in local mode
-        by the egress proxy (see app.browser_egress), which is the actual
+        by the egress proxy (see app.browser.egress), which is the actual
         boundary. In Browser Fabric mode the navigation happens on BF's
         infrastructure and only this entry check applies.
         """

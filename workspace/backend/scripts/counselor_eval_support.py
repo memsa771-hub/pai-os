@@ -18,11 +18,13 @@ from app.memory.field_definitions import SEED_FIELD_DEFINITIONS, VaultFieldDefin
 from app.memory.student_records import ENTITY_MODELS, StudentRecordService
 from app.memory.vault import VaultService
 from app.models import (
-    BackgroundJob, CloudAgentConfig, EventRecord, ExecutionRun, FileRecord,
+    BackgroundJob, EventRecord, ExecutionRun, FileRecord,
     MemoryCandidate, PaiEpisode, PaiMemory, ProfileIssue, ProfileRequirement, StudentRecordRevision,
     StudentJourney, StudentJourneyEvent, User, VaultFact, VaultFieldDefinition, Workspace,
+    WorkspaceMember,
 )
-from app.services import cloud_agent, pai
+from app.counseling import runtime
+from app.services import pai
 
 
 @compiles(JSONB, "sqlite")
@@ -66,7 +68,7 @@ class StudentSession:
             connection.create_function("NOW", 0, lambda: datetime.now(timezone.utc).isoformat())
             connection.execute("PRAGMA foreign_keys=ON")
 
-        models = [User, Workspace, CloudAgentConfig, ExecutionRun, EventRecord, FileRecord,
+        models = [User, Workspace, WorkspaceMember, ExecutionRun, EventRecord, FileRecord,
                   VaultFact, VaultFieldDefinition, MemoryCandidate, PaiMemory, PaiEpisode,
                   ProfileIssue, ProfileRequirement, StudentRecordRevision, BackgroundJob,
                   StudentJourney, StudentJourneyEvent,
@@ -86,18 +88,18 @@ class StudentSession:
             db.add(workspace)
             db.flush()
             self.workspace_id = str(workspace.id)
-            cfg = CloudAgentConfig(workspace_id=workspace.id, agent_name=pai.PAI_AGENT_NAME,
-                                   provider=pai.PAI_PROVIDER, model="server-managed", category="assistant",
-                                   api_key="__server_managed__", status="active")
-            db.add(cfg)
+            db.add(WorkspaceMember(
+                workspace_id=workspace.id, agent_name=pai.PAI_AGENT_NAME,
+                role="member", agent_type=pai.PAI_AGENT_TYPE, status="online",
+                display_name="PAI Counselor",
+            ))
             fields = VaultFieldDefinitionService(db)
             for spec in SEED_FIELD_DEFINITIONS:
                 fields.upsert_definition(spec)
             db.commit()
-            self.config_id = cfg.id
             self.user_id = str(user.id)
         self.patches = [patch.object(pai, "WorkspaceApi", EvalWorkspaceApi),
-                        patch.object(cloud_agent, "_post_response", self.post_response)]
+                        patch.object(runtime, "_post_response", self.post_response)]
         for item in self.patches:
             item.start()
         return self
@@ -135,8 +137,7 @@ class StudentSession:
                                target=event_data["target"], payload=event_data["payload"],
                                timestamp=event_data["timestamp"]))
             db.commit()
-            cfg = db.get(CloudAgentConfig, self.config_id)
-            await cloud_agent._invoke_assistant_agent(db, self.workspace_id, event_data, cfg, 0)
+            await runtime._run_turn(db, self.workspace_id, event_data, 0)
 
     async def extract_and_reconcile(self):
         from app.memory.handlers import embed_memory, extract_memory, reconcile_memory

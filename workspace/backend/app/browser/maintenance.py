@@ -38,8 +38,8 @@ from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 
-from app.browser import BrowserManager
-from app.browser_creds import BrowserCredentialError, resolve_tab_key
+from app.browser.manager import BrowserManager
+from app.browser.credentials import BrowserCredentialError, resolve_tab_key
 from app.models import BrowserTab, BrowserUsage, Workspace
 
 logger = logging.getLogger(__name__)

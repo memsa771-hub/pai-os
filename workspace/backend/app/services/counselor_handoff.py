@@ -5,7 +5,7 @@ import json
 from app.config import config
 from app.memory.foreground import MEMORY_RULES, MEMORY_RULES_TRAILER, build_foreground_context
 from app.services import pai
-from app.services.cloud_providers import chat_completion_tools
+from app.inference.client import chat_completion_tools
 
 
 HANDOFF_RULES = """Background work for the student's earlier request has returned.
@@ -41,7 +41,7 @@ async def explain_result(workspace_id: str, history: list[dict], handoff: dict) 
         + json.dumps(handoff, ensure_ascii=False, default=str)
     )}]
     result = await chat_completion_tools(
-        api_key=config.PAI_API_KEY, provider=pai.PAI_PROVIDER, model=config.PAI_MODEL,
+        api_key=config.PAI_API_KEY, model=config.PAI_MODEL,
         messages=messages, tools=None, system_prompt=prompt,
         max_tokens=None, base_url=config.PAI_BASE_URL or None,
         # No tools here, so this Counselor call can actually reason. It runs

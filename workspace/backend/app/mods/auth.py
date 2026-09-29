@@ -4,7 +4,7 @@ mod/auth — verify workspace token or human identity for an event.
 
 Guard mod (priority 0). Rejects events from unauthorized sources.
 
-Delegates to app.access.verify_workspace_access — the single source of truth
+Delegates to app.security.access.verify_workspace_access — the single source of truth
 shared with the REST routers — so the event pipeline honours the same rules:
   1. Workspace token (X-Workspace-Token) — the machine credential (agents).
   2. Member identity (Supabase bearer → membership row, or legacy
@@ -43,7 +43,7 @@ class AuthMod(GuardMod):
             logger.warning("auth: no workspace in context, rejecting event")
             return None
 
-        from app.access import verify_workspace_access
+        from app.security.access import verify_workspace_access
 
         # db is derived from the workspace's own session inside
         # verify_workspace_access (object_session); pass it explicitly when the

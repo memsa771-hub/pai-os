@@ -31,7 +31,7 @@ import logging
 import secrets
 from typing import Optional
 
-from app.net_security import UnsafeURLError, resolve_and_validate
+from app.security.network import UnsafeURLError, resolve_and_validate
 
 logger = logging.getLogger(__name__)
 

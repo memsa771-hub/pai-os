@@ -11,10 +11,6 @@ from app.eventing.events import Event
 
 logger = logging.getLogger(__name__)
 
-# Lazy-initialized LLM client for the router
-_llm_client = None
-_llm_provider = None
-
 def _extract_mentions(content: str, known_agents: List[str]) -> List[str]:
     """Parse @agent-name mentions from message text, validated against known agents."""
     if not content or not known_agents:
@@ -42,14 +38,15 @@ def _member_is_online(m) -> bool:
     A crashed daemon leaves ``status='online'`` forever — the column is only
     flipped to 'offline' on a *clean* leave/heartbeat-timeout path — so the
     column alone is unreliable. We additionally require a fresh heartbeat,
-    matching how /v1/discover and the agents list compute liveness. Cloud
-    agents have no heartbeat loop, so for them the status column is trusted.
+    matching how /v1/discover and the participants list compute liveness. The
+    built-in Counselor has no heartbeat loop, so its status column is trusted.
     """
     from app.config import config
     from datetime import timedelta
     if (m.status or "").lower() != "online":
         return False
-    if (getattr(m, "agent_type", "") or "").startswith("cloud:"):
+    from app.services.pai import is_builtin_agent_type
+    if is_builtin_agent_type(getattr(m, "agent_type", None)):
         return True
     hb = m.last_heartbeat
     if not hb:
@@ -91,7 +88,7 @@ def _post_system_notice(db, workspace, channel_name: str, content: str, notice: 
     import time as _time
     import json as _json
     from app.models import EventRecord
-    from app import cache
+    from app.infrastructure import cache
 
     ev_id = str(_uuid.uuid4())
     ts = int(_time.time() * 1000)
@@ -196,7 +193,7 @@ def _prompt_inline(text: str) -> str:
     participant/instruction lines. Delegates to the shared Unicode-aware
     sanitizer (Cc/Zl/Zp + bidi controls → spaces).
     """
-    from app.naming import sanitize_inline
+    from app.workspace.naming import sanitize_inline
     return sanitize_inline(text)
 
 
@@ -264,44 +261,15 @@ Output EXACTLY one line, lowercase, no punctuation or explanation:
 
 
 def _get_router_api_key() -> str:
-    """Resolve the API key: ROUTER_LLM_API_KEY takes priority, then ANTHROPIC_API_KEY."""
+    """Use PAI's single server-managed inference credential."""
     from app.config import config
-    return config.ROUTER_LLM_API_KEY or config.ANTHROPIC_API_KEY
+    return config.PAI_API_KEY
 
 
 def _get_router_model() -> str:
-    """Resolve the model: explicit config or provider default."""
+    """Use PAI's configured model for turn routing."""
     from app.config import config
-    if config.ROUTER_LLM_MODEL:
-        return config.ROUTER_LLM_MODEL
-    if config.ROUTER_LLM_PROVIDER == "openai":
-        return "gpt-4o-mini"
-    return "claude-haiku-4-5-20251001"
-
-
-def _get_llm_client():
-    """Lazy-init the LLM client based on provider config."""
-    global _llm_client, _llm_provider
-    from app.config import config
-
-    provider = config.ROUTER_LLM_PROVIDER
-    if _llm_client is not None and _llm_provider == provider:
-        return _llm_client, provider
-
-    api_key = _get_router_api_key()
-
-    if provider == "openai":
-        from openai import OpenAI
-        kwargs = {"api_key": api_key}
-        if config.ROUTER_LLM_BASE_URL:
-            kwargs["base_url"] = config.ROUTER_LLM_BASE_URL
-        _llm_client = OpenAI(**kwargs)
-    else:
-        import anthropic
-        _llm_client = anthropic.Anthropic(api_key=api_key)
-
-    _llm_provider = provider
-    return _llm_client, provider
+    return config.PAI_MODEL
 
 
 async def _route_with_llm(
@@ -322,7 +290,7 @@ async def _route_with_llm(
     from app.models import EventRecord
 
     if not _get_router_api_key():
-        logger.warning("LLM router: no API key set (ROUTER_LLM_API_KEY or ANTHROPIC_API_KEY), defaulting to stop")
+        logger.warning("LLM router: PAI_API_KEY is not configured; defaulting to deterministic routing")
         return []
 
     # Fetch last 5 chat messages from this channel
@@ -429,31 +397,23 @@ async def _route_with_llm(
     )
 
     try:
-        client, provider = _get_llm_client()
-        model = _get_router_model()
+        from app.inference.client import chat_completion
 
-        # Synchronous LLM call — fast (~500ms) router decision
-        if provider == "openai":
-            response = client.chat.completions.create(
-                model=model,
-                max_tokens=30,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw_result = response.choices[0].message.content.strip()
-        else:
-            response = client.messages.create(
-                model=model,
-                max_tokens=30,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw_result = response.content[0].text.strip()
+        model = _get_router_model()
+        raw_result = (await chat_completion(
+            api_key=config.PAI_API_KEY,
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=30,
+            base_url=config.PAI_BASE_URL or None,
+        )).strip()
 
         # Case-insensitive keyword detection but preserve original case
         # of the agent name so we can match it against participants
         # (agent names are case-sensitive in the workspace).
         result = raw_result.lower()
 
-        logger.info("LLM router decision: %s (channel=%s, sender=%s, provider=%s)", raw_result, channel.name, sender, provider)
+        logger.info("LLM router decision: %s (channel=%s, sender=%s)", raw_result, channel.name, sender)
 
         if result.startswith("next:"):
             # Preserve the original case from the model output so we can

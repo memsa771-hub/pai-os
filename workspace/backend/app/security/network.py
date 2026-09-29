@@ -23,7 +23,7 @@ Protections:
   - streamed with an enforced byte cap so a huge body can't OOM the worker
 
 The browser render path cannot use this module (Chromium does its own
-networking); it is constrained by the egress proxy in app.browser_egress,
+networking); it is constrained by the egress proxy in app.browser.egress,
 which enforces the same policy via `resolve_and_validate`.
 """
 

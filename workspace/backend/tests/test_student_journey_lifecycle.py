@@ -8,7 +8,7 @@ import app.capabilities as capability_module
 from app.capabilities import CapabilityContract, CapabilityRegistry
 from app.config import config
 from app.journey import JourneyCoordinator, JourneyError, JourneyService
-from app.services import cloud_agent
+from app.counseling import runtime
 from app.tools import ToolContext
 from app.tools.builtin import capabilities as capability_tools
 from scripts.counselor_eval_support import StudentSession
@@ -158,7 +158,7 @@ async def test_counselor_turn_updates_and_receives_all_active_journeys():
         return {"role": "assistant", "content": "Let's work through it."}
 
     with StudentSession() as student:
-        with patch.object(cloud_agent, "chat_completion_tools", model), \
+        with patch.object(runtime, "chat_completion_tools", model), \
                 patch.object(config, "PAI_API_KEY", "test"), \
                 patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", False):
             await student.turn("I want a master's in Germany.")

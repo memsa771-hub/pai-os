@@ -20,8 +20,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from app.config import config
-from app.identity_errors import IdentityUnavailable
-from app.response import ResponseCode, json_response
+from app.security.errors import IdentityUnavailable
+from app.api.response import ResponseCode, json_response
 from app.routers import account, app_version, auth, browser, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, student_profile, tasks, timers, todos, workflows, workspaces
 
 logging.basicConfig(level=logging.INFO)
@@ -120,7 +120,7 @@ async def _fire_due():
     from sqlalchemy import select, update
     from app.database import SessionLocal
     from app.models import EventRecord, RoutineRecord, TimerRecord, Workspace
-    from app.pipeline_factory import pipeline
+    from app.eventing.factory import pipeline
     from app.routers.routines import _compute_next_fires_at
     from app.eventing.events import Event
     from app.eventing.mods import PipelineContext
@@ -359,7 +359,7 @@ async def _timer_loop():
     the 24-slot DB pool. Now the firing path uses a short-lived session and
     the heavy scans run off-loop via ``asyncio.to_thread``, far less often.
     """
-    from app.browser_maintenance import sweep_browser_tabs
+    from app.browser.maintenance import sweep_browser_tabs
 
     cycle = 0
     browser_sweep_task = None
@@ -436,7 +436,7 @@ async def lifespan(app: FastAPI):
     # One-off browser sweep at boot: sessions leaked before a restart (or
     # closes that failed mid-deploy) get released now instead of waiting
     # for the first periodic maintenance cycle.
-    from app.browser_maintenance import sweep_browser_tabs
+    from app.browser.maintenance import sweep_browser_tabs
     startup_browser_sweep = asyncio.create_task(sweep_browser_tabs())  # noqa: F841 — keep ref so it isn't GC'd
 
     logger.info("LIFESPAN: yielding (startup complete)")
@@ -446,10 +446,10 @@ async def lifespan(app: FastAPI):
         await timer_task
     except asyncio.CancelledError:
         pass
-    from app.cache import close_redis
+    from app.infrastructure.cache import close_redis
     await close_redis()
     # Shutdown: close Playwright browser
-    from app.browser import BrowserManager
+    from app.browser.manager import BrowserManager
     await BrowserManager.get().shutdown()
 
 

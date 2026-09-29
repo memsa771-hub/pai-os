@@ -24,7 +24,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
-from app import naming
+from app.workspace import naming
 from app.config import config
 from app.database import get_db
 from app.models import (
@@ -34,13 +34,14 @@ from app.models import (
     Workspace,
     WorkspaceMember,
 )
-from app.access import (
+from app.security.access import (
     is_workspace_owner,
     resolve_current_user,
     verify_workspace_access,
 )
-from app.response import ResponseCode, json_response, success_response
+from app.api.response import ResponseCode, json_response, success_response
 from app.routers.network import _workspace_filter
+from app.services.pai import is_builtin_agent_type
 
 logger = logging.getLogger(__name__)
 
@@ -59,11 +60,11 @@ def _extract_bearer(authorization: Optional[str]) -> Optional[str]:
 def _verify_workspace_access(workspace, token: Optional[str], authorization: Optional[str]) -> bool:
     """Check if the caller has access to a workspace.
 
-    Thin wrapper over the single source of truth in app.access — kept here so
+    Thin wrapper over the single source of truth in app.security.access — kept here so
     the many callers importing this name don't have to change. (This path now
     accepts the same Supabase bearer as the network router.)
     """
-    from app.access import verify_workspace_access
+    from app.security.access import verify_workspace_access
     return verify_workspace_access(workspace, token, authorization)
 
 
@@ -71,7 +72,7 @@ def _workspace_access_denied(authorization: Optional[str]):
     """Distinguish missing/invalid auth (401) from a valid non-member (403)."""
     bearer = _extract_bearer(authorization)
     if bearer:
-        from app.human_auth import verify_identity_token
+        from app.security.human_auth import verify_identity_token
         if verify_identity_token(bearer):
             return json_response(ResponseCode.FORBIDDEN, "Workspace membership required")
     return json_response(ResponseCode.UNAUTHORIZED, "Invalid workspace credentials")
@@ -83,7 +84,7 @@ def _workspace_access_denied(authorization: Optional[str]):
 
 class WorkspaceCreateRequest(BaseModel):
     # `name` is accepted for compatibility but no longer decides anything: the
-    # student's one workspace is provisioned by app.access.provision_workspace.
+    # student's one workspace is provisioned by app.security.access.provision_workspace.
     name: Optional[str] = None
 
 class ChannelUpdateRequest(BaseModel):
@@ -123,16 +124,10 @@ def _mask_bf_key(key: str | None) -> str | None:
 
 
 def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
-    members = [
-        member for member in members
-        if not (member.agent_type or "").startswith("cloud:")
-        or (member.agent_type or "") == "cloud:placement_ai"
-    ]
     agents = []
     for m in members:
         status = m.status
-        is_cloud = (m.agent_type or "").startswith("cloud:")
-        if not is_cloud and m.last_heartbeat:
+        if not is_builtin_agent_type(m.agent_type) and m.last_heartbeat:
             # Ensure timezone-aware comparison (SQLite stores naive datetimes)
             heartbeat = m.last_heartbeat
             if heartbeat.tzinfo is None:
@@ -146,7 +141,7 @@ def _format_workspace(ws: Workspace, members: list, now: datetime) -> dict:
             "agentType": m.agent_type,
             "status": status,
             "description": m.description,
-            "builtin": (m.agent_type or "") == "cloud:placement_ai",
+            "builtin": is_builtin_agent_type(m.agent_type),
             "lastHeartbeatAt": m.last_heartbeat.isoformat() if m.last_heartbeat else None,
             "joinedAt": m.joined_at.isoformat() if m.joined_at else None,
         })
@@ -210,7 +205,7 @@ def create_workspace(
     lifecycle: an ownerless workspace had no human who could reach it (see
     app/access.py), so it could only ever have been an orphan.
     """
-    from app.access import get_or_create_owned_workspace, resolve_current_user
+    from app.security.access import get_or_create_owned_workspace, resolve_current_user
 
     owner = resolve_current_user(db, authorization)
     if owner is None:
@@ -334,7 +329,7 @@ def update_workspace(
     if body.require_login is not None:
         # Enforced-login is an owner/admin control (a workspace-token holder is
         # trusted and also permitted). Other members can't flip it.
-        from app.access import verify_workspace_access
+        from app.security.access import verify_workspace_access
         if not verify_workspace_access(workspace, x_workspace_token, authorization, db=db):
             return json_response(ResponseCode.FORBIDDEN, "Only an owner or admin can change login enforcement")
         workspace.require_login = body.require_login

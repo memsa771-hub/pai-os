@@ -9,6 +9,7 @@ from sqlalchemy import engine_from_config, pool
 
 # Import all models so Alembic can detect them
 from app.database import Base
+from app.config import normalize_database_url
 from app.models import (  # noqa: F401
     Agent,
     Channel,
@@ -25,7 +26,7 @@ config = context.config
 # Override sqlalchemy.url from environment if available
 database_url = os.environ.get("DATABASE_URL")
 if database_url:
-    config.set_main_option("sqlalchemy.url", database_url)
+    config.set_main_option("sqlalchemy.url", normalize_database_url(database_url))
 
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)

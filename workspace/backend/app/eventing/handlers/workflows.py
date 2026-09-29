@@ -6,7 +6,6 @@ from sqlalchemy import select
 
 from app.eventing.events import Event
 from app.eventing.handlers.routing import (
-    _get_llm_client,
     _get_router_api_key,
     _get_router_model,
     _prompt_inline,
@@ -112,20 +111,22 @@ def _classify_task_progress(task, latest_content: str, db, workspace) -> str:
     )
 
     try:
-        client, provider = _get_llm_client()
+        from app.inference.client import _token_limit_kwarg, create_sync_client
+
+        client = create_sync_client(
+            config.PAI_API_KEY, base_url=config.PAI_BASE_URL or None,
+        )
         model = _get_router_model()
-        if provider == "openai":
-            resp = client.chat.completions.create(
-                model=model, max_tokens=15,
-                messages=[{"role": "user", "content": prompt}],
-            )
+        try:
+            kwargs = {
+                "model": model,
+                "messages": [{"role": "user", "content": prompt}],
+                _token_limit_kwarg(model): 15,
+            }
+            resp = client.chat.completions.create(**kwargs)
             raw = resp.choices[0].message.content.strip()
-        else:
-            resp = client.messages.create(
-                model=model, max_tokens=15,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            raw = resp.content[0].text.strip()
+        finally:
+            client.close()
         result = raw.lower()
         logger.info("Task classifier: %s (task=%s)", raw, task.id)
         if "need_input" in result:

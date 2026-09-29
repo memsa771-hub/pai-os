@@ -84,7 +84,7 @@ class Workspace(Base):
     (a partial unique index on `owner_user_id` where `status = 'active'`) is what
     actually guarantees "one user owns at most one active personal workspace" —
     enforced in the database so concurrent first-logins can't create two. See
-    `app.access.get_or_create_owned_workspace`.
+    `app.security.access.get_or_create_owned_workspace`.
 
     `owner_user_id` is nullable: legacy/anonymous/agent-created and machine-only
     workspaces have no human owner, and a user's old extra workspaces (from
@@ -590,7 +590,7 @@ class ExecutionRun(Base):
     requested_by = Column(Text, nullable=False)
     # The event target ("channel/<thread-id>") the objective was delegated
     # from — where the finished result gets posted back to automatically, the
-    # same way a normal cloud-agent reply is (see _post_response). Nullable
+    # same way a normal Counselor reply is (see _post_response). Nullable
     # because a delegate call without a live thread (tests, future non-chat
     # callers) simply has nowhere to auto-post to.
     channel_target = Column(Text, nullable=True)
@@ -779,33 +779,6 @@ class NotificationRecord(Base):
         Index("idx_notifications_workspace_status", "workspace_id", "status"),
         Index("idx_notifications_workspace_read", "workspace_id", "is_read"),
         Index("idx_notifications_created_at", "created_at"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Cloud agent configurations
-# ---------------------------------------------------------------------------
-
-class CloudAgentConfig(Base):
-    """Configuration for a cloud-based agent (API-proxied by the server)."""
-    __tablename__ = "cloud_agent_configs"
-
-    id = Column(Text, primary_key=True, default=_uuid)
-    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    agent_name = Column(Text, nullable=False)
-    provider = Column(Text, nullable=False)              # "openai", "google", "xai", "deepseek"
-    model = Column(Text, nullable=False)                  # "gpt-4o", "gemini-2.5-pro", etc.
-    category = Column(Text, nullable=False, default="chat")  # "chat" or "image"
-    api_key = Column(Text, nullable=False)
-    base_url = Column(Text, nullable=True)                # custom OpenAI-compatible endpoint
-    system_prompt = Column(Text, nullable=True)
-    max_tokens = Column(Integer, nullable=True)
-    status = Column(Text, nullable=False, default="active")  # active | disabled
-    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
-
-    __table_args__ = (
-        UniqueConstraint("workspace_id", "agent_name", name="uq_cloud_agent_workspace_name"),
-        Index("idx_cloud_agent_workspace", "workspace_id"),
     )
 
 
