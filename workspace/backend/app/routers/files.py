@@ -44,7 +44,7 @@ from app.routers.network import (
     _verify_workspace_access,
 )
 from app.storage import get_file_store
-from openagents.core.onm_events import Event
+from app.eventing.events import Event
 
 logger = logging.getLogger(__name__)
 

@@ -25,11 +25,11 @@ from sqlalchemy.orm import Session
 
 from app.config import config
 from app.database import get_db
-from app.models import Channel, CloudAgentConfig, Workspace, WorkspaceMember
+from app.models import Channel, Workspace, WorkspaceMember
 from app.pipeline_factory import pipeline
 from app.response import ResponseCode, json_response, success_response
-from openagents.core.onm_events import Event
-from openagents.core.onm_mods import EventRejected, PipelineContext
+from app.eventing.events import Event
+from app.eventing.mods import EventRejected, PipelineContext
 
 logger = logging.getLogger(__name__)
 
@@ -46,9 +46,7 @@ class JoinRequest(BaseModel):
     agent_name: str
     token: str                         # workspace token
     network: Optional[str] = None      # workspace ID or slug
-    agent_type: Optional[str] = None   # "claude", "openclaw", etc.
-    server_host: Optional[str] = None  # hostname/IP where agent runs
-    working_dir: Optional[str] = None  # working directory on the server
+    agent_type: Optional[str] = None
 
 class LeaveRequest(BaseModel):
     agent_name: str
@@ -212,12 +210,6 @@ def join_network(
     payload = {"agent_name": body.agent_name}
     if body.agent_type:
         payload["agent_type"] = body.agent_type
-    if body.server_host:
-        payload["server_host"] = body.server_host
-    if body.working_dir:
-        payload["working_dir"] = body.working_dir
-    # A join authenticated with a node token is attributable to a device —
-    # stamp it so "which machine runs this agent" is a column, not a guess.
     event = Event(
         type="network.agent.join",
         source=f"openagents:{body.agent_name}",
@@ -229,7 +221,7 @@ def join_network(
     if result is None:
         # The join handler runs AFTER AuthMod, so validation problems are only
         # reported to authenticated callers — it stamps the reason on the
-        # event before rejecting (see workspace_mod._handle_agent_join).
+        # event before rejecting (see eventing.handlers.agents._handle_agent_join).
         if event.metadata.get("reject_reason") in ("display_name_conflict", "invalid_agent_name"):
             return json_response(
                 ResponseCode.BAD_REQUEST,
@@ -484,17 +476,6 @@ def discover(
         or (member.agent_type or "") == "cloud:placement_ai"
     ]
 
-    # Cloud agents keep their runtime model in cloud_agent_configs; surface it
-    # when the member row has no explicit override so clients see one field.
-    cloud_models = {
-        c.agent_name: c.model
-        for c in db.execute(
-            select(CloudAgentConfig).where(
-                CloudAgentConfig.workspace_id == workspace.id,
-            )
-        ).scalars().all()
-    }
-
     agents = []
     for m in members:
         status = m.status
@@ -512,11 +493,7 @@ def discover(
             "status": status,
             "agent_type": m.agent_type,
             "builtin": (m.agent_type or "") == "cloud:placement_ai",
-            "server_host": m.server_host,
-            "working_dir": m.working_dir,
             "description": m.description,
-            "enabled_skills": m.enabled_skills,
-            "model": m.model or (cloud_models.get(m.agent_name) if is_cloud else None),
             "last_heartbeat_at": m.last_heartbeat.isoformat() if m.last_heartbeat else None,
             "joined_at": m.joined_at.isoformat() if m.joined_at else None,
         })

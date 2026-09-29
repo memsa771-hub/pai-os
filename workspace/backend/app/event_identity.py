@@ -46,7 +46,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.access import extract_bearer
-from app.firebase_auth import verify_identity_claims
+from app.human_auth import verify_identity_claims
 from app.models import User, Workspace, WorkspaceMember
 
 logger = logging.getLogger(__name__)
@@ -281,8 +281,8 @@ async def emit_internal_event(
     forge. Anything that can call this can already write to the database.
     """
     from app.pipeline_factory import pipeline
-    from openagents.core.onm_events import Event
-    from openagents.core.onm_mods import PipelineContext
+    from app.eventing.events import Event
+    from app.eventing.mods import PipelineContext
 
     event = Event(
         type=type,

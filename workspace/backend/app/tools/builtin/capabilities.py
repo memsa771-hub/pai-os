@@ -85,7 +85,7 @@ async def invoke(ctx, args):
             ctx.workspace_id, contract.vault_scopes, caller=ctx.agent_name,
             granted_permissions=OPERATOR_CAPABILITIES,
         ).to_dict()
-        journey = JourneyService(db).resolve_primary(ctx.workspace_id)
+        journey = JourneyService(db).resolve_active(ctx.workspace_id)
         journey_data = journey.to_dict() if journey else {}
         missing = [field for field in contract.journey_fields if journey_data.get(field) is None]
         if missing:

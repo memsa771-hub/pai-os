@@ -2,9 +2,9 @@
 """Identity failures that callers must tell apart.
 
 Its own module, deliberately. This type is the contract between the provider
-code that raises it (app/firebase_auth.py) and the handler that turns it into
+code that raises it (app/human_auth.py) and the handler that turns it into
 a status code (app/main.py), and FastAPI binds exception handlers by CLASS
-OBJECT. Defining it in firebase_auth meant that reloading that module — which
+OBJECT. Defining it in the provider module meant that reloading that module — which
 the test suite does — minted a new class, silently unbound the handler, and
 turned a 503 back into a 500. Nothing reloads modules in production, but a
 contract that depends on no one ever doing so is a thin one.

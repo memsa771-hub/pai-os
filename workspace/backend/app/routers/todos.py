@@ -22,7 +22,7 @@ from app.routers.network import (
     _resolve_workspace,
     _verify_workspace_access,
 )
-from openagents.core.onm_events import Event
+from app.eventing.events import Event
 
 from app.event_identity import request_actor_source
 

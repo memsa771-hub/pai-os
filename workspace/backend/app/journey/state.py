@@ -11,3 +11,5 @@ class JourneyState:
     blockers: tuple[Any, ...]
     next_milestone: Any
     next_recommended_action: Any
+    goals: tuple[Any, ...] = ()
+    current_focus_goal_id: str | None = None

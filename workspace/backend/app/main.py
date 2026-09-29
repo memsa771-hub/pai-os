@@ -22,7 +22,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.config import config
 from app.identity_errors import IdentityUnavailable
 from app.response import ResponseCode, json_response
-from app.routers import account, app_version, auth, browser, devices, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, student_profile, tasks, timers, todos, workflows, workspaces
+from app.routers import account, app_version, auth, browser, events, feedback, fetch, files, integrations, knowledge, network, notifications, operator, routines, search, shares, student_profile, tasks, timers, todos, workflows, workspaces
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -122,8 +122,8 @@ async def _fire_due():
     from app.models import EventRecord, RoutineRecord, TimerRecord, Workspace
     from app.pipeline_factory import pipeline
     from app.routers.routines import _compute_next_fires_at
-    from openagents.core.onm_events import Event
-    from openagents.core.onm_mods import PipelineContext
+    from app.eventing.events import Event
+    from app.eventing.mods import PipelineContext
 
     db = SessionLocal()
     try:
@@ -457,7 +457,7 @@ IS_PRODUCTION = config.APP_ENV.strip().lower() == "production"
 
 app = FastAPI(
     title="Placement AI Workspace",
-    description="Managed agent collaboration environment built on the OpenAgents Network Model",
+    description="Placement AI student guidance and execution workspace",
     version="0.1.0",
     lifespan=lifespan,
     docs_url=None if IS_PRODUCTION else "/docs",
@@ -643,7 +643,6 @@ app.include_router(account.router)
 app.include_router(app_version.router)
 app.include_router(auth.router)
 app.include_router(browser.router)
-app.include_router(devices.router)
 app.include_router(events.router)
 app.include_router(feedback.router)
 app.include_router(fetch.router)
@@ -667,24 +666,3 @@ app.include_router(workspaces.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
-
-
-@app.get("/.well-known/openagents.json")
-async def network_manifest():
-    """ONM network manifest — standard discovery endpoint."""
-    base_url = os.environ.get(
-        "WORKSPACE_ENDPOINT",
-        f"http://{config.HOST}:{config.PORT}",
-    )
-    return {
-        "onm_version": "1.0",
-        "name": "Placement AI Workspace",
-        "transports": [
-            {"type": "http", "url": f"{base_url}/v1"},
-        ],
-        "auth": {
-            "methods": ["token"],
-        },
-        "capabilities": ["channels", "files", "events", "presence"],
-        "mods": ["messaging", "file_storage", "browser"],
-    }

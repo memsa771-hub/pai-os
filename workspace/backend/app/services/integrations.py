@@ -152,8 +152,8 @@ def ingest_external_message(
     """
     from app.pipeline_factory import pipeline
     from app.routers.events import _invalidate_poll_cache
-    from openagents.core.onm_events import Event
-    from openagents.core.onm_mods import EventRejected, PipelineContext
+    from app.eventing.events import Event
+    from app.eventing.mods import EventRejected, PipelineContext
 
     if not (text or "").strip():
         return

@@ -20,7 +20,6 @@ import { MonitorGrid } from '@/components/monitor/monitor-grid';
 import { TasksView } from '@/components/tasks/tasks-view';
 import { WorkflowsView } from '@/components/workflows/workflows-view';
 import { RoutineList } from '@/components/routines/routine-list';
-import { SkillsView } from '@/components/skills/skills-view';
 import { InboxView } from '@/components/inbox/inbox-view';
 import { ProfileView } from '@/components/profile/profile-view';
 import { OnboardingView } from '@/components/onboarding/onboarding-view';
@@ -188,10 +187,6 @@ export function Wrapper() {
             <div className="h-full bg-background overflow-hidden">
               <InboxView />
             </div>
-          ) : viewMode === 'skills' ? (
-            <div className="h-full bg-background overflow-hidden">
-              <SkillsView />
-            </div>
           ) : mobilePane === 'list' ? (
             /* List pane — full width */
             <div className="flex h-full flex-col bg-background overflow-hidden">
@@ -307,7 +302,6 @@ export function Wrapper() {
               {viewMode === 'tasks' && <TasksView />}
               {viewMode === 'workflows' && <WorkflowsView />}
               {viewMode === 'inbox' && <InboxView />}
-              {viewMode === 'skills' && <SkillsView />}
               {viewMode === 'knowledge' && <KnowledgeView />}
 
               {/* Agent profile slide-over (non-chat views keep the overlay) */}

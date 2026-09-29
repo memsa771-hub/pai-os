@@ -170,7 +170,7 @@ def _generate_routine_context_sync(
     conversation_history: Optional[str] = None,
 ) -> str:
     """Call the LLM to expand a brief task description into comprehensive routine context."""
-    from app.mods.workspace_mod import _get_llm_client, _get_router_api_key, _get_router_model
+    from app.eventing.handlers.routing import _get_llm_client, _get_router_api_key, _get_router_model
 
     fallback = f"Routine: {name}\n\nTask: {message}\nSchedule: {schedule_desc}"
 

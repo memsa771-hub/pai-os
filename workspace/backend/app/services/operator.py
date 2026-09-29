@@ -375,13 +375,14 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list], que
             if block:
                 sections.append(f"{MEMORY_RULES}\n\n{block}\n\n{MEMORY_RULES_TRAILER}")
         from app.journey import JourneyService
-        journey = JourneyService(db).resolve_primary(workspace_id)
+        journey = JourneyService(db).resolve_active(workspace_id)
         if journey is not None:
             data = journey.to_dict()
             sections.append(
-                "ACTIVE STUDENT JOURNEY (state, not Vault truth):\n" + escape_value({
+                "ACTIVE STUDENT JOURNEY (state, not Vault truth; never reveal internal IDs):\n" + escape_value({
                     key: data.get(key) for key in (
-                        "id", "journey_type", "title", "active_goal", "current_stage",
+                        "id", "journey_type", "title", "active_goal", "goals",
+                        "current_focus_goal_id", "current_stage",
                         "current_objective", "target_outcome", "target_date", "milestones",
                         "decisions", "unresolved_decisions", "blockers", "next_milestone",
                         "next_recommended_action",

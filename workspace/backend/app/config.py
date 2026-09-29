@@ -56,22 +56,11 @@ class Config:
     DB_POOL_RECYCLE: int = int(os.environ.get("DB_POOL_RECYCLE", "300"))
     APP_ENV: str = os.environ.get("APP_ENV", "development")
 
-    # Auth mode: "workspace_token" (self-hosted) or "firebase" (hosted)
-    AUTH_MODE: str = os.environ.get("AUTH_MODE", "workspace_token")
-
-    # Firebase service account credentials, the whole JSON key file as a
-    # single-line string. Firebase is no longer a human-login provider here
-    # (see app.firebase_auth / Supabase below) — this is kept only because
-    # services/fcm_client.py sends mobile push through Firebase Cloud
-    # Messaging, which is a separate, authenticated API call that shares the
-    # same Admin SDK app (_init_firebase()). Without it, push is silently off.
-    FIREBASE_CREDENTIALS_JSON: str = os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
-
     # Supabase Auth — the sole human-identity provider for web/desktop (and,
     # later, mobile). SUPABASE_ANON_KEY is the public/publishable key that also
     # ships in every client bundle, so it is not a secret; there is
     # deliberately no service-role key or JWT signing secret here (see
-    # app.firebase_auth.verify_supabase_claims, which verifies tokens via
+    # app.human_auth.verify_identity_claims, which verifies tokens via
     # Supabase's own JWKS/introspection instead of a shared secret).
     #
     # Required from the environment (see workspace/.env.example) — no default
@@ -98,21 +87,6 @@ class Config:
     AUTH_MAX_REQUESTS_PER_SOURCE_PER_HOUR: int = int(
         os.environ.get("AUTH_MAX_REQUESTS_PER_SOURCE_PER_HOUR", "120")
     )
-
-    # Sign in with Apple. Native ("Sign in with Apple" on the iOS app) issues an
-    # identity token whose `aud` is the app's bundle id; web/services flows use
-    # the Services ID instead. Accept a comma-separated allowlist so both work.
-    #
-    # Empty by default: a bundle id baked in here is an identity tenant every
-    # deployment would trust. Set it in the environment for the deployment
-    # that owns that bundle id.
-    APPLE_CLIENT_IDS: str = os.environ.get("APPLE_CLIENT_IDS", "")
-
-    # Apple push used to be sent direct to APNs from here (APNS_AUTH_KEY /
-    # APNS_KEY_ID / APNS_TEAM_ID / APNS_BUNDLE_ID / APNS_ENVIRONMENT). It now
-    # goes through FCM like Android does, so those vars are gone: upload the
-    # .p8 key to the Firebase console (Project settings → Cloud Messaging →
-    # APNs Authentication Key) instead, and set FIREBASE_CREDENTIALS_JSON here.
 
     # Identity mode: "standalone" (own agent table) or "shared" (external agent_ids)
     IDENTITY_MODE: str = os.environ.get("IDENTITY_MODE", "standalone")
@@ -343,14 +317,6 @@ class Config:
     WEB_SEARCH_PROVIDER: str = os.environ.get("WEB_SEARCH_PROVIDER", "")
     WEB_SEARCH_API_KEY: str = os.environ.get("WEB_SEARCH_API_KEY", "")
     WEB_SEARCH_BASE_URL: str = os.environ.get("WEB_SEARCH_BASE_URL", "")
-
-    # Google OAuth (for "Sign in with Google" Gemini integration)
-    GOOGLE_OAUTH_CLIENT_ID: str = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-    GOOGLE_OAUTH_CLIENT_SECRET: str = os.environ.get("GOOGLE_OAUTH_CLIENT_SECRET", "")
-    GOOGLE_OAUTH_REDIRECT_URI: str = os.environ.get(
-        "GOOGLE_OAUTH_REDIRECT_URI",
-        "https://api.placement-ai.com/v1/cloud-agents/google/callback",
-    )
 
     # Transactional email. Delivery goes through Resend when a key is
     # configured (otherwise sends are logged no-ops).

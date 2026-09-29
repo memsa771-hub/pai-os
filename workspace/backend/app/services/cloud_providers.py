@@ -6,7 +6,6 @@ All supported providers expose OpenAI-compatible APIs, so the implementation
 uses the openai library with a per-provider base_url.
 """
 
-import base64
 import logging
 from dataclasses import dataclass, field
 from typing import Optional
@@ -268,10 +267,6 @@ _BUILTIN_PROVIDERS: dict[str, ProviderInfo] = {
 PROVIDERS: dict[str, ProviderInfo] = _BUILTIN_PROVIDERS
 
 
-def get_provider(name: str) -> Optional[ProviderInfo]:
-    return PROVIDERS.get(name)
-
-
 # "custom-anthropic" = Anthropic wire format at a user-supplied base URL
 # (relays, proxies, Anthropic-compatible gateways). Not in the PROVIDERS
 # catalog on purpose: it's a Model-access credential kind, not a cloud-agent
@@ -279,90 +274,9 @@ def get_provider(name: str) -> Optional[ProviderInfo]:
 ANTHROPIC_COMPAT = "custom-anthropic"
 
 
-def validate_provider_model(provider: str, model: str) -> Optional[ModelInfo]:
-    if provider in ("custom", ANTHROPIC_COMPAT):
-        return ModelInfo(model, "chat", model)
-    prov = PROVIDERS.get(provider)
-    if not prov:
-        return None
-    for m in prov.models:
-        if m.id == model:
-            return m
-    # Known providers accept any model — the registry list is curated suggestions,
-    # not a hard restriction. Users may use newer or older model IDs.
-    return ModelInfo(model, "chat", model)
-
-
-def providers_catalog() -> list[dict]:
-    """Return the full provider catalog for the frontend."""
-    return [
-        {
-            "name": p.name,
-            "label": p.label,
-            "base_url": p.base_url,
-            "models": [
-                {"id": m.id, "category": m.category, "label": m.label}
-                for m in p.models
-            ],
-        }
-        for p in PROVIDERS.values()
-    ]
-
-
-async def list_models_live(provider: str, api_key: str, base_url: Optional[str] = None) -> list[dict]:
-    """Ask the provider's API which models this key can actually use.
-
-    Anthropic has a native /v1/models; everything else speaks the
-    OpenAI-compatible ``GET {base}/models``. Raises on HTTP errors so a 401
-    (bad key) surfaces to the caller, which may fall back to the static
-    catalog for non-auth failures.
-    """
-    import httpx
-
-    if provider in ("anthropic", ANTHROPIC_COMPAT):
-        models_url = _anthropic_endpoint(base_url).replace("/messages", "/models?limit=100")
-        async with httpx.AsyncClient(timeout=20) as http:
-            r = await http.get(models_url, headers=_anthropic_headers(api_key, base_url))
-            r.raise_for_status()
-            data = r.json().get("data", [])
-            return [
-                {"id": m["id"], "label": m.get("display_name") or m["id"], "category": "chat"}
-                for m in data if m.get("id")
-            ]
-
-    prov = PROVIDERS.get(provider)
-    base = (base_url or (prov.base_url if prov else None) or "https://api.openai.com/v1").rstrip("/")
-    async with httpx.AsyncClient(timeout=20) as http:
-        r = await http.get(f"{base}/models", headers={"Authorization": f"Bearer {api_key}"})
-        r.raise_for_status()
-        data = r.json().get("data", [])
-        out = []
-        for m in data:
-            mid = m.get("id") if isinstance(m, dict) else None
-            if mid:
-                out.append({"id": mid, "label": mid, "category": "chat"})
-        out.sort(key=lambda x: x["id"])
-        return out[:300]
-
-
 # ---------------------------------------------------------------------------
 # API client
 # ---------------------------------------------------------------------------
-
-async def _refresh_google_token(refresh_token: str) -> str:
-    """Refresh a Google OAuth access token using the refresh token."""
-    import httpx
-    from app.config import config
-    async with httpx.AsyncClient(timeout=30) as http:
-        r = await http.post("https://oauth2.googleapis.com/token", data={
-            "client_id": config.GOOGLE_OAUTH_CLIENT_ID,
-            "client_secret": config.GOOGLE_OAUTH_CLIENT_SECRET,
-            "refresh_token": refresh_token,
-            "grant_type": "refresh_token",
-        })
-        r.raise_for_status()
-        return r.json()["access_token"]
-
 
 REASONING_EFFORTS = ("none", "low", "medium", "high")
 
@@ -473,13 +387,7 @@ async def chat_completion(
     if provider == "manus":
         return await _manus_chat(api_key, messages, system_prompt)
 
-    effective_key = api_key
-    if base_url and base_url.startswith("oauth_refresh:"):
-        refresh_token = base_url[len("oauth_refresh:"):]
-        effective_key = await _refresh_google_token(refresh_token)
-        base_url = None
-
-    client = _make_client(effective_key, provider, base_url_override=base_url)
+    client = _make_client(api_key, provider, base_url_override=base_url)
 
     api_messages = []
     if system_prompt:
@@ -689,163 +597,3 @@ async def _manus_chat(
                 return f"[Manus task {status}]: {data.get('error', 'Unknown error')}"
 
         return "[Manus task timed out after 7.5 minutes]"
-
-
-async def image_generation(
-    api_key: str,
-    provider: str,
-    model: str,
-    prompt: str,
-    base_url: Optional[str] = None,
-) -> tuple[bytes, str]:
-    """Call an image generation API. Returns (image_bytes, format)."""
-    if provider == "stability":
-        return await _stability_image(api_key, model, prompt)
-    if provider == "replicate":
-        return await _replicate_image(api_key, model, prompt)
-    if provider == "fal":
-        return await _fal_image(api_key, model, prompt)
-
-    client = _make_client(api_key, provider, base_url_override=base_url)
-
-    try:
-        kwargs: dict = {"model": model, "prompt": prompt, "n": 1}
-        if provider == "sensenova":
-            kwargs["size"] = "2048x2048"
-        elif model == "dall-e-3":
-            kwargs["size"] = "1024x1024"
-            kwargs["response_format"] = "b64_json"
-        elif model == "gpt-image-1":
-            kwargs["size"] = "1024x1024"
-
-        response = await client.images.generate(**kwargs)
-
-        if not response.data:
-            raise ValueError(f"Image API returned empty result for prompt: {prompt[:60]}")
-
-        item = response.data[0]
-
-        if hasattr(item, "b64_json") and item.b64_json:
-            image_bytes = base64.b64decode(item.b64_json)
-            return image_bytes, "png"
-
-        if hasattr(item, "url") and item.url:
-            import httpx
-            async with httpx.AsyncClient(timeout=60) as http:
-                r = await http.get(item.url)
-                r.raise_for_status()
-                return r.content, "png"
-
-        raise ValueError("No image data in response")
-    finally:
-        await client.close()
-
-
-async def audio_generation(
-    api_key: str,
-    provider: str,
-    model: str,
-    text: str,
-) -> tuple[bytes, str]:
-    """Call a text-to-speech API. Returns (audio_bytes, format)."""
-    if provider == "elevenlabs":
-        return await _elevenlabs_tts(api_key, model, text)
-    raise ValueError(f"Audio generation not supported for provider: {provider}")
-
-
-# ---------------------------------------------------------------------------
-# Media platform adapters
-# ---------------------------------------------------------------------------
-
-async def _stability_image(api_key: str, model: str, prompt: str) -> tuple[bytes, str]:
-    """Call Stability AI's image generation API."""
-    import httpx
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Accept": "image/*",
-    }
-    if model.startswith("stable-image"):
-        url = f"https://api.stability.ai/v2beta/stable-image/generate/{model.replace('stable-image-', '')}"
-    else:
-        url = f"https://api.stability.ai/v2beta/stable-image/generate/sd3"
-
-    async with httpx.AsyncClient(timeout=120) as http:
-        r = await http.post(url, headers=headers, data={"prompt": prompt, "model": model, "output_format": "png"})
-        r.raise_for_status()
-        return r.content, "png"
-
-
-async def _replicate_image(api_key: str, model: str, prompt: str) -> tuple[bytes, str]:
-    """Call Replicate's prediction API and poll for result."""
-    import httpx
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=300) as http:
-        r = await http.post(
-            "https://api.replicate.com/v1/predictions",
-            headers=headers,
-            json={"model": model, "input": {"prompt": prompt}},
-        )
-        r.raise_for_status()
-        prediction = r.json()
-
-        poll_url = prediction.get("urls", {}).get("get", f"https://api.replicate.com/v1/predictions/{prediction['id']}")
-        import asyncio
-        for _ in range(60):
-            await asyncio.sleep(2)
-            r = await http.get(poll_url, headers=headers)
-            r.raise_for_status()
-            data = r.json()
-            if data["status"] == "succeeded":
-                output = data.get("output")
-                image_url = output[0] if isinstance(output, list) else output
-                img_r = await http.get(image_url)
-                img_r.raise_for_status()
-                return img_r.content, "png"
-            if data["status"] == "failed":
-                raise ValueError(f"Replicate prediction failed: {data.get('error')}")
-
-        raise ValueError("Replicate prediction timed out")
-
-
-async def _fal_image(api_key: str, model: str, prompt: str) -> tuple[bytes, str]:
-    """Call fal.ai's image generation API."""
-    import httpx
-    headers = {
-        "Authorization": f"Key {api_key}",
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=120) as http:
-        r = await http.post(
-            f"https://fal.run/{model}",
-            headers=headers,
-            json={"prompt": prompt},
-        )
-        r.raise_for_status()
-        data = r.json()
-        images = data.get("images", [])
-        if not images:
-            raise ValueError("No images in fal.ai response")
-        image_url = images[0].get("url", "")
-        img_r = await http.get(image_url)
-        img_r.raise_for_status()
-        return img_r.content, "png"
-
-
-async def _elevenlabs_tts(api_key: str, model: str, text: str) -> tuple[bytes, str]:
-    """Call ElevenLabs text-to-speech API."""
-    import httpx
-    headers = {
-        "xi-api-key": api_key,
-        "Content-Type": "application/json",
-    }
-    async with httpx.AsyncClient(timeout=60) as http:
-        r = await http.post(
-            "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM",
-            headers=headers,
-            json={"text": text, "model_id": model},
-        )
-        r.raise_for_status()
-        return r.content, "mp3"

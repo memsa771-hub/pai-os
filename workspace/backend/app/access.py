@@ -35,7 +35,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from sqlalchemy.orm import Session as SqlaSession
 
-from app.firebase_auth import verify_identity_claims
+from app.human_auth import verify_identity_claims
 from app.models import User, Workspace
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ def _available_username(db: Session, claims: dict, email: str) -> str:
     base = re.sub(r"[^a-z0-9_-]+", "_", local_part).strip("_-") or "user"
     if len(base) < 3:
         base = f"user_{base}"
-    identity = claims.get("supabase_uid") or claims.get("apple_sub") or email
+    identity = claims.get("supabase_uid") or email
     suffix = hashlib.sha256(str(identity).encode("utf-8")).hexdigest()[:10]
     return f"{base[:21]}_{suffix}"
 
@@ -91,7 +91,6 @@ def get_or_create_user(db: Session, claims: dict) -> Optional[User]:
         user = User(
             email=email,
             supabase_uid=claims.get("supabase_uid"),
-            apple_sub=claims.get("apple_sub"),
             username=_available_username(db, claims, email),
             display_name=claims.get("display_name"),
             last_login_at=_now(),
@@ -103,8 +102,6 @@ def get_or_create_user(db: Session, claims: dict) -> Optional[User]:
     # Backfill identity fields we didn't have yet (never clobber existing).
     if claims.get("supabase_uid") and not user.supabase_uid:
         user.supabase_uid = claims["supabase_uid"]
-    if claims.get("apple_sub") and not user.apple_sub:
-        user.apple_sub = claims["apple_sub"]
     if claims.get("display_name") and not user.display_name:
         user.display_name = claims["display_name"]
     if not user.username:

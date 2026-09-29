@@ -26,33 +26,6 @@ export interface WorkspaceMe {
   tokenAccess: boolean;
 }
 
-/** An agent the daemon reports it is hosting on a node. */
-export interface NodeAgent {
-  name: string;
-  type: string;
-  status: string;
-  model?: string | null;
-  workingDir?: string | null;
-  /** Masked API key (e.g. "sk-1...cdef") when one is configured on the node; the full secret never leaves the device. */
-  apiKeyMasked?: string | null;
-  /** Last smoke-test result for THIS agent (probes are per agent, run after
-   * create/reconfigure and hourly by the daemon). */
-  probe?: AgentProbe | null;
-}
-
-/** Last smoke-test result the daemon reported for an agent type: one tiny
- * end-to-end "hi" prompt, with classified guidance when it failed. */
-export interface AgentProbe {
-  ok: boolean;
-  at: string;
-  code?: string | null;
-  method?: string | null;
-  message?: string | null;
-  reply?: string | null;
-  guidance?: string[];
-  durationMs?: number;
-}
-
 /** A connected chat-platform bot (Slack app / Telegram bot) bridging
  * external conversations into workspace channels. */
 export interface IntegrationBinding {
@@ -78,59 +51,14 @@ export interface WorkspaceAgent {
   displayName: string | null;
   role: string;
   agentType: string | null;
-  serverHost: string | null;
-  workingDir: string | null;
   description: string | null;
   // Workspace modules map to booleans; `installed` is a string[] of skill ids;
   // `skill_status` maps skill id → install status. Hence the union value type.
-  enabledSkills: Record<string, unknown> | null;
-  /** User-picked model id; null = the agent's own default. */
-  model: string | null;
   status: string;
   lastHeartbeatAt: string | null;
   joinedAt: string | null;
   /** True only for the built-in PAI Counselor assistant; false/absent for all others. */
   builtin?: boolean;
-}
-
-/** Per-skill install status stored under enabledSkills.skill_status[skillId]. */
-export type SkillState = 'installing' | 'installed' | 'failed' | 'uninstalled';
-export interface SkillStatusEntry {
-  state: SkillState;
-  updated_at?: number;
-  path?: string;
-  error?: string;
-}
-
-export interface SkillCatalogEntry {
-  id: string;
-  name: string;
-  description: string;
-  category: string;
-  icon: string;
-  source_repo: string;
-  source_path: string;
-  author: string;
-}
-
-/**
- * A workspace-scoped custom skill: a user-uploaded .md/.zip package registered
- * in Workspace.settings["custom_skills"]. Camel-cased from the backend snake
- * shape by mapCustomSkill() in api.ts.
- */
-export interface WorkspaceCustomSkill {
-  id: string;
-  name: string;
-  description?: string;
-  category: 'custom';
-  tags?: string[];
-  author?: string;
-  sourceType: 'workspace_file';
-  fileId: string;
-  filename: string;
-  contentType?: string;
-  packageType: 'md' | 'zip';
-  createdAt?: string;
 }
 
 export interface WorkspaceSession {
@@ -483,80 +411,6 @@ export interface OperatorRun {
 }
 
 // ---------------------------------------------------------------------------
-// Agent catalog (supported client types)
-// ---------------------------------------------------------------------------
-
-export interface AgentCatalogEntry {
-  name: string;
-  label: string;
-  description: string;
-  install_command: string;
-  homepage: string;
-  tags: string[];
-  builtin: boolean;
-  featured?: boolean;
-  order?: number;
-  logo?: { key?: string; url?: string } | null;
-  /** Marketplace metadata from the registry (e.g. "Anthropic", "Open source"). */
-  vendor?: string;
-  /** Short marketing line shown in the featured spotlight. */
-  tagline?: string;
-}
-
-/** One selectable model for an agent type, resolved server-side. */
-export interface AgentCatalogModel {
-  id: string;
-  label: string;
-  category?: string;
-}
-
-/** Full per-type detail from GET /v1/agent-catalog/{type}. */
-export interface AgentCatalogDetail extends AgentCatalogEntry {
-  models: AgentCatalogModel[];
-  install?: Record<string, string>;
-  uninstall?: Record<string, string>;
-  /** Generic LLM_* → provider-var mapping; present for bring-your-own-provider agents. */
-  resolve_env?: { rules?: { from: string; to: string }[] } | null;
-  /** Wire protocol the agent's CLI speaks: 'anthropic' (Claude family) or OpenAI-compatible (default). */
-  protocol?: string;
-  /**
-   * Agent only accepts its own vendor's account/key (e.g. Cursor). Provider or
-   * relay keys from Model access can never drive it, so the BYOK picker is
-   * suppressed even though resolve_env rules exist.
-   */
-  provider_locked?: boolean | null;
-  /** Readiness metadata; login_command is the CLI sign-in to run on the device. */
-  check_ready?: { login_command?: string } | null;
-}
-
-/** Legacy transport types retained only while old cloud-agent rows can exist. */
-export interface CloudAgentProvider {
-  name: string;
-  label: string;
-  base_url?: string | null;
-  models: CloudAgentModel[];
-}
-
-export interface CloudAgentModel {
-  id: string;
-  category: 'chat' | 'image' | 'audio';
-  label: string;
-}
-
-export interface CloudAgentConfig {
-  agentName: string;
-  provider: string;
-  model: string;
-  category: 'chat' | 'image' | 'audio';
-  apiKeyMasked: string;
-  baseUrl: string | null;
-  systemPrompt: string | null;
-  maxTokens: number | null;
-  status: string;
-  createdAt: string | null;
-}
-
-// ---------------------------------------------------------------------------
 // ONM Event types (event-native API)
 // ---------------------------------------------------------------------------
 
@@ -584,12 +438,7 @@ export interface NetworkAgent {
   role: string;
   status: string;
   agent_type: string | null;
-  server_host: string | null;
-  working_dir: string | null;
   description: string | null;
-  enabled_skills: Record<string, unknown> | null;
-  /** User-picked model id; null = the agent's own default. */
-  model?: string | null;
   last_heartbeat_at: string | null;
   joined_at: string | null;
   /** True only for the built-in PAI Counselor assistant; false/absent for all others. */
@@ -698,11 +547,7 @@ export function networkAgentToWorkspaceAgent(agent: NetworkAgent): WorkspaceAgen
     displayName: agent.display_name || null,
     role: agent.role,
     agentType: agent.agent_type || null,
-    serverHost: agent.server_host || null,
-    workingDir: agent.working_dir || null,
     description: agent.description || null,
-    enabledSkills: agent.enabled_skills || null,
-    model: agent.model || null,
     status: agent.status,
     lastHeartbeatAt: agent.last_heartbeat_at || null,
     joinedAt: agent.joined_at || null,

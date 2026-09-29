@@ -35,7 +35,7 @@ from app.models import (
     Workspace,
 )
 from app.services.notify import REASON_APPROVAL, REASON_TASK_COMPLETED, notify
-from openagents.core.onm_events import Event
+from app.eventing.events import Event
 
 logger = logging.getLogger(__name__)
 
@@ -213,7 +213,7 @@ def _linked_task(db, workspace_id: str, channel_name: str) -> Optional[KanbanTas
 
 def _judge(prompt: str) -> Optional[str]:
     """Run a one-token judgment on the router model; None if no LLM/available."""
-    from app.mods.workspace_mod import _get_llm_client, _get_router_api_key, _get_router_model
+    from app.eventing.handlers.routing import _get_llm_client, _get_router_api_key, _get_router_model
 
     if not _get_router_api_key():
         return None

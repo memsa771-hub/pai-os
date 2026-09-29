@@ -13,8 +13,8 @@ Expects context.extra to contain:
 import logging
 from typing import List, Optional
 
-from openagents.core.onm_events import Event
-from openagents.core.onm_mods import ObserveMod, PipelineContext
+from app.eventing.events import Event
+from app.eventing.mods import ObserveMod, PipelineContext
 
 logger = logging.getLogger(__name__)
 

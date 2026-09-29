@@ -13,7 +13,7 @@ from sqlalchemy.pool import NullPool, QueuePool
 
 from app.config import config
 
-# Use NullPool for serverless (Vercel) or SQLite — no persistent connections.
+# Use NullPool for ephemeral runtimes or SQLite — no persistent connections.
 # Use QueuePool for long-running servers (Docker/uvicorn) with PostgreSQL.
 _is_serverless = os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME")
 _is_sqlite = config.DATABASE_URL.startswith("sqlite")

@@ -10,35 +10,16 @@ as push.py.
 import asyncio
 import json as _json
 import logging
-import uuid
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select
 
 from app.config import config
 from app.database import SessionLocal
-from app.models import CloudAgentConfig, EventRecord, ExecutionRun, FileRecord, Workspace
-from app.services.cloud_providers import (
-    audio_generation,
-    chat_completion,
-    chat_completion_tools,
-    image_generation,
-)
+from app.models import CloudAgentConfig, EventRecord, ExecutionRun, Workspace
+from app.services.cloud_providers import chat_completion_tools
 
 logger = logging.getLogger(__name__)
-
-# The image prompt composer only needs enough history to resolve references
-# like "the brief above" and runs on a small router model, so it gets a much
-# tighter context budget than the chat path.
-_IMAGE_CONTEXT_MAX_CHARS = 8000
-
-
-def _mask_key(key: str) -> str:
-    if len(key) <= 8:
-        return "****"
-    return key[:4] + "..." + key[-4:]
-
 
 async def invoke_cloud_agents(workspace_id: str, event_data: dict) -> None:
     """Invoke the first-party PAI Counselor targeted by a message event.
@@ -117,100 +98,8 @@ async def _invoke_single(
     db, workspace_id: str, event_data: dict,
     cloud_config: CloudAgentConfig, depth: int,
 ) -> None:
-    """Invoke a single cloud agent and post the response."""
-    channel_target = event_data.get("target", "")
-    agent_name = cloud_config.agent_name
-
-    if cloud_config.category == "assistant":
-        await _invoke_assistant_agent(db, workspace_id, event_data, cloud_config, depth)
-    elif cloud_config.category == "image":
-        await _invoke_image_agent(db, workspace_id, event_data, cloud_config)
-    elif cloud_config.category == "audio":
-        await _invoke_audio_agent(db, workspace_id, event_data, cloud_config)
-    else:
-        await _invoke_chat_agent(db, workspace_id, event_data, cloud_config, depth)
-
-
-async def _invoke_chat_agent(
-    db, workspace_id: str, event_data: dict,
-    cloud_config: CloudAgentConfig, depth: int,
-) -> None:
-    """Invoke a chat cloud agent."""
-    channel_target = event_data.get("target", "")
-    agent_name = cloud_config.agent_name
-
-    # Capture config into locals up front so we don't touch the (soon-expired)
-    # ORM object after releasing the DB connection below (see db.rollback()
-    # before the LLM call).
-    provider = cloud_config.provider
-    model = cloud_config.model
-    api_key = cloud_config.api_key
-    base_url = cloud_config.base_url
-    system_prompt = cloud_config.system_prompt
-    max_tokens = cloud_config.max_tokens
-
-    # The char budget covers the whole request, not just history — system
-    # prompt and the trigger message spend from it first, history gets the
-    # remainder. An absurdly long trigger is truncated so the assembled
-    # payload always stays within CLOUD_AGENT_MAX_CONTEXT_CHARS.
-    content = event_data.get("payload", {}).get("content", "")
-    total_budget = config.CLOUD_AGENT_MAX_CONTEXT_CHARS
-    system_len = len(system_prompt or "")
-    if system_len >= total_budget:
-        # Without this the trigger would be truncated to an empty string and
-        # the invocation silently dropped. Raising surfaces the problem to
-        # the user via the caller's error handler instead.
-        raise ValueError(
-            f"system prompt ({system_len} chars) leaves no room in the "
-            f"context budget ({total_budget} chars) — shorten the prompt or "
-            f"raise CLOUD_AGENT_MAX_CONTEXT_CHARS"
-        )
-    if content and system_len + len(content) > total_budget:
-        logger.warning(
-            "cloud_agent: trigger message for %s exceeds the context budget "
-            "(%d + %d > %d chars), truncating",
-            agent_name, system_len, len(content), total_budget,
-        )
-        content = content[: max(0, total_budget - system_len)]
-
-    messages = _build_conversation_context(
-        db, workspace_id, channel_target, agent_name,
-        exclude_event_id=event_data.get("id"),
-        before_timestamp=_event_order_boundary(event_data),
-        max_chars=max(0, total_budget - system_len - len(content)),
-    )
-
-    if content:
-        messages.append({"role": "user", "content": content})
-
-    if not messages:
-        return
-
-    logger.info(
-        "cloud_agent: invoking %s (%s/%s) with %d messages",
-        agent_name, provider, model, len(messages),
-    )
-
-    # Release the DB connection while we wait on the (multi-second) LLM call.
-    # Holding it idle-in-transaction across the wait gets it dropped by
-    # Postgres/pgbouncer -> "SSL connection has been closed unexpectedly" on
-    # the next query. pool_pre_ping re-validates on the next checkout.
-    db.rollback()
-
-    response_text = await chat_completion(
-        api_key=api_key,
-        provider=provider,
-        model=model,
-        messages=messages,
-        system_prompt=system_prompt,
-        max_tokens=max_tokens,
-        base_url=base_url,
-    )
-
-    await _post_response(
-        db, workspace_id, channel_target, agent_name,
-        response_text, depth,
-    )
+    """Invoke the first-party PAI Counselor."""
+    await _invoke_assistant_agent(db, workspace_id, event_data, cloud_config, depth)
 
 
 async def _invoke_assistant_agent(
@@ -320,15 +209,26 @@ async def _invoke_assistant_agent(
         # journey state. The model receives a bounded move to express, not a
         # blank invitation to invent the counseling strategy.
         from app.counseling import CounselingEvaluator, CounselingPolicy
-        from app.journey import JourneyService
+        from app.journey import JourneyCoordinator, JourneyService
         from app.models import ProfileIssue
 
         try:
-            active_journey = JourneyService(db).resolve_primary(workspace_id)
+            journey_service = JourneyService(db)
+            # Conversation may propose durable intent, but only the coordinator
+            # validates it and only JourneyService writes it.
+            JourneyCoordinator(journey_service).observe_message(
+                workspace_id, content or "", actor="student",
+            )
+            db.commit()
+            active_journeys = journey_service.list_active(workspace_id)
+            primary_journey = journey_service.get_primary(workspace_id)
+            active_journey = primary_journey or journey_service.resolve_active(workspace_id)
         except Exception:
-            # Mixed-version deploys can briefly run before migration 070.
+            # Mixed-version deploys can briefly run before the latest migration.
             logger.exception("assistant: journey context unavailable workspace=%s", workspace_id)
             db.rollback()
+            active_journeys = []
+            primary_journey = None
             active_journey = None
         conflict = db.execute(select(ProfileIssue).where(
             ProfileIssue.workspace_id == workspace_id,
@@ -346,17 +246,38 @@ async def _invoke_assistant_agent(
             active_conflict=conflict_data,
         )
         counseling_decision = CounselingPolicy().decide(state)
-        if active_journey is not None:
+        if active_journeys:
             from app.memory.foreground import escape_value
-            journey_data = active_journey.to_dict()
+            def counselor_journey(item):
+                data = item.to_dict()
+                goals = data.get("goals") or ([] if data.get("active_goal") is None else [data["active_goal"]])
+                focus = next((goal for goal in goals if goal.get("id") == data.get("current_focus_goal_id")), None)
+                def without_ids(value):
+                    if not isinstance(value, dict):
+                        return value
+                    return {key: item for key, item in value.items()
+                            if key not in {"id", "goal_id", "parent_goal_id", "depends_on"}}
+                return {
+                    "primary": data.get("is_primary"), "journey_type": data.get("journey_type"),
+                    "title": data.get("title"), "status": data.get("status"),
+                    "primary_goal": next((g.get("title") for g in goals if g.get("type") == "primary"), None),
+                    "current_focus_goal": (focus or data.get("active_goal") or {}).get("title") if isinstance(focus or data.get("active_goal"), dict) else focus or data.get("active_goal"),
+                    "goals": [{key: goal.get(key) for key in ("type", "title", "status", "priority")} for goal in goals],
+                    "current_stage": data.get("current_stage"),
+                    "current_objective": data.get("current_objective"),
+                    "target_outcome": data.get("target_outcome"),
+                    "target_date": data.get("target_date"),
+                    "milestones": [without_ids(v) for v in data.get("milestones", [])],
+                    "confirmed_decisions": [without_ids(d) for d in data.get("decisions", []) if d.get("status") == "confirmed"],
+                    "unresolved_decisions": [without_ids(v) for v in data.get("unresolved_decisions", [])],
+                    "blockers": [without_ids(b) for b in data.get("blockers", []) if b.get("status", "open") == "open"],
+                    "next_milestone": without_ids(data.get("next_milestone")),
+                    "next_recommended_action": data.get("next_recommended_action"),
+                }
             system_prompt += (
-                "\n\nActive student journey (state, not canonical student facts):\n"
-                + escape_value({key: journey_data.get(key) for key in (
-                    "id", "journey_type", "title", "active_goal", "current_stage",
-                    "current_objective", "target_outcome", "target_date", "milestones",
-                    "decisions", "unresolved_decisions", "blockers", "next_milestone",
-                    "next_recommended_action",
-                )})
+                "\n\nActive student journeys (persistent operating state, not canonical student facts). "
+                "Use this context naturally and never reveal internal IDs or storage details:\n"
+                + escape_value([counselor_journey(item) for item in active_journeys])
             )
 
     # Workspace state and student memory are independent reads, so overlap
@@ -586,110 +507,6 @@ async def _invoke_assistant_agent(
         )
 
 
-async def _invoke_image_agent(
-    db, workspace_id: str, event_data: dict,
-    cloud_config: CloudAgentConfig,
-) -> None:
-    """Invoke an image generation cloud agent."""
-    import re
-    channel_target = event_data.get("target", "")
-    agent_name = cloud_config.agent_name
-    instruction = event_data.get("payload", {}).get("content", "")
-    instruction = re.sub(r"@\S+\s*", "", instruction).strip()
-
-    if not instruction:
-        return
-
-    # Resolve referential instructions ("based on the content above") into a
-    # concrete prompt using recent channel history. Falls back to the raw
-    # instruction when no router LLM / no context is available.
-    prompt = await _compose_image_prompt(
-        db, workspace_id, channel_target, agent_name, instruction,
-        exclude_event_id=event_data.get("id"),
-        before_timestamp=_event_order_boundary(event_data),
-    )
-    if not prompt:
-        return
-
-    logger.info(
-        "cloud_agent: generating image with %s (%s/%s)",
-        agent_name, cloud_config.provider, cloud_config.model,
-    )
-
-    image_bytes, image_format = await image_generation(
-        api_key=cloud_config.api_key,
-        provider=cloud_config.provider,
-        model=cloud_config.model,
-        prompt=prompt,
-        base_url=cloud_config.base_url,
-    )
-
-    file_id = await _upload_image(
-        db, workspace_id, channel_target, agent_name,
-        image_bytes, image_format, prompt,
-    )
-
-    channel_name = channel_target.replace("channel/", "") if channel_target.startswith("channel/") else None
-    content_type = f"image/{image_format}"
-    filename = f"generated_{file_id[:8]}.{image_format}"
-
-    await _post_response(
-        db, workspace_id, channel_target, agent_name,
-        f"Here's the generated image for: *{instruction[:100]}*",
-        depth=0,
-        attachments=[{
-            "file_id": file_id,
-            "filename": filename,
-            "content_type": content_type,
-            "size": len(image_bytes),
-        }],
-    )
-
-
-async def _invoke_audio_agent(
-    db, workspace_id: str, event_data: dict,
-    cloud_config: CloudAgentConfig,
-) -> None:
-    """Invoke a text-to-speech cloud agent."""
-    channel_target = event_data.get("target", "")
-    agent_name = cloud_config.agent_name
-    text = event_data.get("payload", {}).get("content", "")
-
-    if not text:
-        return
-
-    logger.info(
-        "cloud_agent: generating audio with %s (%s/%s)",
-        agent_name, cloud_config.provider, cloud_config.model,
-    )
-
-    audio_bytes, audio_format = await audio_generation(
-        api_key=cloud_config.api_key,
-        provider=cloud_config.provider,
-        model=cloud_config.model,
-        text=text,
-    )
-
-    file_id = await _upload_image(
-        db, workspace_id, channel_target, agent_name,
-        audio_bytes, audio_format, text,
-    )
-
-    filename = f"speech_{file_id[:8]}.{audio_format}"
-
-    await _post_response(
-        db, workspace_id, channel_target, agent_name,
-        f"Generated speech for: *{text[:100]}*",
-        depth=0,
-        attachments=[{
-            "file_id": file_id,
-            "filename": filename,
-            "content_type": f"audio/{audio_format}",
-            "size": len(audio_bytes),
-        }],
-    )
-
-
 def _event_order_boundary(event_data: dict) -> Optional[int]:
     """Best-effort extraction of the triggering event's timestamp (unix ms)."""
     try:
@@ -826,128 +643,6 @@ def _build_conversation_context(
     return collected
 
 
-async def _compose_image_prompt(
-    db, workspace_id: str, channel_target: str, agent_name: str, instruction: str,
-    exclude_event_id: Optional[str] = None,
-    before_timestamp: Optional[int] = None,
-) -> str:
-    """Turn a (possibly referential) instruction like "make an image of
-    cherie's brief above" into a concrete, self-contained image prompt by
-    reading recent channel history.
-
-    Image agents used to render the literal instruction text — so a request
-    like "generate an image based on the content above" produced a picture
-    of that sentence, because the image path never read context (unlike the
-    chat path). Here we feed recent messages + the instruction to a small
-    LLM and ask for the final image prompt, mirroring _invoke_chat_agent.
-
-    Falls back to the raw instruction when no router LLM is configured, when
-    there is no prior context to resolve against, or on any error — prompt
-    composition must never block image generation.
-    """
-    api_key = config.ROUTER_LLM_API_KEY or config.ANTHROPIC_API_KEY
-    if not (config.ROUTER_LLM_ENABLED and api_key):
-        return instruction
-
-    system_prompt = (
-        "You write prompts for an image-generation model. Read the recent "
-        "conversation, then turn the user's latest image request into ONE "
-        "concrete, self-contained image prompt.\n"
-        "- Resolve references such as 'the content above', \"cherie's brief\", "
-        "or 'mkt-bot's summary' to the ACTUAL text from the conversation.\n"
-        "- Include the real content/text that should appear in the image.\n"
-        "- Preserve any explicit layout, style, format, or aspect-ratio "
-        "instructions from the request.\n"
-        "- Output ONLY the final image prompt — no preamble, no explanation, "
-        "no surrounding quotes."
-    )
-
-    user_prompt = f"Image request: {instruction}\n\nWrite the final image prompt."
-
-    # As in the chat path, the budget covers the whole composer request —
-    # the system prompt and the full user message (wrapper text included)
-    # spend from it first and history gets what remains.
-    context = _build_conversation_context(
-        db, workspace_id, channel_target, agent_name,
-        exclude_event_id=exclude_event_id,
-        before_timestamp=before_timestamp,
-        max_chars=max(
-            0, _IMAGE_CONTEXT_MAX_CHARS - len(system_prompt) - len(user_prompt)
-        ),
-    )
-    if not context:
-        return instruction
-
-    provider = config.ROUTER_LLM_PROVIDER
-    model = config.ROUTER_LLM_MODEL or (
-        "gpt-4o-mini" if provider == "openai" else "claude-haiku-4-5-20251001"
-    )
-    messages = list(context)
-    messages.append({"role": "user", "content": user_prompt})
-
-    try:
-        composed = await chat_completion(
-            api_key=api_key,
-            provider=provider,
-            model=model,
-            messages=messages,
-            system_prompt=system_prompt,
-            max_tokens=1200,
-            base_url=config.ROUTER_LLM_BASE_URL or None,
-        )
-        composed = (composed or "").strip()
-        if composed:
-            logger.info(
-                "cloud_agent: composed image prompt from %d context msg(s) "
-                "(%d -> %d chars)",
-                len(context), len(instruction), len(composed),
-            )
-            return composed
-        return instruction
-    except Exception as exc:
-        logger.warning(
-            "cloud_agent: image prompt composition failed, using raw instruction: %s",
-            exc,
-        )
-        return instruction
-
-
-async def _upload_image(
-    db, workspace_id: str, channel_target: str, agent_name: str,
-    image_bytes: bytes, image_format: str, prompt: str,
-) -> str:
-    """Upload generated image to file storage."""
-    from app.storage import get_file_store
-
-    file_id = str(uuid.uuid4())
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    filename = f"uploaded_files/{timestamp}_generated.{image_format}"
-    storage_name = f"{timestamp}_generated.{image_format}"
-
-    store = get_file_store()
-    loop = asyncio.get_event_loop()
-    storage_key = await loop.run_in_executor(
-        None, store.save, workspace_id, file_id, storage_name, image_bytes,
-    )
-
-    channel_name = channel_target.replace("channel/", "") if channel_target.startswith("channel/") else None
-
-    record = FileRecord(
-        id=file_id,
-        workspace_id=workspace_id,
-        filename=filename,
-        content_type=f"image/{image_format}",
-        size=len(image_bytes),
-        storage_key=storage_key,
-        uploaded_by=f"openagents:{agent_name}",
-        channel_name=channel_name,
-    )
-    db.add(record)
-    db.flush()
-
-    return file_id
-
-
 async def _post_response(
     db, workspace_id: str, channel_target: str, agent_name: str,
     content: str, depth: int,
@@ -971,8 +666,8 @@ async def _post_response(
     """
     from app.models import Workspace
     from app.pipeline_factory import pipeline
-    from openagents.core.onm_events import Event
-    from openagents.core.onm_mods import EventRejected, PipelineContext
+    from app.eventing.events import Event
+    from app.eventing.mods import EventRejected, PipelineContext
 
     workspace = db.execute(
         select(Workspace).where(Workspace.id == workspace_id)
@@ -1015,42 +710,19 @@ async def _post_response(
 
     db.commit()
 
-    # Push. Not automatic: the fan-out is scheduled by the `POST /v1/events`
-    # handler, and this path reaches the pipeline directly — so without this
-    # call the identical reply notifies the user when it comes from an agent
-    # running on a node, and silently does not when it comes from a cloud
-    # agent. `_should_push` still decides whether it is worth sending.
-    #
-    # Off-loop because the FCM client is blocking, and best-effort because the
-    # reply is already committed — a failed notification must not turn into a
-    # failed response.
-    try:
-        from app.services.push import fanout_for_event
-
-        await asyncio.to_thread(fanout_for_event, workspace_id, {
-            "id": event.id,
-            "type": event.type,
-            "source": event.source,
-            "target": event.target,
-            "payload": event.payload,
-            "metadata": event.metadata,
-            "timestamp": event.timestamp,
-        })
-    except Exception:
-        logger.exception("cloud_agent: push fan-out failed for %s", agent_name)
+    snapshot = {
+        "id": event.id,
+        "type": event.type,
+        "source": event.source,
+        "target": event.target,
+        "payload": event.payload,
+        "metadata": event.metadata,
+        "timestamp": event.timestamp,
+    }
 
     # Publish to Redis so SSE clients receive the event in real-time
     try:
         from app import cache
-        snapshot = {
-            "id": event.id,
-            "type": event.type,
-            "source": event.source,
-            "target": event.target,
-            "payload": event.payload,
-            "metadata": event.metadata,
-            "timestamp": event.timestamp,
-        }
         cache.publish_event(
             f"ws:{workspace_id}:events",
             _json.dumps(snapshot, default=str, separators=(",", ":")).encode(),

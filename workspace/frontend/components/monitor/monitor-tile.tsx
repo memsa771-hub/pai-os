@@ -65,18 +65,6 @@ function parseStep(msg: WorkspaceMessage): ParsedStep {
     return { type: 'tool_call', label: summary ? `${clean} › ${summary}` : clean };
   }
 
-  // Codex: **Running:** `command`
-  const runMatch = content.match(/\*\*Running:\*\*\s*`([^`]+)`/);
-  if (runMatch) {
-    return { type: 'tool_call', label: `Bash › ${runMatch[1].slice(0, 60)}` };
-  }
-
-  // Codex: **Editing:** `filename`
-  const editMatch = content.match(/\*\*Editing:\*\*\s*`([^`]+)`/);
-  if (editMatch) {
-    return { type: 'tool_call', label: `Edit › ${editMatch[1]}` };
-  }
-
   // Compacting
   if (/compact/i.test(content)) {
     return { type: 'compacting', label: 'Vibing...' };

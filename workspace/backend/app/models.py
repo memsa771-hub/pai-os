@@ -139,15 +139,8 @@ class WorkspaceMember(Base):
     # the ASCII identity used for mentions, routing and storage keys.
     display_name = Column(Text, nullable=True)
     role = Column(Text, default="member")           # master | member | observer
-    agent_type = Column(Text, nullable=True)          # "claude", "openclaw", etc.
-    server_host = Column(Text, nullable=True)          # hostname/IP where agent runs
-    # The device the agent runs on, stamped at join time when the join was
-    # authenticated with that node's token. Nullable: cloud agents and
-    # manual-token joins have no node.
-    working_dir = Column(Text, nullable=True)          # working directory on the server
+    agent_type = Column(Text, nullable=True)
     description = Column(Text, nullable=True)           # user-provided description of agent's role/capabilities
-    enabled_skills = Column(JSONB, nullable=True)      # {"files": true, "browser": false, ...} — null = all defaults
-    model = Column(Text, nullable=True)                  # user-picked model id; null = agent's own default
     status = Column(Text, default="offline")         # online | offline
     last_heartbeat = Column(DateTime(timezone=True), nullable=True)
     joined_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
@@ -228,8 +221,7 @@ class ChannelHumanMember(Base):
     Lives alongside `ChannelMember` (agents only) rather than mixing
     `agent_name` + `user_email` into one row, which would muddy the
     existing agent routing queries. Auto-populated by the workspace mod
-    on first human post in a channel; consulted by `services/push.py` to
-    decide whose devices get a banner for non-mention chat messages.
+    on first human post in a channel for participant and mention resolution.
     Mentions still wake the mentioned human regardless of membership.
     """
     __tablename__ = "channel_human_members"
@@ -261,9 +253,7 @@ class Invitation(Base):
 
 
 class User(Base):
-    """A human end-user identity, resolved from a verified login-provider
-    access token (Supabase Auth — the canonical human-identity provider — or
-    Sign in with Apple, used by the iOS app).
+    """A human end-user identity resolved from a verified Supabase token.
 
     Distinct from `WorkspaceMember`, which represents AGENTS and is keyed by
     agent_name. A user reaches exactly one workspace: the one whose
@@ -275,7 +265,6 @@ class User(Base):
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
     email = Column(Text, nullable=False)                 # normalized lowercase
     supabase_uid = Column(Text, nullable=True)           # Supabase auth.users `id`
-    apple_sub = Column(Text, nullable=True)              # Sign in with Apple `sub` claim
     # Unique login handle, normalized lowercase — authentication only (not a
     # profile/display name). Lets "sign in with username" resolve to an email
     # server-side (see app/routers/auth.py) without Supabase's own API, which
@@ -450,52 +439,6 @@ class BrowserUsage(Base):
         Index("idx_browser_usage_workspace", "workspace_id"),
         Index("idx_browser_usage_opened_by", "opened_by"),
         Index("idx_browser_usage_started", "started_at"),
-    )
-
-
-# ---------------------------------------------------------------------------
-# Push-notification device registration
-# ---------------------------------------------------------------------------
-
-class DeviceToken(Base):
-    """A mobile device's FCM registration token, scoped to a workspace.
-
-    Created by `POST /v1/devices/register` from the OpenAgents mobile apps.
-    Used by `services/push.py` to fan out notifications through Firebase
-    Cloud Messaging when relevant workspace events fire — iOS and Android
-    alike; `device_type` is descriptive, not a transport selector.
-
-    Tied to a workspace via `workspace_id` — the same auth model as every
-    other table here. We do not link to a specific human user because the
-    workspace token is the only identity the iOS client carries today.
-    """
-
-    __tablename__ = "device_tokens"
-
-    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid, server_default=text("gen_random_uuid()"))
-    workspace_id = Column(UUID(as_uuid=False), ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
-    fcm_token = Column(Text, nullable=False)
-    device_type = Column(Text, nullable=False)            # "ios" | future: "android" | "macos"
-    bundle_id = Column(Text, nullable=True)               # e.g. "com.openagents.go"
-    # Google email of the signed-in user on the device that registered.
-    # NULL for older clients without a user identity; populated by builds
-    # that started sending `userEmail` with /v1/devices/register. The push
-    # fan-out filters by this column when a @-mention resolves to a human
-    # workspace owner so only that specific human's devices get woken up.
-    user_email = Column(Text, nullable=True)
-    # Notification switches as set on the device's Notifications screen —
-    # {approvals, mentions, agentErrors, taskCompletions, allMessages,
-    # quietHours}, all booleans. Mirrored server-side because a banner the
-    # OS draws while the app is dead can only be stopped by not sending it.
-    # NULL means "registered before this existed" and is treated as all-on.
-    prefs = Column(JSONB, nullable=True)
-    created_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
-    last_seen_at = Column(DateTime(timezone=True), default=_now, server_default=text("NOW()"))
-
-    __table_args__ = (
-        UniqueConstraint("workspace_id", "fcm_token", name="uq_device_token_workspace_fcm"),
-        Index("idx_device_tokens_workspace", "workspace_id"),
-        Index("idx_device_tokens_workspace_user", "workspace_id", "user_email"),
     )
 
 
@@ -704,6 +647,8 @@ class StudentJourney(Base):
     status = Column(Text, nullable=False, default="active", server_default=text("'active'"))
     is_primary = Column(Boolean, nullable=False, default=False, server_default=text("false"))
     active_goal = Column(JSONB, nullable=True)
+    goals = Column(JSONB, nullable=False, default=list, server_default=text("'[]'"))
+    current_focus_goal_id = Column(Text, nullable=True)
     current_stage = Column(Text, nullable=True)
     current_objective = Column(Text, nullable=True)
     target_outcome = Column(JSONB, nullable=True)
@@ -720,8 +665,17 @@ class StudentJourney(Base):
 
     __table_args__ = (
         CheckConstraint("status IN ('active', 'paused', 'completed', 'abandoned')", name="ck_student_journey_status"),
+        CheckConstraint(
+            "current_stage IS NULL OR current_stage IN ('ORIENTING','UNDERSTANDING','ALIGNING','PLANNING','ACTING','REVIEWING','COMPLETED')",
+            name="ck_student_journey_stage",
+        ),
         Index("idx_student_journeys_workspace", "workspace_id"),
         Index("idx_student_journeys_workspace_status", "workspace_id", "status"),
+        Index(
+            "uq_student_journey_primary_active", "workspace_id", unique=True,
+            postgresql_where=text("is_primary = true AND status = 'active'"),
+            sqlite_where=text("is_primary = 1 AND status = 'active'"),
+        ),
     )
 
 

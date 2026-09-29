@@ -57,28 +57,6 @@ function parseStepContent(content: string): ParsedStep {
     return { type: 'tool_call', tool: rawTool, toolDisplay, args, summary };
   }
 
-  // Codex adapter: **Running:** `command`
-  const runMatch = content.match(/\*\*Running:\*\*\s*`([^`]+)`/);
-  if (runMatch) {
-    return {
-      type: 'tool_call',
-      tool: 'Bash',
-      toolDisplay: 'Bash',
-      summary: runMatch[1],
-    };
-  }
-
-  // Codex adapter: **Editing:** `filename`
-  const editMatch = content.match(/\*\*Editing:\*\*\s*`([^`]+)`/);
-  if (editMatch) {
-    return {
-      type: 'tool_call',
-      tool: 'Edit',
-      toolDisplay: 'Edit',
-      summary: editMatch[1],
-    };
-  }
-
   // Compaction / context management
   if (/compact/i.test(content)) {
     return { type: 'compacting', text: content };
@@ -89,10 +67,10 @@ function parseStepContent(content: string): ParsedStep {
 }
 
 function cleanToolName(name: string): string {
-  // mcp__openagents-workspace__workspace_status → workspace_status
+  // MCP names may include a server prefix before the actual tool name.
   const mcpMatch = name.match(/^mcp__[^_]+__(.+)$/);
   if (mcpMatch) return mcpMatch[1];
-  // mcp_openagents-workspace__workspace_status
+  // Handle both modern and legacy separators.
   const mcpMatch2 = name.match(/^mcp_[^_]+--.+?__(.+)$/);
   if (mcpMatch2) return mcpMatch2[1];
   return name;

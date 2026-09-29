@@ -1,12 +1,8 @@
 import type { DocumentStage } from './document-types';
 import type {
-  AgentCatalogDetail,
-  AgentCatalogEntry,
   ApiResponse,
   BrowserPersistentContext,
   BrowserTab,
-  CloudAgentConfig,
-  CloudAgentProvider,
   DMConversation,
   EventPollResponse,
   KanbanTask,
@@ -27,7 +23,6 @@ import type {
   TrashEntry,
   Workspace,
   WorkspaceAgent,
-  WorkspaceCustomSkill,
   WorkspaceFile,
   WorkspaceMe,
 
@@ -38,23 +33,6 @@ import { eventToMessage } from './types';
 import { API_URL } from './config';
 
 /** Map a snake_case custom-skill entry from the backend to camelCase. */
-function mapCustomSkill(raw: Record<string, unknown>): WorkspaceCustomSkill {
-  return {
-    id: raw.id as string,
-    name: (raw.name || raw.id) as string,
-    description: (raw.description as string) || '',
-    category: 'custom',
-    tags: (raw.tags as string[]) || [],
-    author: (raw.author as string) || 'Workspace user',
-    sourceType: 'workspace_file',
-    fileId: (raw.file_id || raw.fileId) as string,
-    filename: (raw.filename as string) || '',
-    contentType: (raw.content_type || raw.contentType) as string | undefined,
-    packageType: (raw.package_type || raw.packageType || 'md') as 'md' | 'zip',
-    createdAt: (raw.created_at || raw.createdAt) as string | undefined,
-  };
-}
-
 /** Map snake_case file response from backend to camelCase WorkspaceFile. */
 function mapFileResponse(raw: Record<string, unknown>): WorkspaceFile {
   return {
@@ -300,7 +278,7 @@ class WorkspaceApi {
     });
   }
 
-  async updateMember(agentName: string, updates: { description?: string; role?: string; enabled_skills?: Record<string, boolean>; display_name?: string; model?: string }): Promise<unknown> {
+  async updateMember(agentName: string, updates: { description?: string; role?: string; display_name?: string }): Promise<unknown> {
     return this.request(`/v1/workspaces/${this.workspaceId}/members/${agentName}`, {
       method: 'PATCH',
       body: JSON.stringify(updates),
@@ -316,81 +294,10 @@ class WorkspaceApi {
 
   /** Draft a one-line role description for an agent via the router LLM.
    * Returns the suggestion — the caller reviews and saves via updateMember. */
-  async generateMemberDescription(agentName: string): Promise<string> {
-    const raw = await this.request<{ agentName: string; description: string }>(
-      `/v1/workspaces/${this.workspaceId}/members/${agentName}/generate-description`,
-      { method: 'POST' },
-    );
-    return raw.description || '';
-  }
-
-  async getSkillCatalog(): Promise<import('./types').SkillCatalogEntry[]> {
-    return this.request<import('./types').SkillCatalogEntry[]>('/v1/workspaces/skill-catalog');
-  }
-
-  async installSkill(agentName: string, skillId: string): Promise<unknown> {
-    return this.request(`/v1/workspaces/${this.workspaceId}/members/${agentName}/skills/install`, {
-      method: 'POST',
-      body: JSON.stringify({ skill_id: skillId }),
-    });
-  }
-
-  async uninstallSkill(agentName: string, skillId: string): Promise<unknown> {
-    return this.request(`/v1/workspaces/${this.workspaceId}/members/${agentName}/skills/uninstall`, {
-      method: 'POST',
-      body: JSON.stringify({ skill_id: skillId }),
-    });
-  }
-
   // ── Custom (user-uploaded) skills ──
 
-  /** List this workspace's custom skills. */
-  async getCustomSkills(): Promise<WorkspaceCustomSkill[]> {
-    const raw = await this.request<{ skills: Record<string, unknown>[] }>(
-      `/v1/workspaces/${this.workspaceId}/skills/custom`,
-    );
-    return (raw.skills || []).map(mapCustomSkill);
-  }
-
   /** Register an already-uploaded file (by file_id) as a custom skill. */
-  async registerCustomSkill(meta: {
-    fileId: string;
-    id?: string;
-    name?: string;
-    description?: string;
-    filename?: string;
-  }): Promise<WorkspaceCustomSkill> {
-    const raw = await this.request<Record<string, unknown>>(
-      `/v1/workspaces/${this.workspaceId}/skills/custom`,
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          file_id: meta.fileId,
-          id: meta.id,
-          name: meta.name,
-          description: meta.description,
-          filename: meta.filename,
-        }),
-      },
-    );
-    return mapCustomSkill(raw);
-  }
-
   /** Upload a .md/.zip file and register it as a custom skill in one call. */
-  async uploadCustomSkill(
-    file: File,
-    meta: { id?: string; name?: string; description?: string },
-  ): Promise<WorkspaceCustomSkill> {
-    const uploaded = await this.uploadFile(file);
-    return this.registerCustomSkill({
-      fileId: uploaded.id,
-      id: meta.id,
-      name: meta.name,
-      description: meta.description,
-      filename: file.name,
-    });
-  }
-
   async updateChannel(channelName: string, updates: { title?: string; status?: string; starred?: boolean; masterAgent?: string; orchestrationMode?: string; orchestrationInstruction?: string | null; workflowId?: string | null }): Promise<unknown> {
     // Map camelCase fields → snake_case for the backend.
     const { masterAgent, orchestrationMode, orchestrationInstruction, workflowId, ...rest } = updates;
@@ -1134,11 +1041,7 @@ class WorkspaceApi {
       displayName: a.display_name || null,
       role: a.role,
       agentType: a.agent_type || null,
-      serverHost: a.server_host || null,
-      workingDir: a.working_dir || null,
       description: a.description || null,
-      enabledSkills: a.enabled_skills || null,
-      model: a.model || null,
       status: a.status,
       lastHeartbeatAt: null,
       joinedAt: null,
@@ -1149,10 +1052,6 @@ class WorkspaceApi {
   /** Fetch the catalog of supported agent client types. */
 
   /** Fetch full detail for one agent type (install/uninstall + supported models). */
-  async getAgentCatalogDetail(agentType: string): Promise<AgentCatalogDetail> {
-    return this.request<AgentCatalogDetail>(`/v1/agent-catalog/${encodeURIComponent(agentType)}`);
-  }
-
   async updateAgentRole(_agentName: string, _role: string): Promise<WorkspaceAgent> {
     throw new Error('Agent role management is not yet available in event-native mode');
   }
@@ -1162,33 +1061,6 @@ class WorkspaceApi {
       method: 'POST',
       body: JSON.stringify({ agent_name: agentName, network: this.workspaceId }),
     });
-  }
-
-  /** Legacy compatibility for pre-PAI cloud-agent rows. The server no longer
-   * exposes these routes to students; remove with the legacy schema later. */
-  async getCloudProviders(): Promise<CloudAgentProvider[]> {
-    const res = await this.request<{ providers: CloudAgentProvider[] }>('/v1/cloud-agents/providers');
-    return res.providers;
-  }
-
-  async listCloudAgents(): Promise<CloudAgentConfig[]> {
-    const res = await this.request<{ cloud_agents: CloudAgentConfig[] }>(`/v1/cloud-agents?network=${this.workspaceId}`);
-    return res.cloud_agents;
-  }
-
-  async updateCloudAgent(agentName: string, updates: { model?: string; apiKey?: string }): Promise<CloudAgentConfig> {
-    return this.request<CloudAgentConfig>(`/v1/cloud-agents/${agentName}`, {
-      method: 'PATCH',
-      body: JSON.stringify({
-        network: this.workspaceId,
-        ...(updates.model !== undefined && { model: updates.model }),
-        ...(updates.apiKey !== undefined && { api_key: updates.apiKey }),
-      }),
-    });
-  }
-
-  async removeCloudAgent(agentName: string): Promise<void> {
-    await this.request<unknown>(`/v1/cloud-agents/${agentName}?network=${this.workspaceId}`, { method: 'DELETE' });
   }
 
   // ---------------------------------------------------------------------------

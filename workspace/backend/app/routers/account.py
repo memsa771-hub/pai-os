@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Account-level endpoints for the signed-in end user (Supabase or Apple identity).
+Account-level endpoints for the signed-in Supabase user.
 
 DELETE /v1/account    Permanently delete the calling user's account data.
 
@@ -11,11 +11,10 @@ the app. Auth is the user's identity bearer token (Authorization: Bearer <id>)
 touched, so it can't be scoped to a single workspace's token.
 
 Scope of deletion: the user is identified only by email (the app has no
-app-managed credential; identity is delegated to Google / Apple / Supabase).
+app-managed credential; identity is delegated to Supabase Auth).
 Placement AI v2.0: the user's own personal workspace (`owner_user_id`) is
 private to them, so it is soft-deleted along with every other email-keyed
-row — collaborator memberships, channel human memberships, and registered
-device push tokens — across any workspace they touched.
+row and channel human memberships across any workspace they touched.
 """
 
 import logging
@@ -32,10 +31,9 @@ from app.access import (
     resolve_owned_workspace,
 )
 from app.database import get_db
-from app.firebase_auth import verify_identity_token
+from app.human_auth import verify_identity_token
 from app.models import (
     ChannelHumanMember,
-    DeviceToken,
     EventRecord,
     FileRecord,
     User,
@@ -319,9 +317,9 @@ def delete_account(
 ):
     """Permanently erase the calling user's account and everything in it.
 
-    This used to only mark the workspace `status = "deleted"` and remove
-    device tokens. Everything that actually matters survived: the student's
-    memories and episodes, their vault facts (CGPA, test scores), every file
+    This used to only mark the workspace `status = "deleted"`. Everything that
+    actually matters survived: the student's memories and episodes, their
+    vault facts (CGPA, test scores), every file
     they had uploaded — transcripts, passports — their whole chat history, and
     the index vectors built from all of it. "Delete my account" has to mean
     the data is gone, not hidden behind a status column.
@@ -367,10 +365,6 @@ def delete_account(
         ChannelHumanMember.user_email == email_lower
     ).delete(synchronize_session=False)
 
-    devices_deleted = db.query(DeviceToken).filter(
-        DeviceToken.user_email == email_lower
-    ).delete(synchronize_session=False)
-
     if user is not None:
         db.flush()                     # let the workspace cascades land first
         db.delete(user)
@@ -378,10 +372,10 @@ def delete_account(
     db.commit()
 
     logger.info(
-        "account: erased %s (workspaces=%s files=%s events=%s channel_members=%s devices=%s)",
+        "account: erased %s (workspaces=%s files=%s events=%s channel_members=%s)",
         email_lower, len(erased),
         sum(e["files"] for e in erased), sum(e["events"] for e in erased),
-        channel_memberships_deleted, devices_deleted,
+        channel_memberships_deleted,
     )
 
     return success_response({
@@ -391,6 +385,5 @@ def delete_account(
             "files": sum(e["files"] for e in erased),
             "events": sum(e["events"] for e in erased),
             "channel_memberships": channel_memberships_deleted,
-            "devices": devices_deleted,
         },
     })

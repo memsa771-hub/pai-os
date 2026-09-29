@@ -45,7 +45,7 @@ from app.routers.network import (
     _resolve_workspace,
     _verify_workspace_access,
 )
-from openagents.core.onm_events import Event
+from app.eventing.events import Event
 
 logger = logging.getLogger(__name__)
 

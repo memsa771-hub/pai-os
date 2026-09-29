@@ -4,12 +4,10 @@ async def list_agents(ctx, _args):
         return res
     agents = []
     for item in (res.get("data") or {}).get("agents") or []:
-        skills = item.get("enabled_skills") or {}
         agents.append({
             "name": (item.get("address") or "").removeprefix("openagents:"),
             "type": item.get("agent_type"), "status": item.get("status"),
             "builtin": bool(item.get("builtin")), "description": item.get("description"),
-            "installed_skills": skills.get("installed") or [],
         })
     return {"ok": True, "agents": agents}
 

@@ -26,8 +26,8 @@ from app.pipeline_factory import pipeline
 from app.event_identity import resolve_actor, session_id_from
 from app.response import ResponseCode, json_response, success_response
 from app.routers.network import _verify_workspace_access, _workspace_filter
-from openagents.core.onm_events import Event
-from openagents.core.onm_mods import EventRejected, PipelineContext
+from app.eventing.events import Event
+from app.eventing.mods import EventRejected, PipelineContext
 
 logger = logging.getLogger(__name__)
 
@@ -352,11 +352,6 @@ def send_event(
 
     db.commit()
 
-    # Fan out push notifications for relevant events. Runs after the
-    # response is sent (FastAPI BackgroundTasks); never blocks event
-    # creation; failures are logged but never raised. The service opens
-    # its own short-lived DB session because `db` here is request-scoped.
-    from app.services.push import fanout_for_event
     event_snapshot = {
         "id": result.id,
         "type": result.type,
@@ -366,8 +361,6 @@ def send_event(
         "metadata": result.metadata,
         "timestamp": result.timestamp,
     }
-    background_tasks.add_task(fanout_for_event, str(workspace.id), event_snapshot)
-
     # Invalidate poll cache head-trackers for this workspace so that
     # agents polling with `after=<head>` don't keep getting a stale
     # cached-empty response.  We delete every `v1events:head:*` and

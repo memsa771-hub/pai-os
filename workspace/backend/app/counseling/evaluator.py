@@ -10,12 +10,13 @@ class CounselingEvaluator:
                active_conflict: dict | None = None) -> CounselingState:
         missing = (completion or {}).get("missingRequirements", (completion or {}).get("missingCritical", []))
         unknowns = tuple(
-            item.get("key") for item in missing
+            str(item.get("key")) for item in missing
             if isinstance(item, dict) and item.get("key")
         )
         eligible = bool((completion or {}).get("personalizedCounselingEligible", True))
         objective = (journey or {}).get("current_objective")
-        blockers = (journey or {}).get("blockers") or []
+        blockers = [item for item in ((journey or {}).get("blockers") or [])
+                    if item.get("status", "open") == "open"]
 
         if active_conflict:
             return CounselingState(
@@ -42,7 +43,15 @@ class CounselingEvaluator:
             )
 
         stage = str((journey or {}).get("current_stage") or "").casefold()
-        if stage in {"review", "reviewing", "decision"}:
+        if stage in {"orienting", "orientation"}:
+            phase, move = CounselingPhase.ORIENTING, CounselingMove.ALIGN
+        elif stage == "understanding":
+            phase, move = CounselingPhase.UNDERSTANDING, CounselingMove.ASK
+        elif stage in {"aligning", "alignment"}:
+            phase, move = CounselingPhase.ALIGNING, CounselingMove.ALIGN
+        elif stage in {"planning", "plan"}:
+            phase, move = CounselingPhase.PLANNING, CounselingMove.BUILD_ROADMAP
+        elif stage in {"review", "reviewing", "decision", "completed"}:
             phase, move = CounselingPhase.REVIEWING, CounselingMove.REVIEW
         elif stage in {"action", "acting", "execution", "application"}:
             phase, move = CounselingPhase.ACTING, CounselingMove.DELEGATE
@@ -50,7 +59,9 @@ class CounselingEvaluator:
             phase, move = CounselingPhase.PLANNING, CounselingMove.BUILD_ROADMAP
         else:
             phase, move = CounselingPhase.ALIGNING, CounselingMove.ALIGN
+        decision_ready = phase not in {CounselingPhase.ORIENTING, CounselingPhase.UNDERSTANDING}
         return CounselingState(
-            phase, "low", move, objective or "active goal", True,
-            bool(objective), "full", unknowns, None, objective, 1,
+            phase, "low", move, objective or "active goal", decision_ready,
+            bool(objective) and phase not in {CounselingPhase.ORIENTING, CounselingPhase.UNDERSTANDING},
+            "full", unknowns, None, objective, 1,
         )

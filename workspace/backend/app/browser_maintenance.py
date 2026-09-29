@@ -69,7 +69,7 @@ async def _emit_tab_closed(db, workspace: Workspace, tab: BrowserTab) -> None:
     """Best-effort tab.closed event so connected UIs drop the tab."""
     try:
         from app.routers.network import _emit_event
-        from openagents.core.onm_events import Event
+        from app.eventing.events import Event
 
         payload = {"tab_id": tab.id, "reason": "idle"}
         if tab.context_id:

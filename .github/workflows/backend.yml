@@ -38,7 +38,7 @@ jobs:
       - name: Validate migrations upgrade downgrade upgrade
         run: |
           alembic upgrade head
-          alembic downgrade 062
+          alembic downgrade base
           alembic upgrade head
       - run: pytest -p no:cacheprovider tests -q
       - run: git diff --check

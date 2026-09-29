@@ -14,6 +14,8 @@ class JourneyView:
     status: str
     is_primary: bool
     active_goal: Any = None
+    goals: list[dict] = field(default_factory=list)
+    current_focus_goal_id: str | None = None
     current_stage: str | None = None
     current_objective: str | None = None
     target_outcome: Any = None

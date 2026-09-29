@@ -110,7 +110,6 @@ export const VIEW_TITLE_KEYS: Record<ViewMode, MessageKey> = {
   workflows: "views.workflows",
   routines: "views.routines",
   inbox: "views.inbox",
-  skills: "views.skills",
 }
 
 /** Editable thread title — click to rename, Enter/blur to commit. */

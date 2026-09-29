@@ -6,7 +6,7 @@ PAI Counselor is a *cloud agent* (runs in-process on the backend, see
 ways:
 
 1. It is **auto-provisioned** into every workspace (see ``provision_pai``),
-   rather than added by hand via ``POST /v1/cloud-agents``.
+   rather than exposed as a user-configurable agent.
 2. Its credentials are **server-held** and shared across all workspaces
    (``config.PAI_*``) — never entered by the user, never persisted per
    workspace (the ``api_key`` column stores only a placeholder).
@@ -130,8 +130,8 @@ def validate_config() -> bool:
 def provision_pai(db, workspace) -> bool:
     """Idempotently add the built-in PAI Counselor agent to a workspace.
 
-    Creates the ``WorkspaceMember`` + ``CloudAgentConfig`` rows (mirroring
-    ``POST /v1/cloud-agents``) if PAI Counselor isn't already present. Caller is
+    Creates the internal ``WorkspaceMember`` + ``CloudAgentConfig`` rows if PAI
+    Counselor isn't already present. Caller is
     responsible for committing. Returns True if a row was added.
 
     NOTE: does not run when ``should_provision()`` is False.

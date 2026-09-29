@@ -7,7 +7,7 @@ import { usePaiAuth } from '@/lib/pai-auth-context';
 import { useWorkspace } from '@/lib/workspace-context';
 import { useLayout, type ViewMode } from './layout-context';
 
-const VIEWS: ViewMode[] = ['threads', 'profile', 'files', 'knowledge', 'browser', 'tasks', 'workflows', 'routines', 'inbox', 'skills'];
+const VIEWS: ViewMode[] = ['threads', 'profile', 'files', 'knowledge', 'browser', 'tasks', 'workflows', 'routines', 'inbox'];
 
 /** Desktop restore state only; web layout, data loading, and UI stay shared. */
 export function useDesktopWorkspaceState(): void {

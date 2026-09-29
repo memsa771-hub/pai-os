@@ -39,18 +39,6 @@ function LandingPage() {
             >
               Docs
             </a>
-            <a
-              href="https://github.com/openagents-org/openagents"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
-            >
-              GitHub
-            </a>
-            <a
-              href="https://discord.gg/openagents"
-              className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
-            >
-              Discord
-            </a>
             {isPaiDeployment && (
               <Button size="sm" variant="outline" onClick={signIn}>
                 Sign In
@@ -64,12 +52,11 @@ function LandingPage() {
       <section className="py-16 sm:py-24">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 text-center">
           <h1 className="text-4xl sm:text-5xl font-bold tracking-tight mb-4">
-            Your agents, working together
+            Your education journey, intelligently guided
           </h1>
           <p className="text-lg sm:text-xl text-muted-foreground max-w-2xl mx-auto mb-10">
-            Placement AI is a shared workspace for your AI agents — chat, collaborate on tasks,
-            share files and a browser, and get guidance from a built-in PAI Counselor, all in
-            real time.
+            Plan your education path, organize applications and documents, and get personalized
+            guidance from PAI Counselor with approved actions handled by PAI Operator.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3">
             <a href="/sign-in">
@@ -101,17 +88,17 @@ function LandingPage() {
                 <h3 className="font-semibold text-lg">Create a workspace</h3>
               </div>
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-                Sign in and your personal workspace is ready for conversations, files, and agents.
+                Sign in and your private workspace is ready for your profile, plans, conversations, and documents.
               </div>
             </div>
             {/* Step 2 */}
             <div className="space-y-3">
               <div className="flex items-center gap-3">
                 <div className="size-8 rounded-full bg-blue-500 text-white flex items-center justify-center text-sm font-bold shrink-0">2</div>
-                <h3 className="font-semibold text-lg">Bring in your agents</h3>
+                <h3 className="font-semibold text-lg">Build your profile</h3>
               </div>
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-                Add the built-in PAI Counselor or connect your own agents over MCP. Add as many as you need.
+                Add your goals, education history, preferences, and constraints so guidance stays relevant.
               </div>
             </div>
             {/* Step 3 */}
@@ -121,7 +108,7 @@ function LandingPage() {
                 <h3 className="font-semibold text-lg">Collaborate</h3>
               </div>
               <div className="rounded-lg border bg-card p-4 text-sm text-muted-foreground">
-                Your agents and teammates appear here in a shared workspace — exchanging messages, sharing files, and working on tasks together.
+                Work with PAI Counselor on decisions, applications, documents, tasks, and deadlines.
               </div>
             </div>
           </div>
@@ -137,8 +124,8 @@ function LandingPage() {
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
             <FeatureCard
               icon={<Network className="size-5" />}
-              title="Agent Networks"
-              description="Agents discover, communicate, and collaborate together in a shared workspace, no matter who built them."
+              title="Student Journey"
+              description="Keep goals, milestones, decisions, and next steps connected in one durable workspace."
             />
             <FeatureCard
               icon={<Compass className="size-5" />}
@@ -147,13 +134,13 @@ function LandingPage() {
             />
             <FeatureCard
               icon={<Shield className="size-5" />}
-              title="MCP Tool Support"
-              description="Native MCP support lets your agents reach real tools and data sources, not just chat."
+              title="Student Vault"
+              description="Keep application documents and supporting information organized alongside your plans."
             />
             <FeatureCard
               icon={<MonitorSmartphone className="size-5" />}
-              title="Local Computer Access"
-              description="Give agents access to files, a browser, and tasks on your own machine, scoped to your workspace."
+              title="PAI Operator"
+              description="Carry out approved browser, file, and workspace actions with clear scope and oversight."
             />
           </div>
         </div>
@@ -164,7 +151,7 @@ function LandingPage() {
         <div className="max-w-3xl mx-auto px-4 sm:px-6 text-center space-y-6">
           <h2 className="text-2xl sm:text-3xl font-bold">Ready to get started?</h2>
           <p className="text-muted-foreground">
-            Create a workspace, bring in your agents, and start collaborating in minutes.
+            Create your workspace and start planning with PAI Counselor in minutes.
           </p>
           <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
             <a href="/sign-in">
@@ -176,16 +163,6 @@ function LandingPage() {
             <a href="https://placement-ai.com/docs/getting-started/overview">
               <Button variant="outline">
                 Read the Docs
-              </Button>
-            </a>
-            <a href="https://github.com/openagents-org/openagents">
-              <Button variant="outline">
-                View on GitHub
-              </Button>
-            </a>
-            <a href="https://discord.gg/openagents">
-              <Button variant="outline">
-                Join Discord
               </Button>
             </a>
           </div>
@@ -202,9 +179,6 @@ function LandingPage() {
           <div className="flex items-center gap-4">
             <a href="https://placement-ai.com" className="hover:text-foreground transition-colors">Website</a>
             <a href="https://placement-ai.com/docs/getting-started/overview" className="hover:text-foreground transition-colors">Docs</a>
-            <a href="https://github.com/openagents-org/openagents" className="hover:text-foreground transition-colors">GitHub</a>
-            <a href="https://discord.gg/openagents" className="hover:text-foreground transition-colors">Discord</a>
-            <a href="https://twitter.com/OpenAgentsAI" className="hover:text-foreground transition-colors">Twitter</a>
           </div>
         </div>
       </footer>
