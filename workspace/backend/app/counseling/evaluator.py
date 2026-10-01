@@ -1,6 +1,7 @@
 """Deterministic counseling state derivation; the LLM executes, not chooses."""
 
 from app.counseling.state import CounselingMove, CounselingPhase, CounselingState
+from .discovery import SUPPRESSED_STATUSES, is_general_information_request
 
 
 class CounselingEvaluator:
@@ -20,6 +21,12 @@ class CounselingEvaluator:
 
         understanding = vault_context or {}
         baseline = understanding.get("baseline") or {}
+        if is_general_information_request(message):
+            return CounselingState(
+                CounselingPhase.DISCOVERING, "low", CounselingMove.REFLECT,
+                "answer the general question", False, False, "none", unknowns,
+                None, objective, 0,
+            )
         if "baseline" in understanding and baseline.get("status") != "confirmed":
             if active_conflict or understanding.get("open_conflicts"):
                 conflict = active_conflict or understanding["open_conflicts"][0]
@@ -33,7 +40,7 @@ class CounselingEvaluator:
                     CounselingPhase.MIRROR_REVIEW, "low", CounselingMove.SHOW_MIRROR,
                     "student mirror", False, False, "none", unknowns, None, objective, 1,
                 )
-            gaps = understanding.get("open_gaps") or []
+            gaps = self.relevant_gaps(understanding, message)
             focus = next((g.get("focus") or g.get("level") for g in gaps), "student context")
             documents = (understanding.get("documents") or {}).get("nodes") or []
             if documents and focus in {"current_level", "academic_performance", "upper_secondary"}:
@@ -53,6 +60,25 @@ class CounselingEvaluator:
                 "low" if ready else "high",
                 CounselingMove.SHOW_MIRROR if ready else move,
                 focus, False, False, "none", unknowns, None, objective, 1,
+            )
+
+        wants_execution = any(word in message.casefold() for word in (
+            "shortlist", "research", "compare programs", "review my cv",
+            "review my transcript", "apply to", "submit application",
+        ))
+        if ("baseline" in understanding and baseline.get("status") == "confirmed"
+                and not active_conflict and not wants_execution):
+            # Mirror approval means the displayed snapshot was accurate. It is
+            # not a declaration that we fully understand the person or that a
+            # decision, recommendation or execution is ready.
+            gaps = self.relevant_gaps(understanding, message)
+            focus = (gaps[0].get("focus") if gaps else None)
+            return CounselingState(
+                CounselingPhase.COUNSELING, "low",
+                CounselingMove.ASK if focus else CounselingMove.REFLECT,
+                focus or "reflect on the student's stated context", False, False,
+                "limited", tuple(g.get("focus", "context") for g in gaps),
+                None, objective, 1 if focus else 0,
             )
 
         if active_conflict:
@@ -112,3 +138,21 @@ class CounselingEvaluator:
             bool(objective) and phase not in {CounselingPhase.ORIENTING, CounselingPhase.UNDERSTANDING},
             "full", unknowns, None, objective, 1,
         )
+
+    @staticmethod
+    def relevant_gaps(understanding: dict, message: str) -> list[dict]:
+        """Choose a relevant thread, not a required-field interview order."""
+        gaps = [g for g in understanding.get("open_gaps", [])
+                if g.get("status") not in SUPPRESSED_STATUSES]
+        text = message.casefold()
+        related = (
+            ("academic_performance", ("grade", "gpa", "result", "marks", "transcript")),
+            ("budget", ("afford", "budget", "fund", "cost", "scholarship")),
+            ("strengths", ("good at", "strength", "skill", "project", "experience", "capable")),
+            ("interests", ("interest", "enjoy", "like doing", "curious")),
+            ("motivation", ("why", "meaning", "motivat", "matters", "purpose")),
+            ("practical_constraints", ("time", "family", "work hours", "relocat", "constraint")),
+            ("education_history", ("previous", "history", "before", "qualification")),
+        )
+        preferred = next((focus for focus, terms in related if any(term in text for term in terms)), None)
+        return sorted(gaps, key=lambda gap: 0 if gap.get("focus") == preferred else 1)

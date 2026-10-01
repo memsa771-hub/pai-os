@@ -2,6 +2,9 @@
 
 import json
 
+_RETRY_RESPONSE = "I couldn't finish that reply. Please retry your last message so I can pick up from here."
+_DELTA_BUCKETS = ("facts", "records", "memories", "conflicts", "unknowns")
+
 
 def parse_turn(raw: str) -> tuple[str, dict]:
     text = (raw or "").strip()
@@ -10,9 +13,14 @@ def parse_turn(raw: str) -> tuple[str, dict]:
     try:
         parsed = json.loads(text)
     except (TypeError, ValueError):
+        # A truncated internal envelope must never be displayed as conversation.
+        # Plain prose remains supported for older models and harmless replies.
+        if text.startswith(("{", "[")) and any(
+                f'"{key}"' in text for key in ("response", "counselor_state", "student_understanding_delta")):
+            return _RETRY_RESPONSE, {}
         return raw, {}
     if not isinstance(parsed, dict) or not isinstance(parsed.get("response"), str):
-        return raw, {}
+        return _RETRY_RESPONSE, {}
     state = parsed.get("counselor_state")
     if not isinstance(state, dict):
         state = {}
@@ -20,9 +28,12 @@ def parse_turn(raw: str) -> tuple[str, dict]:
     if not isinstance(delta, dict):
         delta = {}
     state["student_understanding_delta"] = {
-        key: value if isinstance(value := delta.get(key), list) else []
-        for key in ("facts", "records", "memories", "conflicts", "unknowns")
+        key: [item for item in value[:20] if isinstance(item, dict)]
+        if isinstance(value := delta.get(key), list) else []
+        for key in _DELTA_BUCKETS
     }
     if not isinstance(state.get("next_move"), dict):
         state["next_move"] = {}
-    return parsed["response"], state
+    # Persistence still validates every proposal against the durable owner event;
+    # successful parsing conveys no authority to change canonical state.
+    return parsed["response"].strip() or _RETRY_RESPONSE, state

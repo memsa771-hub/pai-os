@@ -108,7 +108,8 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         return
     api = pai.WorkspaceApi(workspace_id, workspace.password_hash)
 
-    from app.counseling.baseline import changed_domains, confirmed, metadata, save
+    from app.counseling.baseline import (can_confirm, changed_domains, confirmed,
+                                          invalidate, metadata, record_mirror, save)
     from app.counseling.understanding import (StudentUnderstandingBuilder, baseline_sufficient,
                                               same_turn_education_conflict, student_mirror)
     from app.memory.student_snapshot import StudentSnapshotService
@@ -118,42 +119,71 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
     baseline = metadata(workspace)
     understanding = StudentUnderstandingBuilder(db).build(workspace_id, snapshot=snapshot,
                                                          baseline=baseline)
+    source_event = db.get(EventRecord, event_data.get("id")) if event_data.get("id") else None
+    owner_turn = bool(source_event is not None
+                      and source_event.network_id == workspace.id
+                      and source_event.source == f"human:{workspace.owner_user_id}"
+                      and source_event.target == channel_target
+                      and (source_event.payload or {}).get("content", "") == content)
     changed = changed_domains(understanding, baseline)
     if changed:
-        baseline = save(workspace, status="mirror_review", view=understanding,
-                        affected_domains=changed)
+        # A second edit while reviewing an affected-domain mirror must also be
+        # displayed; hashing all domains while showing only the old subset
+        # would otherwise approve unseen changes.
+        affected = list(dict.fromkeys([*(baseline.get("affected_domains") or []), *changed]))
+        if not baseline.get("version"):
+            affected = []  # No earlier full mirror has ever been approved.
+        baseline = invalidate(workspace, affected_domains=affected)
         db.commit()
     understanding["baseline"] = {"status": baseline.get("status", "discovering"),
                                  "version": baseline.get("version", 0),
                                  "changed_domains": baseline.get("affected_domains", [])}
     same_turn_conflict = same_turn_education_conflict(understanding, content or "")
+    # Clarification must not bypass the proposal/extraction path: another fact
+    # in this same message may be a valid correction. The model sees the
+    # conflict and Operator remains the only persistence authority.
     if same_turn_conflict:
-        await _post_response(db, workspace_id, channel_target, agent_name,
-                             same_turn_conflict["clarification_question"], depth)
-        return
-    mirror_is_current = baseline.get("domain_hashes") == StudentUnderstandingBuilder.domain_hashes(understanding)
-    if baseline.get("status") == "mirror_review" and confirmed(content or "") and mirror_is_current:
+        same_turn_conflict = {**same_turn_conflict, "clarification_question": (
+            same_turn_conflict.get("clarification_question") or same_turn_conflict.get("question")
+            or "Which version of this detail should I use?")}
+        understanding.setdefault("conflicts", []).append(same_turn_conflict)
+    if owner_turn and not attachments and can_confirm(db, workspace, baseline, understanding, source_event):
         baseline = save(workspace, status="confirmed", view=understanding)
         db.commit()
         await _post_response(db, workspace_id, channel_target, agent_name,
-                             "Thanks for confirming. I can now guide you using this understanding. What would you like to work on first?",
+                             "Thanks for confirming. I’ll use this as our starting point and keep any unknown or deferred details open.",
                              depth)
         return
+    correction_turn = any(marker in (content or "").casefold() for marker in (
+        "actually", "correct my", "correction", "update my", "change my", "forget my",
+        "remove my", "that's wrong", "that is wrong", "not accurate",
+    ))
+    if owner_turn and baseline.get("status") == "confirmed" and (same_turn_conflict or correction_turn):
+        baseline = invalidate(workspace)
+        db.commit()
+        understanding["baseline"]["status"] = "mirror_review"
     baseline_confirmed = baseline.get("status") == "confirmed"
     enough_for_mirror = baseline_sufficient(understanding)
     mirror_request = (content or "").strip().casefold() in {
         "", "continue", "show my profile", "show me what you know", "what's next", "hi",
     }
-    should_show_mirror = (baseline.get("status") == "mirror_review" and not mirror_is_current) or (
-        mirror_request and (baseline.get("status") == "mirror_review" or enough_for_mirror)
-    )
-    if not baseline_confirmed and should_show_mirror and not attachments:
-        if baseline.get("status") != "mirror_review":
-            baseline = save(workspace, status="mirror_review", view=understanding)
+    # Only content-free navigation/approval can take this shortcut. In
+    # particular, stale metadata must never swallow same-turn corrections.
+    should_show_mirror = (mirror_request or confirmed(content or "")) and (
+        baseline.get("status") == "mirror_review" or enough_for_mirror)
+    if (owner_turn and not baseline_confirmed and should_show_mirror and not attachments
+            and not understanding.get("open_conflicts")):
+        mirror_event_id = await _post_response(
+            db, workspace_id, channel_target, agent_name,
+            student_mirror(understanding, baseline.get("affected_domains")), depth)
+        if mirror_event_id:
+            record_mirror(workspace, view=understanding, event_id=mirror_event_id,
+                          channel=channel_target, affected_domains=baseline.get("affected_domains"))
             db.commit()
-        await _post_response(db, workspace_id, channel_target, agent_name,
-                             student_mirror(understanding, baseline.get("affected_domains")), depth)
         return
+    if owner_turn and baseline.get("status") == "mirror_review" and not mirror_request:
+        baseline = invalidate(workspace)
+        db.commit()
 
     system_prompt = pai.PAI_SYSTEM_PROMPT
     completion = None
@@ -188,7 +218,6 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         # blank invitation to invent the counseling strategy.
         from app.counseling import CounselingEvaluator, CounselingPolicy
         from app.journey import JourneyCoordinator, JourneyService
-        from app.models import ProfileIssue
 
         try:
             journey_service = JourneyService(db)
@@ -208,15 +237,11 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
             active_journeys = []
             primary_journey = None
             active_journey = None
-        conflict = db.execute(select(ProfileIssue).where(
-            ProfileIssue.workspace_id == workspace_id,
-            ProfileIssue.status == "open",
-            ProfileIssue.severity == "blocking",
-        ).order_by(ProfileIssue.created_at.desc()).limit(1)).scalar_one_or_none()
-        conflict_data = None if conflict is None else {
-            "id": conflict.id, "summary": conflict.summary,
-            "clarification_question": conflict.clarification_question,
-        }
+        safe_conflicts = understanding.get("open_conflicts") or []
+        conflict_data = same_turn_conflict or next(({
+            "id": item.get("id"), "summary": item.get("summary"),
+            "clarification_question": item.get("question"),
+        } for item in safe_conflicts if item.get("severity", "blocking") == "blocking"), None)
         state = CounselingEvaluator().derive(
             message=content or "", vault_context=understanding,
             journey=active_journey.to_dict() if active_journey else None,
@@ -354,7 +379,15 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         "clarify before proposing that claim. The student sees only natural prose. "
         "Return a JSON object with keys response and counselor_state. counselor_state "
         "has phase, student_understanding_delta (facts, records, memories, conflicts, "
-        "unknowns arrays), next_move (type, focus), baseline_ready. Facts must use "
+        "unknowns arrays), next_move (type, focus), baseline_ready. Fact operations are "
+        "upsert or retract; memory operations are upsert or forget; record operations "
+        "are upsert only. Only propose retract/forget for an explicit student request. "
+        "Unknowns use {focus, status, evidence:{quote}} with status UNKNOWN, DECLINED, "
+        "DEFERRED, or NOT_APPLICABLE, only for explicit student statements. Focus is "
+        "current_level, current_direction, motivation, academic_performance, budget, "
+        "interests, strengths, practical_constraints, or education_history. Do not "
+        "re-ask declined/deferred questions or make enrichment a prerequisite. "
+        "Never assign source_type, trust, or authority; Operator verifies these. Facts must use "
         "canonical Vault keys; records use the existing record schema. For education "
         "use qualification_name, institution_name, canonical_level, result.gpa and "
         "result.gpa_scale; for goals use goal_type, title and details.motivation; "
@@ -475,25 +508,47 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         "recommend", "best university for me", "best career for me", "should i",
         "am i a good fit", "my roadmap", "personalized plan",
     ))
-    if not baseline_confirmed and (asks_for_fit or counselor_state.get("next_move", {}).get("type") == "COUNSEL"):
-        if not understanding["education"]["nodes"]:
-            question = "What's your current or highest qualification? You can upload a CV instead."
-        elif not understanding["goals"]["nodes"]:
-            question = "What outcome are you aiming for right now?"
+    question_focus = None
+    needs_personalized_gate = not baseline_confirmed and (
+        asks_for_fit or counselor_state.get("next_move", {}).get("type") == "COUNSEL")
+    if needs_personalized_gate:
+        discovery = understanding.get("discovery") or {}
+        if (not understanding["education"]["nodes"]
+                and not discovery.get("current_level", {}).get("student_stated")):
+            question_focus = "current_level"
+            question = "What's your current or highest qualification? You can upload a CV instead, or leave this open."
+        elif (not understanding["goals"]["nodes"] and not understanding.get("career", {}).get("primary_interest")
+                and not discovery.get("current_direction", {}).get("student_stated")):
+            question_focus = "current_direction"
+            question = "What outcome are you aiming for right now? It's fine if you're still exploring."
         else:
-            question = "What matters most to you about that direction?"
+            question = "We can keep unknown or deferred details open while we review what you've shared."
         final_text = "Before I give a recommendation for your situation, I need to confirm my understanding. " + question
     delta = counselor_state.get("student_understanding_delta") or {}
-    has_new_claims = any(delta.get(kind) for kind in ("facts", "records", "memories"))
-    if (not baseline_confirmed and enough_for_mirror and not has_new_claims
-            and counseling_decision is not None and counseling_decision.move == "SHOW_MIRROR"):
+    has_new_claims = any(delta.get(kind) for kind in ("facts", "records", "memories", "unknowns"))
+    if same_turn_conflict:
+        final_text = same_turn_conflict["clarification_question"]
+    from app.counseling.discovery import is_general_information_request
+    structured_mirror_request = (
+        counselor_state.get("next_move", {}).get("type") == "SHOW_MIRROR"
+        and counseling_decision is not None and counseling_decision.move == "SHOW_MIRROR"
+        and not is_general_information_request(content or ""))
+    showing_mirror = (owner_turn and (mirror_request or confirmed(content or "")
+                                     or needs_personalized_gate or structured_mirror_request)
+                      and not baseline_confirmed and enough_for_mirror
+                      and not has_new_claims and not same_turn_conflict
+                      and not understanding.get("open_conflicts")
+                      and (needs_personalized_gate or (counseling_decision is not None
+                           and counseling_decision.move == "SHOW_MIRROR")))
+    if showing_mirror:
         final_text = student_mirror(understanding, baseline.get("affected_domains"))
-        if baseline.get("status") != "mirror_review":
-            save(workspace, status="mirror_review", view=understanding)
-            db.commit()
     assistant_event_id = await _post_response(
         db, workspace_id, channel_target, agent_name, final_text, depth,
     )
+    if assistant_event_id and showing_mirror:
+        record_mirror(workspace, view=understanding, event_id=assistant_event_id,
+                      channel=channel_target, affected_domains=baseline.get("affected_domains"))
+        db.commit()
 
     if assistant_event_id and counselor_state:
         from app.services.operator import consume_student_understanding_delta
@@ -507,6 +562,23 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         except Exception:
             logger.exception("counselor delta intake failed workspace=%s", workspace_id)
             db.rollback()
+
+    if assistant_event_id and owner_turn:
+        from app.counseling.discovery import DISCOVERY_FOCI
+        if (question_focus is None and counseling_decision is not None
+                and counseling_decision.move in {"ASK", "REQUEST_DOCUMENT"}):
+            question_focus = counseling_decision.focus
+        settings = dict(workspace.settings or {})
+        if (not showing_mirror and not same_turn_conflict and "?" in final_text
+                and question_focus in DISCOVERY_FOCI):
+            settings["student_discovery_question"] = {
+                "focus": question_focus, "source_event_id": assistant_event_id,
+                "channel_target": channel_target,
+            }
+        else:
+            settings.pop("student_discovery_question", None)
+        workspace.settings = settings
+        db.commit()
 
     # The turn is now committed and the student has their reply. Only now do we
     # queue memory formation — enqueue is a single INSERT, and the actual

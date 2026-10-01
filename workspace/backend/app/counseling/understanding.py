@@ -9,6 +9,9 @@ from datetime import date, datetime
 from typing import Any
 
 from app.memory.student_snapshot import StudentSnapshot, StudentSnapshotService
+from app.memory.field_definitions import VaultFieldDefinitionService, usable_in_counseling
+from .discovery import discovery_metadata, SUPPRESSED_STATUSES
+from app.memory.student_schema import RECORD_SPECS
 
 EDUCATION_LEVELS = (
     "school", "secondary", "upper_secondary", "diploma", "associate",
@@ -23,6 +26,7 @@ _PREDECESSOR = {
 _KINDS = {
     "education": "education", "experience": "work_experience", "projects": "project",
     "skills": "skill", "tests": "test_attempt", "goals": "goal",
+    "research": "research", "achievements": "achievement",
 }
 
 
@@ -48,11 +52,15 @@ def _provenance(row: dict) -> dict:
             **({"file_id": evidence["file_id"]} if evidence.get("file_id") else {})}
 
 
-def _node(row: dict) -> dict:
-    omitted = {"source_type", "claim_origin", "capture_method", "evidence",
-               "created_at", "updated_at", "verification_status", "subject_user_id"}
-    return {**{key: _plain(value) for key, value in row.items()
-               if key not in omitted and value is not None}, "provenance": _provenance(row)}
+def _node(row: dict, kind: str) -> dict:
+    properties = RECORD_SPECS[kind]["properties"]
+    value = {key: _plain(item) for key, item in row.items()
+             if key in properties and item is not None}
+    if "details" in value:
+        allowed = properties.get("details", {}).get("properties", {})
+        value["details"] = {key: item for key, item in value["details"].items()
+                            if key in allowed and not key.endswith("url")}
+    return {**value, "id": row.get("id"), "provenance": _provenance(row)}
 
 
 class StudentUnderstandingBuilder:
@@ -60,27 +68,43 @@ class StudentUnderstandingBuilder:
         self.db = db
 
     def build(self, workspace_id: str, *, snapshot: StudentSnapshot | None = None,
-              baseline: dict | None = None) -> dict:
+              baseline: dict | None = None, discovery: dict | None = None,
+              field_definitions: dict | None = None) -> dict:
         snapshot = snapshot or StudentSnapshotService(self.db).build(workspace_id)
-        facts = snapshot.facts
+        # Fail closed for unknown field definitions. Offline callers may inject
+        # the same registry definitions explicitly; raw snapshots are not safe.
+        definitions = field_definitions or {}
+        if self.db is not None:
+            definitions = {d.key: d for d in VaultFieldDefinitionService(self.db).list_definitions()}
+            if discovery is None:
+                from app.models import Workspace
+                discovery = discovery_metadata(self.db.get(Workspace, workspace_id))
+        facts = {key: row for key, row in snapshot.facts.items()
+                 if usable_in_counseling(definitions.get(key))}
         records = snapshot.records
         view: dict[str, Any] = {}
-        for domain in ("identity", "preferences", "constraints", "finance"):
+        for domain in ("identity", "preferences", "constraints", "finance", "career", "location", "mobility"):
             view[domain] = {key.partition(".")[2]: {"value": _plain(row["value"]),
                             "provenance": _provenance(row)}
                             for key, row in facts.items() if key.startswith(domain + ".")}
         for section, kind in _KINDS.items():
-            view[section] = {"nodes": [_node(row) for row in records.get(kind, [])[:12]]}
-        view["documents"] = {"nodes": [_node(row) for row in records.get("document", [])[:8]]}
-        if self.db is not None:
-            from app.memory.semantic import MemoryService
-            view["memories"] = [{"content": _plain(row.content), "type": row.memory_type,
-                                  "provenance": {"source": row.source_type or "unknown"}}
-                                for row in MemoryService(self.db).list_memories(workspace_id, limit=6)]
-        else:
-            view["memories"] = []
-        view["tests"]["nodes"] += [_node(row) for row in records.get("language_proficiency", [])[:6]]
-        view["skills"]["nodes"] += [_node(row) for row in records.get("certification", [])[:6]]
+            view[section] = {"nodes": [_node(row, kind) for row in records.get(kind, [])[:12]]}
+        view["coverage"] = {
+            section: {"shown": min(len(records.get(kind, [])), 12),
+                      "total": len(records.get(kind, [])),
+                      "truncated": len(records.get(kind, [])) > 12}
+            for section, kind in _KINDS.items()
+        }
+        view["documents"] = {"nodes": [_node(row, "document") for row in records.get("document", [])[:8]]}
+        # Tentative interpretation belongs in the current reply, never in the
+        # canonical mirror merely because it was retained as semantic memory.
+        view["memories"] = []
+        view["tests"]["nodes"] += [_node(row, "language_proficiency") for row in records.get("language_proficiency", [])[:6]]
+        view["skills"]["nodes"] += [_node(row, "certification") for row in records.get("certification", [])[:6]]
+        for section, kind in (("tests", "language_proficiency"), ("skills", "certification")):
+            view["coverage"][section]["shown"] += min(len(records.get(kind, [])), 6)
+            view["coverage"][section]["total"] += len(records.get(kind, []))
+            view["coverage"][section]["truncated"] |= len(records.get(kind, [])) > 6
         view["goals"]["nodes"] += [
             {"key": key, "value": _plain(row["value"]), "provenance": _provenance(row)}
             for key, row in facts.items() if key.startswith("goal.") or key.startswith("goals.")
@@ -104,22 +128,49 @@ class StudentUnderstandingBuilder:
                 for row in view[section]["nodes"]
                 if name in [str(s).casefold() for s in (row.get("details") or {}).get("skills", [])]
             ]
-        view["open_conflicts"] = [_plain(issue) for issue in snapshot.issues[:8]]
+            skill["evidence_examples"] = [
+                row.get("name") or row.get("role") or "related example"
+                for section in ("projects", "experience") for row in view[section]["nodes"]
+                if name in [str(s).casefold() for s in (row.get("details") or {}).get("skills", [])]
+            ]
+        view["open_conflicts"] = []
+        for issue in snapshot.issues[:8]:
+            evidence = issue.get("evidence") or {}
+            key = evidence.get("field_key") or issue.get("field_key")
+            # Restricted values can occur in free-text summaries as well as
+            # evidence. Omit the entire issue unless its target is safe.
+            if key and key not in facts:
+                continue
+            kind = evidence.get("record_type") or issue.get("record_type")
+            if not key and kind not in set(_KINDS.values()) | {"language_proficiency", "certification"}:
+                continue
+            view["open_conflicts"].append({
+                "id": issue.get("id"), "type": issue.get("type"),
+                "field_key": key, "record_type": kind,
+                "summary": "A stated detail needs clarification",
+                "question": "Which version of this detail should I use?",
+            })
         view["open_gaps"] = self.gaps(view)
-        early_student = bool(view["education"]["nodes"]) and all(
-            node.get("canonical_level") in {"school", "secondary", "upper_secondary"}
-            for node in view["education"]["nodes"]
-        )
+        # A school student may have projects or work; absence is not evidence
+        # of inapplicability or inability.
+        discovery = discovery or {}
+        for gap in view["open_gaps"]:
+            item = discovery.get(gap.get("focus")) or {}
+            if item.get("source_event_id") and item.get("status") in {"UNKNOWN", *SUPPRESSED_STATUSES}:
+                gap["status"] = item["status"]
+                gap["student_stated"] = True
+        view["discovery"] = {g["focus"]: {"status": g["status"],
+                               "student_stated": g.get("student_stated", False)}
+                             for g in view["open_gaps"] if g.get("focus")}
         view["domain_status"] = {
             domain: ("CONFLICTING" if view["open_conflicts"] and domain == "education" else
                      "KNOWN" if view[domain]["nodes"] else
-                     "NOT_APPLICABLE" if early_student and domain in {"experience", "projects"} else
                      "UNKNOWN")
-            for domain in ("education", "experience", "projects", "skills", "tests", "goals")
+            for domain in ("education", "experience", "projects", "skills", "tests", "goals", "research", "achievements")
         }
         view["domain_status"].update({
             domain: "KNOWN" if view[domain] else "UNKNOWN"
-            for domain in ("identity", "preferences", "constraints", "finance")
+            for domain in ("identity", "preferences", "constraints", "finance", "career", "location", "mobility")
         })
         view["domain_status"]["motivation"] = (
             "KNOWN" if any((node.get("details") or {}).get("motivation")
@@ -148,86 +199,139 @@ class StudentUnderstandingBuilder:
         )
         if abroad and not view["finance"].get("budget"):
             gaps.append({"domain": "finance", "status": "UNKNOWN", "focus": "budget"})
-        gaps.extend(view["education"]["gaps"])
+        if not view.get("career", {}).get("primary_interest") and not any(
+                (node.get("details") or {}).get("field_of_study") or
+                (node.get("details") or {}).get("career_direction") for node in view["goals"]["nodes"]):
+            gaps.append({"domain": "career", "status": "UNKNOWN", "focus": "interests"})
+        if not any(node.get("supported_by") or (node.get("details") or {}).get("demonstrated_by")
+                   for node in view["skills"]["nodes"]) and not view["projects"]["nodes"] and not view["experience"]["nodes"] and not view.get("research", {}).get("nodes"):
+            gaps.append({"domain": "skills", "status": "UNKNOWN", "focus": "strengths"})
+        if not view["constraints"] and not view.get("mobility") and not any(
+                (n.get("details") or {}).get("constraints") for n in view["goals"]["nodes"]):
+            gaps.append({"domain": "constraints", "status": "UNKNOWN", "focus": "practical_constraints"})
+        gaps.extend({**gap, "domain": "education", "focus": "education_history"}
+                    for gap in view["education"]["gaps"])
         return gaps
 
     @staticmethod
     def domain_hashes(view: dict) -> dict[str, str]:
-        return {domain: hashlib.sha256(json.dumps(view[domain], sort_keys=True,
-                                      default=str).encode()).hexdigest()
+        # Approval fingerprints exactly the meaningful content we display,
+        # not hidden identifiers, storage timestamps, or an unseen full record.
+        return {domain: hashlib.sha256(_mirror_domain(view, domain).encode()).hexdigest()
                 for domain in ("identity", "education", "experience", "projects", "skills",
-                               "tests", "goals", "preferences", "constraints", "finance")}
+                               "tests", "goals", "preferences", "constraints", "finance",
+                               "career", "location", "mobility", "research", "achievements", "discovery")}
+
 
 
 def baseline_sufficient(view: dict) -> bool:
-    if view["open_conflicts"] or not view["education"]["nodes"] or not view["goals"]["nodes"]:
+    """Enough for an honest partial mirror, not a completed intake checklist."""
+    if view["open_conflicts"]:
         return False
-    critical = {"current_level", "current_direction", "motivation", "academic_performance", "budget"}
-    return not any(gap.get("focus") in critical for gap in view["open_gaps"])
+    discovery = view.get("discovery") or {}
+    def addressed(focus):
+        return bool(discovery.get(focus, {}).get("student_stated"))
+    education = bool(view["education"]["nodes"]) or addressed("current_level")
+    direction = bool(view["goals"]["nodes"]) or bool(view.get("career", {}).get("primary_interest")) or addressed("current_direction")
+    return education and direction
 
+
+_LABELS = {
+    "identity": "About you", "education": "Education so far", "experience": "Experience",
+    "projects": "Projects", "skills": "Skills and supporting examples", "tests": "Tests and languages",
+    "goals": "Directions you are considering", "career": "Interests",
+    "preferences": "Preferences", "constraints": "Practical constraints",
+    "finance": "Funding context", "location": "Where you are", "mobility": "Relocation",
+    "research": "Research", "achievements": "Achievements", "discovery": "Still open",
+}
+_FIELD_LABELS = {
+    "qualification_name": "qualification", "institution_name": "institution",
+    "canonical_level": "level", "academic_status": "status", "field_of_study": "subject",
+    "gpa": "GPA", "gpa_scale": "GPA scale", "marks_obtained": "marks", "marks_total": "out of",
+    "overall_score": "overall score", "test_type": "test", "section_scores": "section scores",
+    "goal_type": "kind of goal", "target_date": "target timing", "target_countries": "countries",
+    "commitment": "how settled this is", "demonstrated_by": "examples you described",
+    "supported_by": "related examples", "evidence_examples": "related examples", "proficiency": "stated level", "primary_interest": "main interest",
+    "current_level": "current education", "current_direction": "direction",
+    "academic_performance": "academic results", "practical_constraints": "practical circumstances",
+    "education_history": "earlier education", "strengths": "strengths and examples",
+}
+
+def _readable(value) -> str:
+    if isinstance(value, dict):
+        return ", ".join(f"{_FIELD_LABELS.get(k, k.replace('_', ' '))}: {_readable(v)}"
+                         for k, v in value.items() if v not in (None, {}, []) and k not in {
+                             "id", "file_id", "source_event_id", "record_id", "student_stated", "provenance",
+                             "supported_by", "goal_type", "key"})
+    if isinstance(value, list):
+        return "; ".join(_readable(v) for v in value)
+    if isinstance(value, bool):
+        return "yes" if value else "no"
+    return str(value).replace("_", " ")
+
+def _source(value: dict) -> str:
+    provenance = value.get("provenance") or {}
+    verification = provenance.get("verification")
+    if verification == "document_supported":
+        return "document-supported"
+    if provenance.get("source") in {"conversation", "user_explicit"} or verification == "self_reported":
+        return "you told me"
+    return "source not yet confirmed"
+
+def _mirror_domain(view: dict, domain: str) -> str:
+    data = view.get(domain) or {}
+    if domain == "discovery":
+        statuses = {"UNKNOWN": "not yet known", "DECLINED": "you prefer not to share",
+                    "DEFERRED": "you want to return to this later", "NOT_APPLICABLE": "you said this does not apply"}
+        return "; ".join(f"{_FIELD_LABELS.get(focus, focus.replace('_', ' '))}: "
+                         f"{statuses.get(item['status'], 'not yet known')}"
+                         for focus, item in data.items())
+    if "nodes" in data:
+        lines = []
+        for node in data["nodes"]:
+            content = _readable(node)
+            if content:
+                lines.append(f"{content} ({_source(node)})")
+        coverage = view.get("coverage", {}).get(domain) or {}
+        if coverage.get("truncated"):
+            lines.append(f"Showing {coverage['shown']} of {coverage['total']} recorded items; this is a partial summary")
+        return "; ".join(lines)
+    return "; ".join(f"{_FIELD_LABELS.get(name, name.replace('_', ' '))}: "
+                     f"{_readable(item.get('value'))} ({_source(item)})"
+                     for name, item in data.items())
 
 def student_mirror(view: dict, affected_domains: list[str] | None = None) -> str:
-    affected = set(affected_domains or ())
-    show_all = not affected
+    domains = affected_domains or list(StudentUnderstandingBuilder.domain_hashes(view))
     sections = []
-    education = []
-    for node in view["education"]["nodes"][:5]:
-        parts = [str(node.get("qualification_name") or node.get("canonical_level") or "qualification")]
-        if node.get("institution_name"):
-            parts.append(str(node["institution_name"]))
-        result = node.get("result") or {}
-        if result.get("gpa") is not None:
-            parts.append(f"GPA {result['gpa']}" +
-                         (f"/{result['gpa_scale']}" if result.get("gpa_scale") else ""))
-        education.append(", ".join(parts) +
-                         f" ({node['provenance']['verification']})")
-    if education and (show_all or "education" in affected):
-        sections.append("Education: " + "; ".join(education))
-    for heading, key, label in (("Experience", "experience", "role"),
-                                ("Projects", "projects", "name"),
-                                ("Skills", "skills", "name"),
-                                ("Current direction", "goals", "title")):
-        values = [str(n.get(label) or n.get("value")) for n in view[key]["nodes"] if n.get(label) or n.get("value")]
-        if values and (show_all or key in affected):
-            sections.append(heading + ": " + "; ".join(values[:5]))
-    motivations = [(n.get("details") or {}).get("motivation") for n in view["goals"]["nodes"]]
-    if any(motivations) and (show_all or "goals" in affected):
-        sections.append("Motivation: " + "; ".join(str(item) for item in motivations if item))
-    for heading, key in (("Preferences", "preferences"), ("Constraints", "constraints"),
-                         ("Finance", "finance")):
-        if view[key] and (show_all or key in affected):
-            sections.append(heading + ": " + "; ".join(
-                f"{name}: {item['value']} ({item['provenance']['verification']})"
-                for name, item in list(view[key].items())[:5]))
-    if view["open_conflicts"] and show_all:
-        sections.append("Needs clarification: " + "; ".join(
-            issue.get("question") or issue.get("summary") or issue.get("type", "conflict")
-            for issue in view["open_conflicts"][:3]))
-    if view["open_gaps"] and show_all:
-        sections.append("Still to confirm: " + "; ".join(
-            g.get("focus") or g.get("level") or g.get("reason", "unknown") for g in view["open_gaps"][:5]))
-    intro = ("Please confirm the updated " + ", ".join(sorted(affected)) + " understanding:\n"
-             if affected else "This is how I currently understand you:\n")
-    return intro + "\n".join(sections) + "\nIs this accurate, or is anything important wrong or missing?"
+    for domain in domains:
+        body = _mirror_domain(view, domain)
+        if body or affected_domains:
+            sections.append(f"{_LABELS.get(domain, domain)}: {body or 'nothing currently recorded'}")
+    intro = "Here is the updated part of your mirror:" if affected_domains else "Here is a partial picture of what I understand so far:"
+    return intro + "\n" + "\n".join(sections) + (
+        "\nThis is open to correction, not a verdict about your ability or personality. "
+        "Is this accurate, or would you like to change anything?")
 
 
 def same_turn_education_conflict(view: dict, message: str) -> dict | None:
-    """Catch a narrow, explicit current-level contradiction before proposing it."""
+    """Only explicit current-study clauses can contradict current education."""
     text = message.casefold()
     if any(marker in text for marker in ("correction", "actually", "i changed", "i finished", "since then")):
         return None
-    mentioned = None
-    for level, pattern in (("doctorate", r"\b(?:phd|doctorate)\b"),
-                           ("master", r"\b(?:master'?s|msc|ms degree)\b"),
-                           ("bachelor", r"\b(?:bachelor'?s|bs degree|undergraduate)\b")):
-        if re.search(pattern, text):
-            mentioned = level
-            break
-    if not mentioned or not re.search(r"\b(?:i am currently|i'm currently|i already completed)\b", text):
-        return None
+    # Keep future aspirations and historical qualifications outside the claim.
+    claims = re.findall(r"\b(?:i am currently|i'm currently)\s+([^.;!?]+)", text)
+    mentioned = set()
+    for claim in claims:
+        claim = re.split(r"\b(?:and|but|then|want|hope|plan|would|will)\b", claim, maxsplit=1)[0]
+        for level, pattern in (("doctorate", r"\b(?:phd|doctorate)\b"),
+                               ("master", r"\b(?:master'?s|msc|ms degree)\b"),
+                               ("bachelor", r"\b(?:bachelor'?s|bs degree|undergraduate)\b")):
+            if re.search(pattern, claim):
+                mentioned.add(level)
     current = [n for n in view["education"]["nodes"] if n.get("academic_status") == "current"]
-    if not current or any(n.get("canonical_level") == mentioned for n in current):
+    if len(mentioned) != 1 or not current or any(n.get("canonical_level") in mentioned for n in current):
         return None
+    level = next(iter(mentioned))
     known = current[0].get("qualification_name") or current[0].get("canonical_level")
-    return {"summary": f"Current education on record is {known}; new claim says {mentioned}.",
-            "clarification_question": f"I have you currently studying {known}. Has that changed, or are you describing another qualification?"}
+    return {"summary": f"Current education on record is {known}; new claim says {level}.",
+            "question": f"I have {known} as your current qualification. Has that changed?"}
