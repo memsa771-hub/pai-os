@@ -18,6 +18,43 @@ class CounselingEvaluator:
         blockers = [item for item in ((journey or {}).get("blockers") or [])
                     if item.get("status", "open") == "open"]
 
+        understanding = vault_context or {}
+        baseline = understanding.get("baseline") or {}
+        if "baseline" in understanding and baseline.get("status") != "confirmed":
+            if active_conflict or understanding.get("open_conflicts"):
+                conflict = active_conflict or understanding["open_conflicts"][0]
+                return CounselingState(
+                    CounselingPhase.DISCOVERING, "low", CounselingMove.CLARIFY,
+                    conflict.get("summary") or conflict.get("question") or "conflicting claim",
+                    False, False, "none", unknowns, conflict, objective, 1,
+                )
+            if baseline.get("status") == "mirror_review":
+                return CounselingState(
+                    CounselingPhase.MIRROR_REVIEW, "low", CounselingMove.SHOW_MIRROR,
+                    "student mirror", False, False, "none", unknowns, None, objective, 1,
+                )
+            gaps = understanding.get("open_gaps") or []
+            focus = next((g.get("focus") or g.get("level") for g in gaps), "student context")
+            documents = (understanding.get("documents") or {}).get("nodes") or []
+            if documents and focus in {"current_level", "academic_performance", "upper_secondary"}:
+                move = CounselingMove.REFLECT
+                focus = "use uploaded evidence"
+            elif focus in {"current_level", "academic_performance", "upper_secondary"}:
+                move = CounselingMove.REQUEST_DOCUMENT
+            else:
+                move = CounselingMove.ASK
+            from .understanding import baseline_sufficient
+            ready = baseline_sufficient(understanding)
+            identity_ready = bool(understanding.get("identity")) and not (
+                understanding.get("education") or {}).get("nodes")
+            return CounselingState(
+                CounselingPhase.BUILDING_PROFILE if ready else (
+                    CounselingPhase.IDENTITY_READY if identity_ready else CounselingPhase.DISCOVERING),
+                "low" if ready else "high",
+                CounselingMove.SHOW_MIRROR if ready else move,
+                focus, False, False, "none", unknowns, None, objective, 1,
+            )
+
         if active_conflict:
             return CounselingState(
                 CounselingPhase.REVIEWING, "low", CounselingMove.CLARIFY,
@@ -35,6 +72,16 @@ class CounselingEvaluator:
                 CounselingPhase.UNDERSTANDING, "high", CounselingMove.ASK,
                 unknowns[0] if unknowns else "student context", False, False,
                 "none", unknowns, None, objective, 1,
+            )
+        if not journey and baseline.get("status") == "confirmed":
+            wants_execution = any(word in message.casefold() for word in (
+                "shortlist", "research", "compare programs", "review my cv",
+                "review my transcript", "apply to", "submit application",
+            ))
+            return CounselingState(
+                CounselingPhase.COUNSELING, "low",
+                CounselingMove.DELEGATE if wants_execution else CounselingMove.COUNSEL,
+                "current goal", True, wants_execution, "full", unknowns, None, None, 1,
             )
         if not journey:
             return CounselingState(

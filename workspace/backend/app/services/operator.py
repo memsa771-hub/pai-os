@@ -291,7 +291,10 @@ async def _post_result(
                 ProfileCompletionService, collection_hold_message,
             )
             completion = ProfileCompletionService(db).evaluate(workspace_id)
-            if completion["counselorMode"] == "collection":
+            from app.counseling.baseline import metadata
+            from app.models import Workspace
+            baseline_confirmed = metadata(db.get(Workspace, workspace_id)).get("status") == "confirmed"
+            if not baseline_confirmed:
                 message = collection_hold_message(completion)
             else:
                 handoff = {
@@ -398,6 +401,79 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list], que
         db.close()
 
 
+def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
+                                        *, source_event_id: str | None = None,
+                                        source_text: str = "") -> int:
+    """Operator intake for Counselor proposals; reconciliation owns all canonical writes.
+
+    Source trust is assigned here, never accepted from model output. Conflicts and
+    unknowns are planning signals, not claims to persist.
+    """
+    from app.jobs.service import BackgroundJobService
+    from app.memory.candidates import MemoryCandidateService
+    from app.memory.student_schema import RECORD_SPECS
+    from app.memory.field_definitions import VaultFieldDefinitionService
+
+    if not isinstance(delta, dict):
+        return 0
+    if delta.get("conflicts"):
+        return 0
+    candidates = MemoryCandidateService(db)
+    fields = VaultFieldDefinitionService(db)
+    ids = []
+    for bucket in ("facts", "records", "memories"):
+        items = delta.get(bucket) or []
+        if not isinstance(items, list):
+            continue
+        for item in items[:20]:
+            if not isinstance(item, dict) or item.get("operation", "upsert") != "upsert":
+                continue
+            evidence = item.get("evidence") or {}
+            if not isinstance(evidence, dict):
+                evidence = {}
+            quote = str(evidence.get("quote") or "")[:1000]
+            if not quote or quote.casefold() not in source_text.casefold():
+                continue
+            safe_evidence = {"quote": quote, "capture": "counselor_delta"}
+            if bucket == "facts":
+                key = item.get("key")
+                if not isinstance(key, str) or fields.get(key) is None or "value" not in item:
+                    continue
+                candidate = candidates.propose(
+                    workspace_id=workspace_id, candidate_type="vault_fact", key=key,
+                    proposed_value=item["value"], confidence=0.8, source_type="conversation",
+                    source_event_ids=[source_event_id] if source_event_id else None,
+                    evidence=safe_evidence,
+                )
+            elif bucket == "records":
+                kind, data = item.get("type"), item.get("data")
+                if kind not in RECORD_SPECS or not isinstance(data, dict):
+                    continue
+                candidate = candidates.propose(
+                    workspace_id=workspace_id, candidate_type="student_record", key=kind,
+                    proposed_value=data, confidence=0.8, source_type="conversation",
+                    source_event_ids=[source_event_id] if source_event_id else None,
+                    evidence=safe_evidence,
+                )
+            else:
+                content = item.get("content")
+                if not isinstance(content, str) or not content.strip():
+                    continue
+                candidate = candidates.propose(
+                    workspace_id=workspace_id, candidate_type="semantic_memory",
+                    content=content[:1000], confidence=0.8, source_type="conversation",
+                    source_event_ids=[source_event_id] if source_event_id else None,
+                    evidence=safe_evidence,
+                )
+            ids.append(candidate.id)
+    if ids:
+        BackgroundJobService(db).enqueue(
+            "memory.reconcile", {"candidate_ids": ids}, workspace_id,
+            idempotency_key="counselor-delta:" + ":".join(ids),
+        )
+    return len(ids)
+
+
 def is_available() -> bool:
     """Operator shares Counselor's server credentials — nothing to check
     beyond whether PAI itself is configured."""
@@ -496,7 +572,9 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
             from app.memory.profile_completion import ProfileCompletionService
 
             completion = ProfileCompletionService(db).evaluate(ctx.workspace_id)
-            if completion["counselorMode"] == "collection":
+            from app.counseling.baseline import metadata
+            from app.models import Workspace
+            if metadata(db.get(Workspace, ctx.workspace_id)).get("status") != "confirmed":
                 data["result"] = None
                 data["verification"] = None
                 data["result_withheld"] = True

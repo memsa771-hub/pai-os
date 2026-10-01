@@ -54,15 +54,11 @@ PAI_PRIMARY_CHANNEL = "pai-counselor"
 # below for the counsel-vs-execute split this enforces.
 PAI_ALLOWED_TOOLS = (
     "workspace.threads.list", "tasks.list", "files.list", "files.read",
-    "web.search", "web.fetch",
     # PAI Operator — see app/services/operator.py. Counselor never touches
     # execution tools directly; it delegates and reads status back through these.
     "operator.delegate", "operator.status", "operator.resume",
-    # PAI Memory Platform — see app/memory/. Counselor holds the full grant
-    # (read + manage); remember/forget are the explicit-user-command path and
-    # still go through the deterministic reconciler.
+    # Counselor reads canonical context; Operator intake proposes structured deltas.
     "memory.context", "vault.get", "memory.search", "memory.episodes",
-    "memory.remember", "memory.forget", "profile.answer",
 )
 
 
