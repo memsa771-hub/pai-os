@@ -132,6 +132,27 @@ RECORD_SPECS = {
                 "direction_status": {"type": "string", "enum": ["exploring", "considering", "committed", "changed", "rejected"]},
                 "decision_rationale": string()})},
     },
+    "student_voice_statement": {
+        "required": ("voice_type", "statement"),
+        "identity": ("voice_type", "statement"), "discriminators": (),
+        "properties": {
+            "voice_type": {"type": "string", "enum": ["uncertainty", "interest", "dislike", "direction", "motivation", "counterfactual", "preference"]},
+            "statement": string(), "direction": string(),
+            "commitment": {"type": "string", "enum": ["exploratory", "considering", "committed"]},
+        },
+    },
+    "external_influence": {
+        "required": ("influencer_type", "source_label", "suggested_direction", "influence_type"),
+        "identity": ("influencer_type", "source_label", "suggested_direction", "influence_type"),
+        "discriminators": (),
+        "properties": {
+            "influencer_type": {"type": "string", "enum": ["parent", "sibling", "friend", "teacher", "mentor", "social_media", "social_expectation", "other"]},
+            "source_label": string(), "suggested_direction": string(),
+            "influence_type": {"type": "string", "enum": ["career_suggestion", "degree_suggestion", "subject_suggestion", "peer_path", "social_message", "other"]},
+            "student_alignment": {"type": "string", "enum": ["aligned", "partially_aligned", "uncertain", "not_aligned"]},
+            "student_response": string(),
+        },
+    },
     "skill": {
         "required": ("name",), "identity": ("name",), "discriminators": (),
         "properties": {"name": string(), "proficiency": string(),

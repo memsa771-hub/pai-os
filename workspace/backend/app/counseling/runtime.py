@@ -495,6 +495,10 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
 
     from app.counseling.turn_contract import parse_turn
     final_text, counselor_state = parse_turn(final_text)
+    if counseling_decision is not None and counseling_decision.decision_sufficiency:
+        from app.counseling.decision_sufficiency import guard_premature_verdict
+        final_text = guard_premature_verdict(
+            final_text, counseling_decision.decision_sufficiency)
     asks_for_fit = any(phrase in (content or "").casefold() for phrase in (
         "recommend", "best university for me", "best career for me", "should i",
         "am i a good fit", "my roadmap", "personalized plan",

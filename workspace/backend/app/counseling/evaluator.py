@@ -73,6 +73,12 @@ class CounselingEvaluator:
                     False, False, "none", relevant_unknowns, conflict, objective, 1,
                 )
             text = message.casefold()
+            from .decision_sufficiency import (DecisionSufficiencyEvaluator,
+                                                decision_type_for_message)
+            decision_type = decision_type_for_message(message, understanding)
+            sufficiency = (DecisionSufficiencyEvaluator().evaluate(
+                understanding, decision_type, message=message).to_dict()
+                if decision_type else None)
             requested_work = any(phrase in text for phrase in (
                 "shortlist", "research", "compare programs", "review my cv",
                 "review my transcript", "apply to", "submit application",
@@ -84,16 +90,21 @@ class CounselingEvaluator:
             ))
             if requested_work and not blockers:
                 move = CounselingMove.DELEGATE
+            elif sufficiency and not sufficiency["recommendation_ready"]:
+                move = CounselingMove(sufficiency["next_best_move"])
             elif requested_roadmap:
                 move = CounselingMove.BUILD_ROADMAP
             else:
                 move = CounselingMove.COUNSEL
             return CounselingState(
                 CounselingPhase.COUNSELING, "low", move,
-                gaps[0].get("focus") if gaps else objective or "current goal",
+                (sufficiency["missing_evidence"][0] if sufficiency and
+                 sufficiency["missing_evidence"] else gaps[0].get("focus") if gaps else objective or "current goal"),
                 move is CounselingMove.DELEGATE,
                 move is CounselingMove.BUILD_ROADMAP,
-                "full", relevant_unknowns, None, objective, 1 if gaps else 0,
+                "full", relevant_unknowns, None, objective,
+                1 if gaps or (sufficiency and sufficiency["missing_evidence"]) else 0,
+                sufficiency,
             )
 
         if active_conflict:

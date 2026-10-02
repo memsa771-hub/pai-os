@@ -28,6 +28,7 @@ _KINDS = {
     "skills": "skill", "tests": "test_attempt", "goals": "goal",
     "research": "research", "achievements": "achievement", "activities": "activity",
     "explorations": "exploration_experience",
+    "voice_statements": "student_voice_statement", "influences": "external_influence",
     "languages": "language_proficiency", "certifications": "certification",
     "documents": "document", "applications": "application",
     "scholarships": "scholarship_application", "visa": "visa",
@@ -77,6 +78,13 @@ def _node(row: dict, kind: str) -> dict:
                                  for key in ("source_event_id", "execution_run_id")
                                  if detail.get("evidence", {}).get(key)},
                 }
+    if kind in {"student_voice_statement", "external_influence"}:
+        evidence = row.get("evidence") or {}
+        result["student_quote"] = _plain(evidence.get("quote")) if evidence.get("quote") else None
+        result["recorded_at"] = _plain(row.get("created_at"))
+        if kind == "external_influence":
+            result["source_type"] = result.pop("influencer_type")
+            result["student_alignment"] = result.get("student_alignment") or "unknown"
     return result
 
 
@@ -198,6 +206,13 @@ def _interests_and_exposure(view: dict) -> None:
             stated.append({"domain": _domain_key(title), "title": _plain(title),
                            "basis": "stated_direction", "commitment": goal.get("commitment"),
                            "provenance": goal.get("provenance")})
+    for voice in view["voice_statements"]["nodes"]:
+        if voice.get("voice_type") != "interest" or not voice.get("direction"):
+            continue
+        title = voice["direction"]
+        if not any(item["domain"] == _domain_key(title) for item in stated):
+            stated.append({"domain": _domain_key(title), "title": title,
+                           "basis": "student_statement", "provenance": voice.get("provenance")})
     view["interests"] = {"stated": stated[:12], "experienced": []}
     by_domain = {}
     for row in view["explorations"]["nodes"]:
@@ -221,6 +236,32 @@ def _interests_and_exposure(view: dict) -> None:
     ], "unexplored_interests": [
         item["domain"] for item in stated if item["domain"] not in by_domain
     ]}
+
+
+def _student_voice(view: dict) -> dict:
+    statements = view["voice_statements"]["nodes"]
+    own_goals = _live_goals(view)
+    uncertainty = [node for node in statements if node.get("voice_type") == "uncertainty"]
+    uncertain_direction = bool(uncertainty or view.get("discovery", {}).get("current_direction", {}).get("student_stated"))
+    committed = [goal for goal in own_goals if goal.get("commitment") == "committed"
+                 or (goal.get("details") or {}).get("direction_status") == "committed"]
+    if committed:
+        direction = {"status": "committed", "title": committed[0].get("title"),
+                     "provenance": committed[0].get("provenance")}
+    elif uncertain_direction:
+        direction = {"status": "uncertain"}
+    elif own_goals:
+        direction = {"status": "exploring", "options": [g.get("title") for g in own_goals[:6]]}
+    else:
+        direction = {"status": "unknown"}
+    return {
+        "current_direction": direction,
+        "stated_interests": view["interests"]["stated"],
+        "stated_dislikes": [node for node in statements if node.get("voice_type") == "dislike"],
+        "uncertainties": uncertainty,
+        "motivations": [node for node in statements if node.get("voice_type") == "motivation"],
+        "student_statements": statements,
+    }
 
 
 class StudentUnderstandingBuilder:
@@ -327,6 +368,7 @@ class StudentUnderstandingBuilder:
         view["discovery"] = {g["focus"]: {"status": g["status"],
                                "student_stated": g.get("student_stated", False)}
                              for g in view["open_gaps"] if g.get("focus")}
+        view["student_voice"] = _student_voice(view)
         view["domain_status"] = {
             domain: "KNOWN" if view[domain]["nodes"] else "UNKNOWN"
             for domain in _KINDS
@@ -339,6 +381,9 @@ class StudentUnderstandingBuilder:
             "KNOWN" if view["interests"]["stated"] or view["interests"]["experienced"] else "UNKNOWN")
         view["domain_status"]["exposure"] = (
             "KNOWN" if view["exposure"]["domains"] else "UNKNOWN")
+        view["domain_status"]["student_voice"] = (
+            "KNOWN" if view["student_voice"]["student_statements"] or _live_goals(view)
+            or view["interests"]["stated"] else "UNKNOWN")
         view["domain_status"]["finance"] = (
             "KNOWN" if view["finance"]["facts"] or view["finance"]["sponsors"] else "UNKNOWN")
         view["domain_status"]["motivation"] = (
@@ -424,7 +469,8 @@ class StudentUnderstandingBuilder:
                                "career", "location", "mobility", "research", "achievements",
                                "languages", "certifications", "documents", "applications",
                                "scholarships", "visa", "discovery", "explorations",
-                               "interests", "exposure", "activities")}
+                               "interests", "exposure", "activities", "student_voice",
+                               "influences")}
 
 
 
@@ -440,7 +486,8 @@ def baseline_sufficient(view: dict) -> bool:
     if not education and not (addressed("current_level") and (
             view["experience"]["nodes"] or view["projects"]["nodes"])):
         return False
-    if not (goals or view.get("career", {}).get("primary_interest") or addressed("current_direction")):
+    if not (goals or view.get("career", {}).get("primary_interest") or addressed("current_direction")
+            or view.get("student_voice", {}).get("current_direction", {}).get("status") == "uncertain"):
         return False
     if goals and not (any((goal.get("details") or {}).get("motivation") for goal in goals)
                       or addressed("motivation")):
@@ -502,6 +549,7 @@ _LABELS = {
     "research": "Research", "achievements": "Achievements", "discovery": "Still open",
     "activities": "Activities", "explorations": "Exploration experiences",
     "interests": "Interests and their evidence", "exposure": "What you have tried",
+    "student_voice": "Your own voice", "influences": "Outside influences",
     "documents": "Documents", "applications": "Applications",
     "scholarships": "Scholarships", "visa": "Visa history",
 }
@@ -548,6 +596,35 @@ def _source(value: dict) -> str:
 
 def _mirror_domain(view: dict, domain: str) -> str:
     data = view.get(domain) or {}
+    if domain == "student_voice":
+        direction = data.get("current_direction") or {}
+        status = direction.get("status", "unknown")
+        opening = ("you are still unsure of your direction" if status == "uncertain"
+                   else f"current direction: {direction.get('title') or status}")
+        parts = [opening]
+        interests = [item.get("title") for item in data.get("stated_interests", []) if item.get("title")]
+        if interests:
+            parts.append("interests you mentioned: " + ", ".join(interests[:8]))
+        dislikes = [node.get("statement") for node in data.get("stated_dislikes", []) if node.get("statement")]
+        if dislikes:
+            parts.append("things you said you dislike: " + "; ".join(dislikes[:4]))
+        motivations = [node.get("statement") for node in data.get("motivations", []) if node.get("statement")]
+        if motivations:
+            parts.append("what matters to you: " + "; ".join(motivations[:4]))
+        return "; ".join(parts)
+    if domain == "influences":
+        lines = []
+        for node in data.get("nodes", []):
+            label = node.get("source_label") or node.get("source_type") or "someone"
+            direction = node.get("suggested_direction") or "a direction"
+            verb = "is pursuing" if node.get("influence_type") == "peer_path" else "suggested"
+            line = f"{label} {verb} {direction} ({_source(node)})"
+            if node.get("student_alignment") not in {None, "unknown"}:
+                line += f"; you said you feel {node['student_alignment'].replace('_', ' ')}"
+            lines.append(line)
+        if lines:
+            lines.append("These are outside suggestions or paths, not your own decision")
+        return "; ".join(lines)
     if domain == "interests":
         stated = [f"{item['title']} (you mentioned it)" for item in data.get("stated", [])]
         experienced = [f"{item['domain'].replace('_', ' ')}: {item['title']} "

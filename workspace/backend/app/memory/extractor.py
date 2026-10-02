@@ -69,6 +69,10 @@ STORE only durable information that will still matter weeks from now:
 - a decision they made, or an action they took, with a reason
 - education, test attempts, work, projects, or goals that materially describe
   the student's education or professional journey
+- a quoted outside suggestion or peer path as external_influence, or an own
+  interest, dislike or uncertainty as student_voice_statement. Never turn a
+  parent, friend, teacher or social-media suggestion into the student's goal
+  or primary interest unless they separately claim it as theirs.
 
 NEVER store:
 - greetings, small talk, thanks, acknowledgements
@@ -123,7 +127,7 @@ Return ONLY a JSON object, no prose and no markdown fences:
 Each candidate is one of:
 
   {"candidate_type": "student_record", "operation": "upsert",
-   "key": "education|test_attempt|language_proficiency|work_experience|project|goal|skill|certification|research|achievement|financial_sponsor|scholarship_application|visa|application",
+   "key": "education|test_attempt|language_proficiency|work_experience|project|activity|exploration_experience|goal|student_voice_statement|external_influence|skill|certification|research|achievement|financial_sponsor|scholarship_application|visa|application",
    "proposed_value": <object with only stated fields>,
    "confidence": 0.0-1.0, "quote": "<the student's exact words>"}
 
@@ -487,6 +491,11 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
         if proposed is None:
             return drop(f"vault_fact {key!r} stated no actual value")
         proposed = _normalize_currencies(proposed)
+        if key == "career.primary_interest":
+            from .voice_attribution import personal_direction_supported
+            if not isinstance(proposed, str) or not personal_direction_supported(
+                    turn.user_text, quote, proposed, interest=True):
+                return drop("outside suggestion is not the student's interest")
         # A money field of 0 is a model filling in a blank, not a figure the
         # student gave ("Cost is important" became {"amount": 0} in testing).
         # Storing it as canonical makes every affordability check wrong; no
@@ -533,6 +542,27 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
         value = _normalize_currencies(value)
         if not value:
             return drop(f"{kind} record stated no actual values")
+        from .voice_attribution import (alignment_supported, external_source_supported,
+                                         personal_direction_supported)
+        if kind == "goal":
+            direction = (value.get("details") or {}).get("field_of_study") or value.get("title") or ""
+            if not personal_direction_supported(turn.user_text, quote, direction):
+                return drop("outside suggestion is not the student's goal")
+        if kind == "student_voice_statement":
+            if _normalize(str(value.get("statement") or "")) not in _normalize(quote):
+                return drop("student voice statement is not in its quote")
+            if value.get("voice_type") in {"direction", "interest", "preference"}:
+                direction = value.get("direction") or value.get("statement") or ""
+                if not personal_direction_supported(turn.user_text, quote, direction,
+                                                    interest=value.get("voice_type") == "interest"):
+                    return drop("outside suggestion is not the student's voice")
+        if kind == "external_influence":
+            if not external_source_supported(quote, value.get("source_label") or "",
+                                             value.get("suggested_direction") or ""):
+                return drop("influence lacks quoted outside source and direction")
+            if value.get("student_alignment") and not alignment_supported(
+                    quote, value["student_alignment"]):
+                return drop("influence alignment is not stated")
         try:
             value = validate_record(kind, value, partial="record_id" in clean_entities)
         except MemoryDataError as exc:

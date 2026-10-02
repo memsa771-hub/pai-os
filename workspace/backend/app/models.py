@@ -1182,6 +1182,26 @@ class StudentGoal(_StudentRecord, Base):
     __table_args__ = (Index("idx_pai_goals_ws", "workspace_id", "status"),)
 
 
+class StudentVoiceStatement(_StudentRecord, Base):
+    __tablename__ = "pai_student_voice_statements"
+    voice_type = Column(Text, nullable=False)
+    statement = Column(Text, nullable=False)
+    direction = Column(Text, nullable=True)
+    commitment = Column(Text, nullable=True)
+    __table_args__ = (Index("idx_pai_voice_ws", "workspace_id", "status"),)
+
+
+class ExternalInfluence(_StudentRecord, Base):
+    __tablename__ = "pai_external_influences"
+    influencer_type = Column(Text, nullable=False)
+    source_label = Column(Text, nullable=False)
+    suggested_direction = Column(Text, nullable=False)
+    influence_type = Column(Text, nullable=False)
+    student_alignment = Column(Text, nullable=True)
+    student_response = Column(Text, nullable=True)
+    __table_args__ = (Index("idx_pai_influences_ws", "workspace_id", "status"),)
+
+
 class StudentSkill(_StudentRecord, Base):
     __tablename__ = "pai_student_skills"
     name = Column(Text, nullable=False)

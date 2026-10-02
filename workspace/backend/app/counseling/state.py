@@ -29,6 +29,7 @@ class CounselingMove(str, Enum):
     BUILD_ROADMAP = "BUILD_ROADMAP"
     DELEGATE = "DELEGATE"
     REVIEW = "REVIEW"
+    EXPLORE = "EXPLORE"
 
 
 @dataclass(frozen=True)
@@ -44,3 +45,4 @@ class CounselingState:
     active_conflict: dict | None
     current_objective: str | None
     question_limit: int = 1
+    decision_sufficiency: dict | None = None
