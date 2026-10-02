@@ -165,28 +165,25 @@ class TestPurgeLifecycle:
 
 
 class TestCollectionModeGate:
-    def test_files_read_is_withheld_in_collection_mode(self):
-        # files.read now returns a document's PARSED contents, which is
-        # exactly the personalized material the completion gate withholds.
-        assert "files.read" not in allowed_tools_for_mode("collection")
+    def test_legacy_collection_mode_keeps_known_context_available(self):
+        # The confirmation gate controls recommendations; the Counselor still
+        # needs an uploaded CV or transcript during discovery.
+        assert "files.read" in allowed_tools_for_mode("collection")
 
     def test_files_read_is_available_in_normal_mode(self):
         assert "files.read" in allowed_tools_for_mode("normal")
 
-    def test_existing_collection_gates_are_unchanged(self):
+    def test_legacy_mode_does_not_hide_canonical_context(self):
         collection = allowed_tools_for_mode("collection")
-        for tool in ("operator.delegate", "memory.context", "vault.get",
-                     "memory.search", "memory.episodes"):
-            assert tool not in collection
-        # The one safe profile question is still available.
-        assert "profile.answer" in collection
+        for tool in ("memory.context", "vault.get", "memory.search", "memory.episodes"):
+            assert tool in collection
+        assert "profile.answer" not in collection
 
     def test_ingestion_is_infrastructure_not_a_counselor_tool(self):
-        """Automatic ingestion must keep working during collection mode.
+        """Automatic ingestion remains infrastructure, not a Counselor tool.
 
         It runs as background jobs, never as a tool in the Counselor's turn,
-        so withholding files.read does not stop a transcript from filling the
-        profile (and potentially ending collection mode).
+        so reading a parsed transcript does not move canonical state itself.
         """
         from app.documents.service import (
             JOB_DOCUMENT_EXTRACT, JOB_DOCUMENT_INDEX, JOB_DOCUMENT_PARSE,

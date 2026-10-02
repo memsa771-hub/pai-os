@@ -18,7 +18,7 @@ from app.memory.field_definitions import SEED_FIELD_DEFINITIONS, VaultFieldDefin
 from app.memory.student_records import ENTITY_MODELS, StudentRecordService
 from app.memory.vault import VaultService
 from app.models import (
-    BackgroundJob, EventRecord, ExecutionRun, FileRecord,
+    BackgroundJob, DocumentArtifact, EventRecord, ExecutionRun, FileRecord,
     MemoryCandidate, PaiEpisode, PaiMemory, ProfileIssue, ProfileRequirement, StudentRecordRevision,
     StudentJourney, StudentJourneyEvent, User, VaultFact, VaultFieldDefinition, Workspace,
     WorkspaceMember,
@@ -69,6 +69,7 @@ class StudentSession:
             connection.execute("PRAGMA foreign_keys=ON")
 
         models = [User, Workspace, WorkspaceMember, ExecutionRun, EventRecord, FileRecord,
+                  DocumentArtifact,
                   VaultFact, VaultFieldDefinition, MemoryCandidate, PaiMemory, PaiEpisode,
                   ProfileIssue, ProfileRequirement, StudentRecordRevision, BackgroundJob,
                   StudentJourney, StudentJourneyEvent,

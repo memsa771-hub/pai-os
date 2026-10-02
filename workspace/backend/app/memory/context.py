@@ -243,9 +243,9 @@ class MemoryContextService:
     def _record_section(self, workspace_id: str, query: Optional[str]) -> dict[str, list[dict]]:
         from .student_records import ENTITY_MODELS
         q = (query or "").lower()
-        kinds = ["goal", "education", "test_attempt", "language_proficiency", "work_experience", "skill", "project", "certification", "research", "achievement", "financial_sponsor", "scholarship_application", "visa", "document"]
+        kinds = ["goal", "education", "test_attempt", "language_proficiency", "work_experience", "skill", "project", "certification", "research", "activity", "achievement", "exploration_experience", "financial_sponsor", "scholarship_application", "visa", "document"]
         if any(word in q for word in ("career", "work", "job", "intern", "project", "skill")):
-            kinds = ["goal", "education", "work_experience", "skill", "project", "certification", "research", "achievement", "test_attempt", "language_proficiency"]
+            kinds = ["goal", "education", "work_experience", "skill", "project", "certification", "research", "activity", "achievement", "exploration_experience", "test_attempt", "language_proficiency"]
         if any(word in q for word in ("application", "admission", "deadline")):
             kinds.append("application")
         snapshot = self.records.snapshot(workspace_id, kinds=kinds, limit=5)
@@ -261,6 +261,8 @@ class MemoryContextService:
             "language_proficiency": ("id", "language", "proficiency", "evidence_type"),
             "research": ("id", "title", "organization", "role", "start_date", "end_date"),
             "achievement": ("id", "title", "achievement_type", "issuer", "achieved_on"),
+            "activity": ("id", "title", "activity_type", "organization", "role", "start_date", "end_date"),
+            "exploration_experience": ("id", "domain", "activity_type", "title", "activity_status", "exposure_level", "student_reflection"),
             "financial_sponsor": ("id", "sponsor_type", "name", "commitment_status"),
             "scholarship_application": ("id", "scholarship_name", "provider", "application_status", "deadline"),
             "visa": ("id", "country", "visa_type", "application_status", "expiry_date"),

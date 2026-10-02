@@ -66,6 +66,10 @@ class JourneyCoordinator:
         if action != "upsert":
             return self._apply_action(workspace_id, action, intent, actor)
         journey_type = _text(intent.get("journey_type"), "journey_type")
+        if journey_type == "direction_discovery":
+            from .direction_discovery import DirectionDiscoveryService
+            return DirectionDiscoveryService(self.service.db).start(
+                workspace_id, intent.get("directions"), actor=actor)
         goal_title = _text(intent.get("goal_title"), "goal_title")
         relationship = str(intent.get("relationship") or "same_or_new")
         if relationship not in {"same_or_new", "same", "subgoal", "separate"}:
@@ -235,6 +239,7 @@ class JourneyCoordinator:
         durable = any(phrase in lower for phrase in (
             "i want", "i plan", "i'm planning", "my goal", "i need to",
             "i have decided", "i've decided", "i decided", "i also want",
+            "let's explore", "help me explore", "can we explore",
         ))
         # A short clarification such as "I want MSc AI" remains durable; a
         # hypothetical or information-only question does not create state.
@@ -248,6 +253,14 @@ class JourneyCoordinator:
         if country and specialty and specialty.casefold() == f"msc {country}".casefold():
             specialty = None
         confirmed = any(marker in lower for marker in ("i have decided", "i've decided", "i decided", "i confirm"))
+
+        if ("let's explore it" in lower or (
+                re.search(r"\b(explore|exploring|discover)\b", lower)
+                and re.search(r"\b(degree|study|subject|field|direction|career|options?)\b", lower))):
+            return {
+                "journey_type": "direction_discovery", "relationship": "same_or_new",
+                "goal_title": "Discover a study direction",
+            }
 
         if re.search(r"\b(internship|intern)\b", lower):
             return {

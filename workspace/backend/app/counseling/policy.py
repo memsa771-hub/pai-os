@@ -35,7 +35,7 @@ class CounselingPolicy:
             CounselingMove.BUILD_ROADMAP, CounselingMove.ADVISE, CounselingMove.REVIEW,
         }
         operator = personalized and state.decision_ready and state.next_move in {
-            CounselingMove.DELEGATE, CounselingMove.BUILD_ROADMAP,
+            CounselingMove.DELEGATE,
         }
         return PolicyDecision(
             move=state.next_move.value, focus=state.focus,

@@ -21,7 +21,7 @@ class CounselingEvaluator:
 
         understanding = vault_context or {}
         baseline = understanding.get("baseline") or {}
-        if is_general_information_request(message):
+        if is_general_information_request(message) and baseline.get("status") != "confirmed":
             return CounselingState(
                 CounselingPhase.DISCOVERING, "low", CounselingMove.REFLECT,
                 "answer the general question", False, False, "none", unknowns,
@@ -62,23 +62,38 @@ class CounselingEvaluator:
                 focus, False, False, "none", unknowns, None, objective, 1,
             )
 
-        wants_execution = any(word in message.casefold() for word in (
-            "shortlist", "research", "compare programs", "review my cv",
-            "review my transcript", "apply to", "submit application",
-        ))
-        if ("baseline" in understanding and baseline.get("status") == "confirmed"
-                and not active_conflict and not wants_execution):
-            # Mirror approval means the displayed snapshot was accurate. It is
-            # not a declaration that we fully understand the person or that a
-            # decision, recommendation or execution is ready.
+        if "baseline" in understanding and baseline.get("status") == "confirmed":
             gaps = self.relevant_gaps(understanding, message)
-            focus = (gaps[0].get("focus") if gaps else None)
+            relevant_unknowns = tuple(g.get("focus", "context") for g in gaps)
+            if active_conflict or understanding.get("open_conflicts"):
+                conflict = active_conflict or understanding["open_conflicts"][0]
+                return CounselingState(
+                    CounselingPhase.COUNSELING, "low", CounselingMove.CLARIFY,
+                    conflict.get("summary") or conflict.get("question") or "conflicting claim",
+                    False, False, "none", relevant_unknowns, conflict, objective, 1,
+                )
+            text = message.casefold()
+            requested_work = any(phrase in text for phrase in (
+                "shortlist", "research", "compare programs", "review my cv",
+                "review my transcript", "apply to", "submit application",
+                "let's explore it", "explore this field", "explore possible directions",
+                "try an activity", "start an exploration",
+            ))
+            requested_roadmap = any(phrase in text for phrase in (
+                "roadmap", "step-by-step plan", "plan my path",
+            ))
+            if requested_work and not blockers:
+                move = CounselingMove.DELEGATE
+            elif requested_roadmap:
+                move = CounselingMove.BUILD_ROADMAP
+            else:
+                move = CounselingMove.COUNSEL
             return CounselingState(
-                CounselingPhase.COUNSELING, "low",
-                CounselingMove.ASK if focus else CounselingMove.REFLECT,
-                focus or "reflect on the student's stated context", False, False,
-                "limited", tuple(g.get("focus", "context") for g in gaps),
-                None, objective, 1 if focus else 0,
+                CounselingPhase.COUNSELING, "low", move,
+                gaps[0].get("focus") if gaps else objective or "current goal",
+                move is CounselingMove.DELEGATE,
+                move is CounselingMove.BUILD_ROADMAP,
+                "full", relevant_unknowns, None, objective, 1 if gaps else 0,
             )
 
         if active_conflict:
@@ -98,16 +113,6 @@ class CounselingEvaluator:
                 CounselingPhase.UNDERSTANDING, "high", CounselingMove.ASK,
                 unknowns[0] if unknowns else "student context", False, False,
                 "none", unknowns, None, objective, 1,
-            )
-        if not journey and baseline.get("status") == "confirmed":
-            wants_execution = any(word in message.casefold() for word in (
-                "shortlist", "research", "compare programs", "review my cv",
-                "review my transcript", "apply to", "submit application",
-            ))
-            return CounselingState(
-                CounselingPhase.COUNSELING, "low",
-                CounselingMove.DELEGATE if wants_execution else CounselingMove.COUNSEL,
-                "current goal", True, wants_execution, "full", unknowns, None, None, 1,
             )
         if not journey:
             return CounselingState(
@@ -153,6 +158,9 @@ class CounselingEvaluator:
             ("motivation", ("why", "meaning", "motivat", "matters", "purpose")),
             ("practical_constraints", ("time", "family", "work hours", "relocat", "constraint")),
             ("education_history", ("previous", "history", "before", "qualification")),
+            ("work_history", ("work", "job", "career change", "transition")),
+            ("target_location", ("country", "location", "destination", "where")),
+            ("target_timing", ("intake", "start", "when", "timing")),
         )
         preferred = next((focus for focus, terms in related if any(term in text for term in terms)), None)
         return sorted(gaps, key=lambda gap: 0 if gap.get("focus") == preferred else 1)

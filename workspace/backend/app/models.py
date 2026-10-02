@@ -1146,6 +1146,32 @@ class StudentProject(_StudentRecord, Base):
     __table_args__ = (Index("idx_pai_projects_ws", "workspace_id", "status"),)
 
 
+class StudentActivity(_StudentRecord, Base):
+    __tablename__ = "pai_student_activities"
+    title = Column(Text, nullable=False)
+    activity_type = Column(Text, nullable=False)
+    organization = Column(Text, nullable=True)
+    role = Column(Text, nullable=True)
+    start_date = Column(Text, nullable=True)
+    end_date = Column(Text, nullable=True)
+    details = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_activities_ws", "workspace_id", "status"),)
+
+
+class ExplorationExperience(_StudentRecord, Base):
+    __tablename__ = "pai_exploration_experiences"
+    domain = Column(Text, nullable=False)
+    activity_type = Column(Text, nullable=False)
+    title = Column(Text, nullable=False)
+    activity_status = Column(Text, nullable=False, default="planned", server_default=text("'planned'"))
+    exposure_level = Column(Text, nullable=True)
+    started_at = Column(Text, nullable=True)
+    completed_at = Column(Text, nullable=True)
+    student_reflection = Column(JSONB, nullable=True)
+    evidence_refs = Column(JSONB, nullable=True)
+    __table_args__ = (Index("idx_pai_exploration_ws", "workspace_id", "status", "domain"),)
+
+
 class StudentGoal(_StudentRecord, Base):
     __tablename__ = "pai_student_goals"
     goal_type = Column(Text, nullable=False)

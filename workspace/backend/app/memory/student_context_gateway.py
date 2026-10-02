@@ -9,14 +9,16 @@ from .vault import VaultService
 
 SCOPES = frozenset({
     "identity", "education", "goals", "preferences", "finance", "tests",
-    "skills", "projects", "achievements", "documents", "applications",
+    "skills", "projects", "achievements", "activities", "documents", "applications", "exploration",
 })
 RECORDS = {
     "education": ("education", "course"), "goals": ("goal",),
     "finance": ("financial_sponsor",), "tests": ("test_attempt", "language_proficiency"),
     "skills": ("skill", "certification"), "projects": ("project", "research"),
     "achievements": ("achievement",), "documents": ("document",),
+    "activities": ("activity",),
     "applications": ("application", "scholarship_application", "visa"),
+    "exploration": ("exploration_experience",),
 }
 
 

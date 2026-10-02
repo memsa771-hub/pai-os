@@ -4,6 +4,7 @@ DISCOVERY_KEY = "student_discovery"
 DISCOVERY_FOCI = frozenset({
     "current_level", "current_direction", "motivation", "academic_performance",
     "budget", "interests", "strengths", "practical_constraints", "education_history",
+    "work_history", "target_location", "target_timing",
 })
 DISCOVERY_STATUSES = frozenset({"UNKNOWN", "DECLINED", "DEFERRED", "NOT_APPLICABLE"})
 SUPPRESSED_STATUSES = frozenset({"DECLINED", "DEFERRED", "NOT_APPLICABLE"})

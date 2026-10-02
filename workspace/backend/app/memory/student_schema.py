@@ -5,7 +5,7 @@ grading scales and test expiry dates; normalization must not invent them.
 """
 
 from copy import deepcopy
-from datetime import date
+from datetime import date, datetime, timezone
 import math
 import re
 
@@ -87,6 +87,40 @@ RECORD_SPECS = {
             "details": obj({"description": string(), "skills": strings(), "technologies": strings(),
                             "outcomes": strings(), "url": string()})},
     },
+    "activity": {
+        "required": ("title", "activity_type"),
+        "identity": ("title", "activity_type", "organization"),
+        "discriminators": ("start_date",),
+        "properties": {
+            "title": string(),
+            "activity_type": {"type": "string", "enum": ["club", "competition", "volunteering", "extracurricular", "leadership", "other"]},
+            "organization": string(), "role": string(),
+            "start_date": string(), "end_date": string(),
+            "details": obj({"description": string(), "responsibilities": strings(),
+                            "outcomes": strings(), "skills": strings(),
+                            "leadership_role": string()}),
+        },
+    },
+    "exploration_experience": {
+        "required": ("domain", "activity_type", "title"),
+        "identity": ("domain", "activity_type", "title"),
+        "discriminators": ("started_at",),
+        "properties": {
+            "domain": string(), "activity_type": string(), "title": string(),
+            "activity_status": {"type": "string", "enum": ["planned", "in_progress", "completed", "stopped"]},
+            "exposure_level": {"type": "string", "enum": ["none", "introductory", "practical", "sustained"]},
+            "started_at": string(), "completed_at": string(),
+            "student_reflection": obj({
+                "enjoyed": {"type": "boolean"}, "what_enjoyed": string(),
+                "what_disliked": string(), "wants_more_exposure": {"type": "boolean"},
+                "notes": string(),
+            }),
+            "evidence_refs": {"type": "array", "maxItems": 20, "items": obj({
+                "kind": {"type": "string", "enum": ["project", "work_experience", "research", "achievement", "activity", "course"]},
+                "id": string(),
+            }, ("kind", "id"))},
+        },
+    },
     "goal": {
         "required": ("goal_type", "title"), "identity": ("goal_type", "title"), "discriminators": (),
         "properties": {"goal_type": string(), "title": string(),
@@ -94,7 +128,9 @@ RECORD_SPECS = {
             "target_date": string(),
             "details": obj({"motivation": string(), "success_criteria": string(), "degree_level": string(),
                 "field_of_study": string(), "target_countries": strings(), "target_intake": string(),
-                "career_direction": string(), "constraints": strings()})},
+                "career_direction": string(), "constraints": strings(),
+                "direction_status": {"type": "string", "enum": ["exploring", "considering", "committed", "changed", "rejected"]},
+                "decision_rationale": string()})},
     },
     "skill": {
         "required": ("name",), "identity": ("name",), "discriminators": (),
@@ -179,6 +215,22 @@ def validate_record(kind: str, values: dict, *, partial: bool = False) -> dict:
                 if not re.fullmatch(r"\d{4}(?:-\d{2})?(?:-\d{2})?", text):
                     raise ValueError(f"{key} must be YYYY, YYYY-MM or YYYY-MM-DD")
                 date.fromisoformat(text + ("-01-01" if len(text) == 4 else "-01" if len(text) == 7 else ""))
+        for key in ("started_at", "completed_at"):
+            if key in value:
+                stamp = value[key]
+                if re.fullmatch(r"\d{4}-\d{2}-\d{2}", stamp):
+                    date.fromisoformat(stamp)
+                else:
+                    parsed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        raise ValueError(f"{key} must be a date or timezone-aware ISO timestamp")
+        if "started_at" in value and "completed_at" in value:
+            def instant(text):
+                if len(text) == 10:
+                    return datetime.fromisoformat(text).replace(tzinfo=timezone.utc)
+                return datetime.fromisoformat(text.replace("Z", "+00:00")).astimezone(timezone.utc)
+            if instant(value["started_at"]) > instant(value["completed_at"]):
+                raise ValueError("completed_at must not precede started_at")
         for start, end in (("start_date", "end_date"), ("test_date", "expiry_date"), ("issued_on", "expires_on")):
             if start in value and end in value:
                 precision = min(len(value[start]), len(value[end]))
@@ -193,6 +245,11 @@ def validate_record(kind: str, values: dict, *, partial: bool = False) -> dict:
             if len(sections) > 20 or any(not isinstance(k, str) or len(k) > 80 or
                     isinstance(v, bool) or not isinstance(v, (str, int, float)) for k, v in sections.items()):
                 raise ValueError("Invalid section scores")
+        if kind == "exploration_experience":
+            if value.get("completed_at") and value.get("activity_status") != "completed":
+                raise ValueError("completed_at requires completed activity_status")
+            if value.get("student_reflection") == {}:
+                raise ValueError("student_reflection cannot be empty")
     except (ValueError, TypeError) as exc:
         raise MemoryDataError(str(exc)) from exc
     return value

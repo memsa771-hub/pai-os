@@ -287,12 +287,9 @@ async def _post_result(
         db.rollback()
         run = db.get(ExecutionRun, run_id)
         if run is not None and str(run.workspace_id) == workspace_id and run.result:
-            from app.memory.profile_completion import (
-                ProfileCompletionService, collection_hold_message,
-            )
-            completion = ProfileCompletionService(db).evaluate(workspace_id)
             if not _baseline_is_current(db, workspace_id):
-                message = collection_hold_message(completion)
+                message = ("The background work is complete. I can interpret it for you "
+                           "after we confirm that my understanding of your situation is accurate.")
             else:
                 handoff = {
                     "objective": run.objective, "constraints": run.constraints,
@@ -606,19 +603,14 @@ async def get_status(ctx, run_id: Optional[str]) -> dict:
             return {"ok": True, "data": {"status": "none"}}
         data = serialize_run(run)
         if run.result:
-            from app.memory.profile_completion import ProfileCompletionService
-
-            completion = ProfileCompletionService(db).evaluate(ctx.workspace_id)
             if not _baseline_is_current(db, ctx.workspace_id):
                 data["result"] = None
                 data["verification"] = None
                 data["result_withheld"] = True
-                data["next_requirement"] = completion.get("nextRequirement")
-                requirement = completion.get("nextRequirement") or {}
                 data["pending_action"] = {
-                    "kind": "text", "title": "One profile detail is needed",
-                    "prompt": requirement.get("question") or "Please complete the required profile detail.",
-                    "reason": "Personalized results stay withheld until the required context is confirmed.",
+                    "kind": "text", "title": "Confirm your student mirror",
+                    "prompt": "Review and confirm my current understanding of your situation.",
+                    "reason": "Personalized results stay withheld until the mirror is confirmed.",
                     "options": [], "required": True,
                 }
         return {"ok": True, "data": data}

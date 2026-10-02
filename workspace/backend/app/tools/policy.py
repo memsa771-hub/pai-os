@@ -39,6 +39,8 @@ class Capability(str, Enum):
     VAULT_ACHIEVEMENTS_READ = "vault.achievements.read"
     VAULT_DOCUMENTS_READ = "vault.documents.read"
     VAULT_APPLICATIONS_READ = "vault.applications.read"
+    VAULT_EXPLORATION_READ = "vault.exploration.read"
+    VAULT_ACTIVITIES_READ = "vault.activities.read"
 
 
 @dataclass(frozen=True)

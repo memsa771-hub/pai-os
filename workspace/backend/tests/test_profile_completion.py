@@ -342,12 +342,10 @@ def test_rollout_and_collection_tool_boundary(profile_db, monkeypatch):
     assert ProfileCompletionService(profile_db).evaluate(workspace)["counselorMode"] == "normal"
     monkeypatch.setattr(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "all")
     assert ProfileCompletionService(profile_db).evaluate(workspace)["counselorMode"] == "collection"
-    assert "operator.delegate" not in pai.allowed_tools_for_mode("collection")
-    assert not ({
-        "memory.context", "vault.get", "memory.search", "memory.episodes",
-        "memory.remember", "memory.forget",
-    } & pai.allowed_tools_for_mode("collection"))
-    assert "profile.answer" in pai.allowed_tools_for_mode("collection")
+    assert {"memory.context", "vault.get", "memory.search", "memory.episodes"}.issubset(
+        pai.allowed_tools_for_mode("collection"))
+    assert "files.read" in pai.allowed_tools_for_mode("collection")
+    assert "profile.answer" not in pai.allowed_tools_for_mode("collection")
     assert "profile.answer" not in pai.allowed_tools_for_mode("normal")
 
     monkeypatch.setattr(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "new")

@@ -155,6 +155,9 @@ class MemoryReconciler:
             force_new=(candidate.source_type == "user_explicit"
                        and bool((candidate.entities or {}).get("force_new"))),
         )
+        if candidate.key == "exploration_experience":
+            from app.journey.direction_discovery import DirectionDiscoveryService
+            DirectionDiscoveryService(self.db).observe_exploration(candidate.workspace_id, record.id)
         self.candidates.mark_accepted(candidate, record.id)
         return ReconcileResult(True, candidate.id, result_id=record.id)
 

@@ -424,32 +424,9 @@ async def workspace_state_summary(api: WorkspaceApi) -> str:
 # ---------------------------------------------------------------------------
 
 def allowed_tools_for_mode(mode: str = "normal") -> frozenset[str]:
-    allowed = set(PAI_ALLOWED_TOOLS)
-    if mode == "collection":
-        # The completion service already supplies the one safe profile
-        # question. Withhold stored-profile reads and unrelated memory writes
-        # so collection mode cannot reconstruct personalized context through a
-        # tool call after foreground injection has been disabled.
-        allowed.difference_update({
-            "operator.delegate",
-            "memory.context", "vault.get", "memory.search", "memory.episodes",
-            "memory.remember", "memory.forget",
-            # `files.read` returns a document's PARSED contents (see
-            # app/documents/). A transcript or CV is exactly the personalized
-            # material the completion gate withholds, so leaving this granted
-            # would let collection mode reconstruct through a file read what
-            # foreground injection and the memory tools already refuse.
-            #
-            # Automatic INGESTION is unaffected: parsing, extraction and
-            # reconciliation are background infrastructure that never runs in
-            # the Counselor's turn. A document uploaded during collection mode
-            # still fills the profile — and may end collection mode — it just
-            # cannot be read back into this turn's answer.
-            "files.read",
-        })
-    else:
-        allowed.discard("profile.answer")
-    return frozenset(allowed)
+    # Legacy completion mode is a reporting metric, not the counseling gate.
+    # Runtime removes execution tools until the Student Mirror is confirmed.
+    return frozenset(PAI_ALLOWED_TOOLS)
 
 
 def build_tools(mode: str = "normal") -> list[dict]:

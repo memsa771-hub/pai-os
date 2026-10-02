@@ -11,7 +11,7 @@ from sqlalchemy import select
 
 from app.config import config
 from app.memory.context import StudentContext
-from app.memory.foreground import build_foreground_context
+from app.memory.foreground import ForegroundContext, build_foreground_context
 from app.models import BackgroundJob, ExecutionRun, ProfileRequirement
 from app.counseling import runtime
 from app.services import operator, pai
@@ -151,7 +151,8 @@ async def test_result_is_interpreted_by_counselor_and_does_not_create_student_fa
                 result={"final_message": "Detailed evidence and program constraints", "observations": []})
             db.add(run)
             db.commit()
-            with patch("app.services.counselor_handoff.explain_result", AsyncMock(
+            with patch.object(operator, "_baseline_is_current", return_value=True), \
+                 patch("app.services.counselor_handoff.explain_result", AsyncMock(
                     return_value="Given your budget, verify the academic credits before paying an application fee.")) as explain:
                 await operator._post_result(db, student.workspace_id, "channel/pai-counselor", run.id,
                                              "completed", "Found programs.")
@@ -161,7 +162,7 @@ async def test_result_is_interpreted_by_counselor_and_does_not_create_student_fa
 
 
 @pytest.mark.asyncio
-async def test_incomplete_profile_still_answers_but_collection_tools_are_enforced():
+async def test_incomplete_profile_answers_with_context_but_guidance_is_locked():
     with StudentSession() as student:
         with student.factory() as db:
             db.add(ProfileRequirement(
@@ -182,20 +183,20 @@ async def test_incomplete_profile_still_answers_but_collection_tools_are_enforce
                 patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", True), \
                 patch.object(config, "PAI_PROFILE_COMPLETION_ROLLOUT_MODE", "all"), \
                 patch("app.memory.foreground.build_foreground_context", new_callable=AsyncMock) as memory:
+            memory.return_value = ForegroundContext()
             await student.turn("What is IELTS?")
 
         tool_names = {tool["function"]["name"] for tool in received[0]["tools"]}
         assert "operator__delegate" not in tool_names
-        assert "profile__answer" in tool_names
-        assert not ({"memory__context", "vault__get", "memory__search", "memory__episodes",
-                     "memory__remember", "memory__forget"} & tool_names)
-        memory.assert_not_awaited()
-        assert "COLLECTION MODE" in received[0]["system_prompt"]
+        assert "profile__answer" not in tool_names
+        assert {"memory__context", "vault__get", "memory__search", "memory__episodes"} <= tool_names
+        memory.assert_awaited()
+        assert "COUNSELOR BASELINE CONTRACT" in received[0]["system_prompt"]
         assert student.transcript[-1]["content"].startswith("IELTS is")
 
 
 @pytest.mark.asyncio
-async def test_operator_result_cannot_bypass_collection_gate():
+async def test_operator_result_cannot_bypass_unconfirmed_baseline():
     with StudentSession() as student:
         with student.factory() as db:
             db.add(ProfileRequirement(
@@ -219,4 +220,4 @@ async def test_operator_result_cannot_bypass_collection_gate():
                 )
         explain.assert_not_awaited()
         assert "Secret personalized ranking" not in student.transcript[-1]["content"]
-        assert "current or highest qualification" in student.transcript[-1]["content"]
+        assert "confirm that my understanding" in student.transcript[-1]["content"]

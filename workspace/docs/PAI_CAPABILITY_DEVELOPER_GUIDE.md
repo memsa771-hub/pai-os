@@ -11,6 +11,16 @@ The student talks only to PAI Counselor. Counselor reads a scoped view of the ca
 
 Use `StudentContextGateway` to request only the domains a task needs. Never query Vault ORM tables from a capability and never expose ORM objects as a contract.
 
+## Student direction discovery
+
+The student product has two layers: PAI Counselor helps a student understand themselves and decide; PAI OS carries the work of exploring and pursuing a direction. School students may have no decided degree or career goal. An explicit "I don't know" is useful context, and several exploratory directions can coexist. Neither the Counselor nor a capability may convert a stated interest, grade, or short activity into a fit verdict or personality label.
+
+The Vault remains canonical for education, courses, activities, achievements, projects, work, skills, goals, and `exploration_experience` records. Ordinary club, competition, and volunteering participation belongs in an `activity` record; an award belongs in `achievement`. An exploration records a field, activity, status, reported exposure, optional evidence references, and a student reflection only when the student supplied it. Completion from PAI OS requires a completed `ExecutionRun` whose `result.exploration_completed` identifies the same domain, activity type, and title. A proposed record does not advance progress; accepted canonical records do. `StudentUnderstandingBuilder` derives the bounded mirror and keeps stated interests, completed exposure, student enjoyment, and skill evidence separate. It does not persist a second graph.
+
+Future exploration capabilities request the `exploration` Vault scope (`vault.exploration.read`) and receive only typed exploration records through `StudentContextGateway`; `activities` has its own read scope. The `direction_discovery` intent includes relevant education, projects, skills, and activities in context.
+
+`DirectionDiscoveryService.start` creates or extends a `direction_discovery` Journey with student-chosen directions and pending activity and reflection milestones. It does not schedule or claim to complete work. When the reconciler accepts a completed exploration, the service advances the matching milestones and recommends the next step; after all reflections, the Journey moves to review for a student decision. The existing Operator and Capability Router own future activity scheduling and execution. A rejected or changed direction remains in the versioned goal history. University-side product flows are outside this contract.
+
 ## Counselor and Operator
 
 Counselor is the sole student-facing intelligence. `CounselingEvaluator` and `CounselingPolicy` select the allowed move, personalization, roadmap, delegation, and question boundaries for each turn. The language model expresses that move naturally but must not override it.
@@ -37,7 +47,7 @@ If a capability owns a task, Operator receives a reduced per-run tool surface an
 
 ## Context, permissions, artifacts, and errors
 
-Context access fails closed. Request only the scopes declared in the manifest: `identity`, `education`, `goals`, `preferences`, `finance`, `tests`, `skills`, `projects`, `achievements`, `documents`, or `applications`. The caller must hold the matching `vault.<scope>.read` permission. Sensitive or irreversible actions require explicit approval. Produced files/results must use a declared artifact type and remain attributable to their execution run.
+Context access fails closed. Request only the scopes declared in the manifest: `identity`, `education`, `goals`, `preferences`, `finance`, `tests`, `skills`, `projects`, `activities`, `achievements`, `documents`, `applications`, or `exploration`. The caller must hold the matching `vault.<scope>.read` permission. Sensitive or irreversible actions require explicit approval. Produced files/results must use a declared artifact type and remain attributable to their execution run.
 
 Capabilities use `await context.tools.invoke("web.search", {...})` for low-level work. The broker exposes only `required_tools`, checks matching manifest permissions, and still executes through ToolRegistry → ToolPolicy → ToolExecutor. Importing `app.tools.builtin.*` from a capability is unsupported.
 

@@ -138,7 +138,8 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
     understanding["baseline"] = {"status": baseline.get("status", "discovering"),
                                  "version": baseline.get("version", 0),
                                  "changed_domains": baseline.get("affected_domains", [])}
-    same_turn_conflict = same_turn_education_conflict(understanding, content or "")
+    same_turn_conflict = same_turn_education_conflict(
+        understanding, content or "", messages[:-1] if content else messages)
     # Clarification must not bypass the proposal/extraction path: another fact
     # in this same message may be a valid correction. The model sees the
     # conflict and Operator remains the only persistence authority.
@@ -186,18 +187,7 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         db.commit()
 
     system_prompt = pai.PAI_SYSTEM_PROMPT
-    completion = None
     counseling_decision = None
-    if agent_name == pai.PAI_AGENT_NAME:
-        from app.memory.profile_completion import ProfileCompletionService
-
-        completion = ProfileCompletionService(db).evaluate(workspace_id)
-        logger.info(
-            "assistant completion: workspace=%s mode=%s eligible=%s enforced=%s next=%s",
-            workspace_id, completion["counselorMode"],
-            completion["personalizedCounselingEligible"], completion["enforced"],
-            (completion.get("nextRequirement") or {}).get("key"),
-        )
     if agent_name == pai.PAI_AGENT_NAME:
         active_runs = db.execute(select(ExecutionRun).where(
             ExecutionRun.workspace_id == workspace_id,
@@ -385,7 +375,8 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         "Unknowns use {focus, status, evidence:{quote}} with status UNKNOWN, DECLINED, "
         "DEFERRED, or NOT_APPLICABLE, only for explicit student statements. Focus is "
         "current_level, current_direction, motivation, academic_performance, budget, "
-        "interests, strengths, practical_constraints, or education_history. Do not "
+        "interests, strengths, practical_constraints, education_history, work_history, "
+        "target_location, or target_timing. Do not "
         "re-ask declined/deferred questions or make enrichment a prerequisite. "
         "Never assign source_type, trust, or authority; Operator verifies these. Facts must use "
         "canonical Vault keys; records use the existing record schema. For education "

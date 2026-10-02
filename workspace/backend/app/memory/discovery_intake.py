@@ -28,6 +28,9 @@ _FOCUS_WORDS = {
     'strengths': r'\b(?:strengths?|skills?|good at)\b',
     'practical_constraints': r'\b(?:constraints?|family|location|timing|limitations?)\b',
     'education_history': r'\b(?:education|qualifications?|school|college|degree|taleem)\b',
+    'work_history': r'\b(?:work|job|experience|employment|internship)\b',
+    'target_location': r'\b(?:country|location|destination|city)\b',
+    'target_timing': r'\b(?:timing|intake|when|start date)\b',
 }
 
 

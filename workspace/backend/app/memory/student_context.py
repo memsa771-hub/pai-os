@@ -5,11 +5,13 @@ from .readiness import ReadinessService
 from .student_records import StudentRecordService
 
 INTENT_RECORDS = {
-    "discovery": ("education", "goal"),
+    "discovery": ("education", "goal", "exploration_experience"),
+    "direction_discovery": ("education", "course", "goal", "project", "skill",
+                            "activity", "achievement", "exploration_experience"),
     "academic_planning": ("education", "course", "test_attempt", "goal"),
     "study_abroad_matching": ("education", "test_attempt", "language_proficiency", "goal", "financial_sponsor"),
     "eligibility_analysis": ("education", "course", "test_attempt", "goal"),
-    "career_exploration": ("education", "work_experience", "project", "skill", "certification", "research", "achievement", "goal"),
+    "career_exploration": ("education", "work_experience", "project", "skill", "certification", "research", "activity", "achievement", "goal", "exploration_experience"),
     "scholarship_planning": ("education", "test_attempt", "achievement", "financial_sponsor", "scholarship_application", "goal", "application", "document"),
     "application_preparation": ("education", "course", "test_attempt", "goal", "application", "document"),
     "application_execution": ("education", "test_attempt", "goal", "application", "document"),
@@ -19,6 +21,7 @@ INTENT_RECORDS = {
 }
 INTENT_STAGE = {
     "discovery": "discovery",
+    "direction_discovery": "discovery",
     "academic_planning": "counseling",
     "study_abroad_matching": "matching",
     "eligibility_analysis": "eligibility",
@@ -32,6 +35,7 @@ INTENT_STAGE = {
 }
 
 INTENT_SIGNALS = (
+    ("direction_discovery", ("explore", "exploration", "discover", "direction")),
     ("visa_preparation", ("visa", "passport", "embassy")),
     ("scholarship_planning", ("scholarship", "funding", "financial aid")),
     ("document_review", ("transcript", "cv", "document", "certificate", "sop")),

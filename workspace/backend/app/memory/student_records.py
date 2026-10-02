@@ -5,7 +5,7 @@ from datetime import date, datetime, timezone
 from sqlalchemy import select
 
 from app.models import (
-    CourseRecord, EducationRecord, FileRecord, ProfileIssue, StudentGoal, StudentProject,
+    CourseRecord, EducationRecord, ExecutionRun, ExplorationExperience, FileRecord, ProfileIssue, StudentActivity, StudentGoal, StudentProject,
     TestAttempt, WorkExperience, StudentSkill, StudentCertification,
     StudentApplication, StudentDocument, StudentRecordRevision, Workspace,
     LanguageProficiency, ResearchRecord, AchievementRecord, FinancialSponsor,
@@ -17,6 +17,8 @@ from .student_schema import RECORD_SPECS, validate_record
 ENTITY_MODELS = {
     "education": EducationRecord, "course": CourseRecord, "test_attempt": TestAttempt,
     "work_experience": WorkExperience, "project": StudentProject, "goal": StudentGoal,
+    "activity": StudentActivity,
+    "exploration_experience": ExplorationExperience,
     "skill": StudentSkill, "certification": StudentCertification,
     "application": StudentApplication, "document": StudentDocument,
     "language_proficiency": LanguageProficiency, "research": ResearchRecord,
@@ -156,6 +158,17 @@ class StudentRecordService:
             raise MemoryDataError("Student record does not belong to this workspace or is inactive")
         before = self._values(kind, current) if current else None
         merged = validate_record(kind, _merge(before or {}, values))
+        if kind == "exploration_experience":
+            if "student_reflection" in values:
+                if source_type not in {"user_explicit", "conversation"}:
+                    raise MemoryDataError("Student reflection requires student-sourced evidence")
+                if source_type == "conversation" and not (evidence or {}).get("quote"):
+                    raise MemoryDataError("Student reflection requires a student quote")
+            for ref in merged.get("evidence_refs") or []:
+                if self.get(workspace_id, ref["kind"], ref["id"]) is None:
+                    raise MemoryDataError("Exploration evidence must reference this student's active record")
+            if source_type in {"agent", "system"} and values.get("activity_status") == "completed":
+                self._verify_exploration_run(workspace_id, merged, evidence)
         if kind == "course" and self.get(workspace_id, "education", merged["education_id"]) is None:
             raise MemoryDataError("Course education record does not belong to this student")
         if kind == "document":
@@ -169,7 +182,10 @@ class StudentRecordService:
             if old_goal is None or old_goal.goal_type != merged.get("goal_type") or (current and old_goal.id == current.id):
                 raise MemoryDataError("Only an existing goal in the same journey can be superseded")
         changed = current and _conflicts(before, values)
-        if changed and source_type != "user_explicit" and (
+        os_progress = (kind == "exploration_experience" and source_type in {"agent", "system"}
+                       and set(values).issubset({"activity_status", "completed_at", "evidence_refs"})
+                       and bool((evidence or {}).get("execution_run_id")))
+        if changed and not os_progress and source_type != "user_explicit" and (
                 source_type in ("document", "agent", "system") or
                 current.source_type == "document" or
                 current.verification_status in ("document_supported", "externally_verified", "verified") or
@@ -212,7 +228,17 @@ class StudentRecordService:
             if _VERIFICATION_RANK.get(proposed, 0) > _VERIFICATION_RANK.get(row.verification_status, 0):
                 row.verification_status = proposed
         else:
-            row.evidence = evidence or row.evidence
+            if kind == "exploration_experience" and evidence:
+                combined = dict(row.evidence or {})
+                combined.update(evidence)
+                if "student_reflection" in values:
+                    combined["reflection"] = {"source_type": source_type, "evidence": evidence}
+                if os_progress or (current is None and source_type in {"agent", "system"}
+                                   and values.get("activity_status") == "completed"):
+                    combined["completion"] = {"source_type": source_type, "evidence": evidence}
+                row.evidence = combined
+            else:
+                row.evidence = evidence or row.evidence
             if current is None or merged != before:
                 row.verification_status = verification_status or default_verification
         self.db.flush()
@@ -224,6 +250,22 @@ class StudentRecordService:
             self._revision(workspace_id, "goal", old_goal, old_before, source_type, claim_origin, capture_method, evidence)
         self.db.flush()
         return row
+
+    def _verify_exploration_run(self, workspace_id: str, values: dict,
+                                evidence: dict | None) -> None:
+        """A completed run must explicitly identify this activity as completed."""
+        run_id = (evidence or {}).get("execution_run_id")
+        if not isinstance(run_id, str) or not run_id:
+            raise MemoryDataError("OS exploration completion requires durable execution evidence")
+        run = self.db.execute(select(ExecutionRun).where(
+            ExecutionRun.id == run_id, ExecutionRun.workspace_id == workspace_id,
+            ExecutionRun.status == "completed",
+        )).scalar_one_or_none()
+        completed = run.result.get("exploration_completed") if run and isinstance(run.result, dict) else None
+        if not isinstance(completed, dict) or completed.get("completed") is not True or any(
+                completed.get(key) != values.get(key)
+                for key in ("domain", "activity_type", "title")):
+            raise MemoryDataError("Execution run does not verify this exploration completion")
 
     def _corroborate(self, row, evidence) -> None:
         """Append independent supporting evidence without touching values."""
