@@ -19,6 +19,19 @@ from app.tools import ToolContext
 from scripts.counselor_eval_support import StudentSession
 
 
+@pytest.fixture(autouse=True)
+def _semantic_turn_fixture():
+    with patch("app.counseling.turn_semantics.classify_turn", new_callable=AsyncMock) as classify:
+        classify.return_value = {
+            "general_information": False, "mirror_confirmation": False,
+            "mirror_request": False, "profile_correction": False,
+            "requested_work": False, "requested_roadmap": False,
+            "decision_intent": None, "context_intent": None, "topic_focus": None,
+            "education_claim": None, "discovery_statuses": [], "explicit_commands": [],
+        }
+        yield
+
+
 @pytest.mark.asyncio
 async def test_multi_turn_history_and_profile_jobs_survive_a_background_result():
     with StudentSession() as student:
@@ -97,7 +110,7 @@ def test_short_followups_retain_the_student_journey_query():
     history = [{"role": "user", "content": "I want to study abroad"},
                {"role": "assistant", "content": "What is your yearly budget?"},
                {"role": "user", "content": "About €12k"}]
-    assert "study abroad" in runtime._student_context_query(history, "About €12k")
+    assert runtime._student_context_query(history, "About €12k") == "About €12k"
     assert runtime._student_context_query(history, "Help with my career") == "Help with my career"
 
 

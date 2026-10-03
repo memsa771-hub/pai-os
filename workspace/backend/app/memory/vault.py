@@ -234,9 +234,7 @@ class VaultService:
 
         # An institutional document disagreeing with self-report is evidence
         # of a conflict, not authority to silently replace the student's claim.
-        quote = str((evidence or {}).get("quote") or "").casefold()
-        explicit_correction = any(marker in quote for marker in
-                                  ("actually", "correction", "correct that", "i changed", "now ", "instead"))
+        explicit_correction = (evidence or {}).get("semantic_correction") is True
         safe_latest_wins = (
             policy == "latest_wins"
             and definition.category in ("preferences", "career", "mobility")

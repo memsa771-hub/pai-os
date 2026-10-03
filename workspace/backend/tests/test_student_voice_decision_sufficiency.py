@@ -8,7 +8,7 @@ from sqlalchemy import select
 
 from app.counseling.baseline import save
 from app.counseling.decision_sufficiency import (DecisionSufficiencyEvaluator,
-    decision_type_for_message, guard_premature_verdict)
+    validated_decision_intent, guard_premature_verdict)
 from app.counseling.evaluator import CounselingEvaluator
 from app.counseling.policy import CounselingPolicy
 from app.counseling.understanding import StudentUnderstandingBuilder, student_mirror
@@ -21,6 +21,9 @@ from scripts.counselor_eval_support import StudentSession
 
 
 def _student_turn(db, student, message, records=(), facts=()):
+    records = [{**item, "attribution": item.get("attribution") or {
+        "claim_owner": "external" if item.get("type") == "external_influence" else "student"}}
+        for item in records]
     event_id = str(uuid4())
     db.add(EventRecord(
         id=event_id, network_id=student.workspace_id,
@@ -41,11 +44,12 @@ def _student_turn(db, student, message, records=(), facts=()):
 
 
 def _influence(label, direction, quote, *, kind="parent", influence_type="career_suggestion",
-               **extra):
+               alignment_quote=None, **extra):
     return {"type": "external_influence", "data": {
         "influencer_type": kind, "source_label": label,
         "suggested_direction": direction, "influence_type": influence_type, **extra,
-    }, "evidence": {"quote": quote}}
+    }, "evidence": {"quote": quote}, "attribution": {
+        "claim_owner": "external", **({"alignment_quote": alignment_quote} if alignment_quote else {})}}
 
 
 def _snapshot(records=None, facts=None):
@@ -58,14 +62,15 @@ def test_father_suggestion_enters_influence_but_not_goal_or_interest():
         count, outcomes = _student_turn(db, student, quote, records=[
             _influence("father", "Computer Science", quote),
             {"type": "goal", "data": {"goal_type": "degree_direction",
-                "title": "Computer Science"}, "evidence": {"quote": quote}},
+                "title": "Computer Science"}, "evidence": {"quote": quote},
+             "attribution": {"claim_owner": "external"}},
             {"type": "external_influence", "data": {
                 "influencer_type": "parent", "source_label": "father",
                 "suggested_direction": "Computer Science",
                 "influence_type": "career_suggestion", "student_alignment": "aligned",
-            }, "evidence": {"quote": quote}},
+            }, "evidence": {"quote": quote}, "attribution": {"claim_owner": "external"}},
         ], facts=[{"key": "career.primary_interest", "value": "Computer Science",
-                  "evidence": {"quote": quote}}])
+                  "evidence": {"quote": quote}, "attribution": {"claim_owner": "external"}}])
         assert count == 1 and all(result.accepted for result in outcomes)
         profile = StudentRecordService(db).snapshot(student.workspace_id)
         assert profile["goal"] == []
@@ -83,7 +88,7 @@ def test_own_preference_can_coexist_with_parent_influence_and_peer_path():
         both = "My father says CS and I also really want CS"
         count, _ = _student_turn(db, student, both, records=[
             _influence("father", "Computer Science", both,
-                       student_alignment="aligned"),
+                       student_alignment="aligned", alignment_quote="I also really want CS"),
             {"type": "goal", "data": {"goal_type": "degree_direction",
                 "title": "Computer Science", "commitment": "considering"},
              "evidence": {"quote": "I also really want CS"}},
@@ -98,7 +103,7 @@ def test_own_preference_can_coexist_with_parent_influence_and_peer_path():
         count, _ = _student_turn(db, student, friend, records=[
             _influence("friend", "BBA", friend, kind="friend", influence_type="peer_path"),
             {"type": "goal", "data": {"goal_type": "degree_direction", "title": "BBA"},
-             "evidence": {"quote": friend}},
+             "evidence": {"quote": friend}, "attribution": {"claim_owner": "external"}},
         ])
         assert count == 1
         view = StudentUnderstandingBuilder(db).build(student.workspace_id)
@@ -115,7 +120,9 @@ def test_social_influence_uncertainty_and_correction_preserve_history():
         update = "Actually, my father now says medicine instead"
         count, _ = _student_turn(db, student, update, records=[
             {**_influence("father", "Medicine", update),
-             "entities": {"record_id": row.id}},
+             "entities": {"record_id": row.id},
+             "attribution": {"claim_owner": "external", "correction": True,
+                             "correction_quote": update}},
         ])
         assert count == 1
         social = "Everyone says medicine is prestigious"
@@ -145,13 +152,13 @@ def test_social_media_and_pressure_do_not_override_counterfactual_own_choice():
             _influence("TikTok", "Medicine", social, kind="social_media",
                        influence_type="social_message"),
             {"type": "goal", "data": {"goal_type": "degree_direction", "title": "Medicine"},
-             "evidence": {"quote": social}},
+             "evidence": {"quote": social}, "attribution": {"claim_owner": "external"}},
         ])
         assert count == 1
         pressure = "I only want medicine because my family wants it"
         count, _ = _student_turn(db, student, pressure, records=[
             {"type": "goal", "data": {"goal_type": "degree_direction", "title": "Medicine"},
-             "evidence": {"quote": pressure}},
+             "evidence": {"quote": pressure}, "attribution": {"claim_owner": "uncertain"}},
         ])
         assert count == 0
         own = "I would still choose design even if my parents disagreed"
@@ -185,14 +192,17 @@ def test_decision_readiness_is_specific_and_mirror_confirmation_is_not_a_verdict
     }
     view = StudentUnderstandingBuilder().build("student", snapshot=_snapshot(records),
         baseline={"status": "confirmed", "version": 1})
-    assert decision_type_for_message("What should I choose, CS or Economics?", view) == "choose_bachelor_direction"
+    intent = validated_decision_intent({"type": "choose_bachelor_direction",
+                                        "candidates": ["Computer Science", "Economics"]})
+    assert intent["type"] == "choose_bachelor_direction"
     result = DecisionSufficiencyEvaluator().evaluate(view, "choose_bachelor_direction",
-        message="What should I choose, CS or Economics?")
+        decision_intent=intent)
     assert result.baseline_confirmed and result.comparison_ready
     assert not result.recommendation_ready and result.next_best_move == "EXPLORE"
-    assert "practical exposure to computer science" in result.missing_evidence
+    assert "practical exposure to Computer Science" in result.missing_evidence
     state = CounselingEvaluator().derive(message="What should I choose, CS or Economics?",
-        vault_context=view, journey=None, completion={"personalizedCounselingEligible": True})
+        vault_context=view, journey=None, completion={"personalizedCounselingEligible": True},
+        turn_semantics={"decision_intent": intent})
     policy = CounselingPolicy().decide(state)
     assert policy.personalized_advice_allowed and not policy.operator_allowed
     assert policy.move == "EXPLORE"
@@ -219,16 +229,18 @@ def test_exploration_can_change_readiness_and_abroad_uses_other_evidence():
     view = StudentUnderstandingBuilder().build("student", snapshot=_snapshot(records),
         baseline={"status": "confirmed", "version": 1})
     evaluator = DecisionSufficiencyEvaluator()
+    intent = validated_decision_intent({"type": "choose_bachelor_direction",
+                                        "candidates": ["Computer Science", "Economics"]})
     bachelor = evaluator.evaluate(view, "choose_bachelor_direction",
-        message="What should I choose, CS or Economics?")
+        decision_intent=intent)
     assert bachelor.recommendation_ready
     abroad = evaluator.evaluate(view, "study_abroad_direction",
         message="Which country should I choose to study abroad?")
     assert not abroad.recommendation_ready
     assert "funding context" in abroad.missing_evidence
-    assert "practical exposure to computer science" not in abroad.missing_evidence
+    assert "practical exposure to Computer Science" not in abroad.missing_evidence
     assert evaluator.evaluate(view, "choose_bachelor_direction",
-        message="What should I choose, CS or Economics?") == bachelor
+        decision_intent=intent) == bachelor
 
 
 def test_golden_undecided_student_stays_in_exploration_after_confirmed_mirror():
@@ -274,11 +286,13 @@ def test_golden_undecided_student_stays_in_exploration_after_confirmed_mirror():
         assert confirmed_view["student_voice"]["current_direction"]["status"] == "uncertain"
         state = CounselingEvaluator().derive(message="So what should I choose?",
             vault_context=confirmed_view, journey=None,
-            completion={"personalizedCounselingEligible": True})
+            completion={"personalizedCounselingEligible": True},
+            turn_semantics={"decision_intent": {"type": "choose_bachelor_direction",
+                                                 "candidates": []}})
         policy = CounselingPolicy().decide(state)
         assert policy.move == "EXPLORE"
         assert policy.personalized_advice_allowed
         assert not policy.decision_sufficiency["recommendation_ready"]
-        assert "practical exposure to computer science" in policy.decision_sufficiency["missing_evidence"]
+        assert "practical exposure to Computer Science" in policy.decision_sufficiency["missing_evidence"]
         answer = guard_premature_verdict("Choose CS. It is best for you.", policy.decision_sufficiency)
         assert "Choose CS" not in answer

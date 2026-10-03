@@ -90,14 +90,18 @@ reply is provided solely to help you resolve references like "that country" or \
 "the same budget". If only the assistant said something, it is not a fact.
 
 CORRECTIONS: when the student corrects an existing value, propose the NEW value. \
-Do not try to delete or edit the old one.
+Do not try to delete or edit the old one. Set attribution.correction=true only
+when the quoted student message explicitly corrects that value, and include
+attribution.correction_quote copied exactly from the correction clause.
 
 Exploratory personal ambitions are useful: save a seriously considered path
 with commitment="exploratory" or "considering", never upgrade it to a decision.
 Capture motivations, career direction, target timing and relevant family/cost
 constraints in the record's defined details or a concise semantic memory.
 Casual movie likes do not belong in the profile; studying film or public
-service ambitions do. Understand English, Urdu and Roman Urdu equally.
+service ambitions do. Understand the student's message in whatever language
+or mixture of languages they use. Preserve the original evidence quote and
+return the same canonical structure regardless of language.
 Short answers such as "Germany", "about €12k", or "AI" can state important
 constraints in an ongoing counseling conversation. Resolve their meaning from
 the preceding student messages and the question being answered. Preserve the
@@ -129,7 +133,9 @@ Each candidate is one of:
   {"candidate_type": "student_record", "operation": "upsert",
    "key": "education|test_attempt|language_proficiency|work_experience|project|activity|exploration_experience|goal|student_voice_statement|external_influence|skill|certification|research|achievement|financial_sponsor|scholarship_application|visa|application",
    "proposed_value": <object with only stated fields>,
-   "confidence": 0.0-1.0, "quote": "<the student's exact words>"}
+   "confidence": 0.0-1.0, "quote": "<the student's exact words>",
+   "attribution": {"claim_owner": "student|external|mixed|uncertain",
+                   "student_clause_quote": "<exact own clause if mixed>"}}
 
 Use fields from the supplied schema. Preserve original qualification wording.
 Keep separate records separate. OMIT any field the student did not state:
@@ -143,7 +149,9 @@ fields at the top level -- never inside "proposed_value".
            never invent or abbreviate one>",
    "proposed_value": <value matching that field's declared type>,
    "confidence": 0.0-1.0,
-   "quote": "<the student's exact words that state this>"}
+   "quote": "<the student's exact words that state this>",
+   "attribution": {"claim_owner": "student|external|mixed|uncertain",
+                   "student_clause_quote": "<exact own clause if mixed>"}}
 
   {"candidate_type": "semantic_memory", "operation": "upsert",
    "content": "<one short third-person sentence about the student>",
@@ -159,6 +167,18 @@ fields at the top level -- never inside "proposed_value".
 
 `quote` MUST be copied from the student's message. If you cannot quote the \
 student for a candidate, do not emit that candidate.
+
+For goals, career.primary_interest, student_voice_statement, and
+external_influence, classify claim ownership from meaning, not wording. An
+outside suggestion is external even if the student reports it in first person.
+For mixed statements, split the external suggestion from the student's own
+preference into separate candidates. A student-owned candidate from a mixed
+quote must include student_clause_quote copied exactly from the student's own
+clause. Uncertain ownership never becomes a goal or preference. Only include
+student_alignment on an influence when the student explicitly expresses it;
+then include attribution.alignment_quote copied exactly from that part of the
+student's message. Preserve uncertainty as voice_type=uncertainty. Do not infer
+personality, commitment, or alignment from outside pressure.
 
 If nothing is worth storing, return {"candidates": []}.
 """
@@ -370,10 +390,9 @@ def _drop_unevidenced_dates(value: dict, user_text: str) -> dict:
 _CURRENCY_SYMBOLS = {
     "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR", "₨": "PKR", "₩": "KRW",
     "₪": "ILS", "₺": "TRY", "₽": "RUB", "₴": "UAH", "₫": "VND", "฿": "THB",
-    # In international education "$" unqualified means USD often enough that
-    # storing the bare symbol is worse than applying the convention.
-    "$": "USD", "US$": "USD", "usd": "USD", "eur": "EUR", "euro": "EUR",
-    "euros": "EUR", "gbp": "GBP", "pkr": "PKR", "inr": "INR",
+    # An unqualified "$" is ambiguous across countries; leave it as written.
+    "US$": "USD", "usd": "USD", "eur": "EUR",
+    "gbp": "GBP", "pkr": "PKR", "inr": "INR",
 }
 
 
@@ -480,6 +499,11 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
         entities = {}
 
     evidence = {"quote": quote[:500], "user_event_id": turn.user_event_id}
+    from .voice_attribution import contained, validated_attribution
+    attribution = raw.get("attribution")
+    if (isinstance(attribution, dict) and attribution.get("correction") is True
+            and contained(attribution.get("correction_quote"), quote)):
+        evidence["semantic_correction"] = True
 
     if candidate_type == "vault_fact":
         key = raw.get("key")
@@ -492,10 +516,11 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
             return drop(f"vault_fact {key!r} stated no actual value")
         proposed = _normalize_currencies(proposed)
         if key == "career.primary_interest":
-            from .voice_attribution import personal_direction_supported
-            if not isinstance(proposed, str) or not personal_direction_supported(
-                    turn.user_text, quote, proposed, interest=True):
-                return drop("outside suggestion is not the student's interest")
+            owner = validated_attribution(attribution, kind=key, quote=quote,
+                                          message=turn.user_text)
+            if not isinstance(proposed, str) or owner is None:
+                return drop("student interest lacks student-owned attribution")
+            evidence["attribution"] = owner
         # A money field of 0 is a model filling in a blank, not a figure the
         # student gave ("Cost is important" became {"amount": 0} in testing).
         # Storing it as canonical makes every affordability check wrong; no
@@ -542,27 +567,21 @@ def _validate(raw: dict, turn, allowed_vault_keys: set[str]) -> Optional[Extract
         value = _normalize_currencies(value)
         if not value:
             return drop(f"{kind} record stated no actual values")
-        from .voice_attribution import (alignment_supported, external_source_supported,
-                                         personal_direction_supported)
-        if kind == "goal":
-            direction = (value.get("details") or {}).get("field_of_study") or value.get("title") or ""
-            if not personal_direction_supported(turn.user_text, quote, direction):
-                return drop("outside suggestion is not the student's goal")
+        if kind in {"goal", "student_voice_statement", "external_influence"}:
+            owner = validated_attribution(attribution, kind=kind, quote=quote,
+                message=turn.user_text, voice_type=value.get("voice_type"))
+            if owner is None:
+                return drop(f"{kind} lacks valid claim ownership")
+            evidence["attribution"] = owner
         if kind == "student_voice_statement":
             if _normalize(str(value.get("statement") or "")) not in _normalize(quote):
                 return drop("student voice statement is not in its quote")
-            if value.get("voice_type") in {"direction", "interest", "preference"}:
-                direction = value.get("direction") or value.get("statement") or ""
-                if not personal_direction_supported(turn.user_text, quote, direction,
-                                                    interest=value.get("voice_type") == "interest"):
-                    return drop("outside suggestion is not the student's voice")
         if kind == "external_influence":
-            if not external_source_supported(quote, value.get("source_label") or "",
-                                             value.get("suggested_direction") or ""):
-                return drop("influence lacks quoted outside source and direction")
-            if value.get("student_alignment") and not alignment_supported(
-                    quote, value["student_alignment"]):
-                return drop("influence alignment is not stated")
+            if value.get("student_alignment"):
+                alignment_quote = attribution.get("alignment_quote") if isinstance(attribution, dict) else None
+                if not contained(alignment_quote, quote):
+                    return drop("influence alignment lacks a student quote")
+                evidence["attribution"]["alignment_quote"] = alignment_quote
         try:
             value = validate_record(kind, value, partial="record_id" in clean_entities)
         except MemoryDataError as exc:

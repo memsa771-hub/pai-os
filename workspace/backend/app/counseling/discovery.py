@@ -18,12 +18,3 @@ def discovery_metadata(workspace) -> dict:
             for focus, item in raw.items()
             if focus in DISCOVERY_FOCI and isinstance(item, dict)
             and item.get("status") in DISCOVERY_STATUSES and item.get("source_event_id")}
-
-
-def is_general_information_request(message: str) -> bool:
-    """Narrow general explanations should not be blocked by profile review."""
-    import re
-    text = message.strip().casefold()
-    return bool(re.match(r"(?:what (?:is|are|does)|explain|define|how does|meaning of)\b", text)) and not bool(
-        re.search(r"\b(?:my|me|fit|best|should i|eligible|qualify)\b", text)
-    )

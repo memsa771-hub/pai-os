@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import re
+import unicodedata
 from dataclasses import asdict, dataclass
 
 
@@ -10,65 +10,50 @@ DECISION_TYPES = frozenset({
     "choose_bachelor_direction", "compare_fields", "choose_subjects",
     "study_abroad_direction", "career_direction", "exploration_next_step",
 })
-_FIELD_NAMES = {
-    "computer_science": ("computer science", "cs"),
-    "economics": ("economics", "econ"),
-    "business": ("business", "bba"),
-    "medicine": ("medicine", "medical"),
-    "design": ("design",),
-    "artificial_intelligence": ("artificial intelligence", "ai"),
-}
-
-
 def _key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value or "").casefold()).strip("_")
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "_".join(part for part in "".join(
+        char if char.isalnum() else " " for char in text).split())
 
 
-def _candidate_keys(message: str, view: dict) -> tuple[str, ...]:
-    text = message.casefold()
-    found = []
-    for key, aliases in _FIELD_NAMES.items():
-        if any(re.search(r"\b" + re.escape(alias) + r"\b", text) for alias in aliases):
-            found.append(key)
-    if not found:
-        found.extend(item.get("domain") for item in view.get("interests", {}).get("stated", []))
-        found.extend(item.get("suggested_direction") for item in view.get("influences", {}).get("nodes", []))
-    normalized = []
-    for item in found:
-        key = _key(item)
-        for canonical, aliases in _FIELD_NAMES.items():
-            if key in {_key(alias) for alias in aliases}:
-                key = canonical
-                break
-        if key and key not in normalized:
-            normalized.append(key)
-    return tuple(normalized[:6])
+def validated_decision_intent(raw: object) -> dict | None:
+    """Validate a model's semantic intent without interpreting its text."""
+    if (not isinstance(raw, dict) or not isinstance(raw.get("type"), str)
+            or raw["type"] not in DECISION_TYPES):
+        return None
+    candidates = raw.get("candidates")
+    if not isinstance(candidates, list):
+        candidates = []
+    names = tuple(dict.fromkeys(name.strip() for name in candidates[:8]
+                                if isinstance(name, str) and 0 < len(name.strip()) <= 120))
+    return {"type": raw["type"], "candidates": names}
 
 
-def decision_type_for_message(message: str, view: dict) -> str | None:
-    text = " ".join((message or "").casefold().split())
-    if re.search(r"\b(?:what|which|where)\b.*\b(?:explore|try|experiment)\b|\bexplore next\b", text):
-        return "exploration_next_step"
-    if re.search(r"\b(?:abroad|country|countries|overseas)\b", text) and re.search(
-            r"\b(?:should|choose|decide|best|where)\b", text):
-        return "study_abroad_direction"
-    if re.search(r"\b(?:subjects?|a levels|courses?)\b", text) and re.search(
-            r"\b(?:choose|pick|take|should|which)\b", text):
-        return "choose_subjects"
-    if re.search(r"\bcompare\b|\b(?:versus|vs\.?|or)\b", text) and re.search(
-            r"\b(?:fields?|degrees?|majors?|cs|economics|business|bba|medicine|design|ai)\b", text):
-        return "compare_fields" if "compare" in text else "choose_bachelor_direction"
-    if re.search(r"\b(?:career|job|profession|field of work)\b", text) and re.search(
-            r"\b(?:choose|should|best|which|recommend|decide)\b", text):
-        return "career_direction"
-    if re.search(r"\b(?:choose|study|degree|major|bachelor|after school|after college)\b", text) and re.search(
-            r"\b(?:should|which|what|best|recommend|choose)\b", text):
-        return "choose_bachelor_direction"
-    if re.search(r"\b(?:what should i choose|so what should i choose|what do you recommend)\b", text):
-        education = view.get("education", {}).get("nodes") or []
-        if any(row.get("canonical_level") in {"school", "secondary", "upper_secondary"} for row in education):
-            return "choose_bachelor_direction"
-    return None
+def _candidate_directions(view: dict, intent: dict | None) -> tuple[dict, ...]:
+    found: dict[str, dict] = {}
+    requested = {_key(name) for name in (intent or {}).get("candidates", ())}
+    def add(name, origin, ownership, status):
+        key = _key(name)
+        if origin != "message" and requested and key not in requested:
+            return
+        if key and key not in found:
+            label = name.replace("_", " ").title() if isinstance(name, str) and "_" in name else name
+            found[key] = {"name": label, "key": key, "origin": origin,
+                          "ownership": ownership, "status": status}
+    for name in (intent or {}).get("candidates", ()):
+        add(name, "message", "student", "considering")
+    for item in view.get("voice_statements", {}).get("nodes", []):
+        if item.get("voice_type") in {"interest", "direction", "preference", "counterfactual"}:
+            add(item.get("direction"), "student_voice", "student", item.get("commitment") or "exploring")
+    for item in view.get("goals", {}).get("nodes", []):
+        if (item.get("details") or {}).get("direction_status") not in {"rejected", "changed"}:
+            add((item.get("details") or {}).get("field_of_study") or item.get("title"),
+                "goal", "student", item.get("commitment") or "exploring")
+    for item in view.get("explorations", {}).get("nodes", []):
+        add(item.get("domain"), "exploration", "student", item.get("activity_status") or "exploring")
+    for item in view.get("influences", {}).get("nodes", []):
+        add(item.get("suggested_direction"), "external_influence", "external", "suggested")
+    return tuple(found.values())[:12]
 
 
 @dataclass(frozen=True)
@@ -82,6 +67,7 @@ class DecisionSufficiency:
     missing_evidence: tuple[str, ...]
     next_best_move: str
     candidates: tuple[str, ...]
+    candidate_directions: tuple[dict, ...] = ()
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -89,7 +75,7 @@ class DecisionSufficiency:
 
 class DecisionSufficiencyEvaluator:
     def evaluate(self, view: dict, decision_type: str, *,
-                 message: str = "") -> DecisionSufficiency:
+                 decision_intent: dict | None = None, message: str = "") -> DecisionSufficiency:
         if decision_type not in DECISION_TYPES:
             raise ValueError("unsupported decision type")
         baseline = view.get("baseline", {}).get("status") == "confirmed"
@@ -101,12 +87,13 @@ class DecisionSufficiencyEvaluator:
         direction = (voice.get("current_direction") or {}).get("status", "unknown")
         interests = view.get("interests", {}).get("stated") or []
         influences = view.get("influences", {}).get("nodes") or []
-        candidates = _candidate_keys(message, view)
-        exposure = {item.get("domain"): item for item in view.get("exposure", {}).get("domains", [])}
+        directions = _candidate_directions(view, decision_intent)
+        candidates = tuple(item["key"] for item in directions)
+        exposure = {_key(item.get("domain")): item for item in view.get("exposure", {}).get("domains", [])}
         reflected = {key for key, item in exposure.items() if any(
             row.get("activity_status") == "completed" and row.get("student_reflection")
             for row in item.get("experiences", []))}
-        missing_exposure = [key for key in candidates if key not in reflected]
+        missing_exposure = [item for item in directions if item["key"] not in reflected]
         strengths = bool(view.get("projects", {}).get("nodes") or
                          view.get("activities", {}).get("nodes") or
                          view.get("experience", {}).get("nodes") or
@@ -138,7 +125,7 @@ class DecisionSufficiencyEvaluator:
                 missing.append("the student's own preference apart from outside suggestions")
             if len(candidates) < 2:
                 missing.append("at least two directions to compare")
-            missing.extend(f"practical exposure to {key.replace('_', ' ')}" for key in missing_exposure)
+            missing.extend(f"practical exposure to {item['name']}" for item in missing_exposure)
             ready = baseline and bool(education) and academic and own_preference and direction != "uncertain" and len(candidates) >= 2 and not missing_exposure
         elif decision_type == "choose_subjects":
             if not education:
@@ -172,7 +159,7 @@ class DecisionSufficiencyEvaluator:
                 missing.append("student's own career interests")
             if not strengths:
                 missing.append("examples of strengths in practice")
-            missing.extend(f"practical exposure to {key.replace('_', ' ')}" for key in missing_exposure)
+            missing.extend(f"practical exposure to {item['name']}" for item in missing_exposure)
             ready = baseline and own_preference and strengths and bool(candidates) and not missing_exposure
             comparison = baseline and len(candidates) >= 2 and strengths
         else:  # exploration_next_step is a low-stakes process choice.
@@ -189,23 +176,16 @@ class DecisionSufficiencyEvaluator:
         else:
             next_move = "ASK"
         return DecisionSufficiency(decision_type, baseline, evidence, ready, comparison,
-                                   research, tuple(dict.fromkeys(missing)), next_move, candidates)
+                                   research, tuple(dict.fromkeys(missing)), next_move,
+                                   candidates, directions)
 
 
-def guard_premature_verdict(response: str, result: dict | None) -> str:
-    """Replace a clear final verdict when the deterministic check says not ready."""
+def guard_premature_verdict(response: str, result: dict | None, *,
+                           final_recommendation: bool | None = None) -> str:
+    """Use the Counselor's structured declaration, not an English phrase scan."""
     if not result or result.get("recommendation_ready") or result.get("decision_type") == "exploration_next_step":
         return response
-    candidate_terms = set()
-    for candidate in result.get("candidates") or ():
-        candidate_terms.update(_FIELD_NAMES.get(candidate, (candidate.replace("_", " "),)))
-    if not candidate_terms:
-        return response
-    options = "|".join(re.escape(term) for term in sorted(candidate_terms, key=len, reverse=True))
-    directive = re.compile(
-        rf"\b(?:you should|i recommend|my recommendation is|the best choice is|choose|go with)\s+(?:the\s+)?(?:{options})\b"
-        rf"|\b(?:{options})\s+is\s+(?:the\s+)?best\s+(?:for you|choice)\b", re.I)
-    if not directive.search(response):
+    if final_recommendation is False:
         return response
     missing = result.get("missing_evidence") or []
     exposure = next((item for item in missing if item.startswith("practical exposure to ")), None)

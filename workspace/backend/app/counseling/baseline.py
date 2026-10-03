@@ -7,18 +7,14 @@ from datetime import datetime, timezone
 from .understanding import StudentUnderstandingBuilder
 
 _KEY = "student_understanding_baseline"
-_CONFIRMATIONS = {"yes", "yes that's accurate", "yes, that's accurate", "accurate",
-                  "confirmed", "i confirm", "that's correct", "that is correct",
-                  "looks right", "correct", "haan sahi hai", "han sahi hai",
-                  "ji bilkul sahi", "ji sahi hai", "bilkul sahi hai"}
 
 
 def metadata(workspace) -> dict:
     return dict((getattr(workspace, "settings", None) or {}).get(_KEY) or {})
 
 
-def confirmed(message: str) -> bool:
-    return message.strip().casefold().rstrip(".! ") in _CONFIRMATIONS
+def confirmed(turn_semantics: dict | None) -> bool:
+    return isinstance(turn_semantics, dict) and turn_semantics.get("mirror_confirmation") is True
 
 
 def changed_domains(view: dict, baseline: dict) -> list[str]:
@@ -74,7 +70,8 @@ def record_mirror(workspace, *, view: dict, event_id: str, channel: str,
     return data
 
 
-def can_confirm(db, workspace, baseline: dict, view: dict, source_event) -> bool:
+def can_confirm(db, workspace, baseline: dict, view: dict, source_event,
+                *, turn_semantics: dict | None = None) -> bool:
     """Approval belongs to the owner and the latest displayed revision/thread."""
     from sqlalchemy import select
     from app.models import EventRecord
@@ -83,7 +80,7 @@ def can_confirm(db, workspace, baseline: dict, view: dict, source_event) -> bool
     if (source_event is None or baseline.get("status") != "mirror_review"
             or source_event.network_id != workspace.id
             or source_event.source != f"human:{workspace.owner_user_id}"
-            or not confirmed((source_event.payload or {}).get("content") or "")
+            or not confirmed(turn_semantics)
             or (source_event.payload or {}).get("attachments")
             or view.get("open_conflicts")
             or baseline.get("owner_user_id") != str(workspace.owner_user_id)

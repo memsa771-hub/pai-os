@@ -322,7 +322,8 @@ def test_background_turn_to_profile_and_new_chat(db):
         {"candidate_type": "vault_fact", "key": "finance.budget",
          "proposed_value": {"amount": 10000, "currency": "EUR", "period": "per_year"}},
         {"candidate_type": "student_record", "key": "goal",
-         "proposed_value": {"goal_type": "education", "title": "MSc AI in Germany"}},
+         "proposed_value": {"goal_type": "education", "title": "MSc AI in Germany"},
+         "attribution": {"claim_owner": "student"}},
     ]
     response = json.dumps({"candidates": [{**p, "quote": message, "confidence": 0.95} for p in proposals]})
     job = SimpleNamespace(id="intro-extraction", workspace_id=workspace, payload={"user_event_id": event_row.id})
@@ -343,7 +344,7 @@ def test_journey_intent_selects_relevant_records_and_readiness(db):
     propose(db, "education", {"qualification_name": "BS CS"})
     propose(db, "research", {"title": "NLP thesis", "role": "Researcher"})
     propose(db, "financial_sponsor", {"sponsor_type": "family", "commitment_status": "confirmed"})
-    assert classify_intent("Can I get a scholarship with this funding?") == "scholarship_planning"
+    assert classify_intent("Can I get a scholarship with this funding?") == "discovery"
     career = StudentContextBuilder(db).build_context(
         db.info["workspace"], "How should I build my research career?")
     assert "research" in career.records and "financial_sponsor" not in career.records
@@ -409,7 +410,8 @@ def test_complex_introduction_extracts_separate_structured_claims(db):
          {"test_type": "IELTS", "attempt_number": 2, "overall_score": "7.5"}},
         {"candidate_type": "student_record", "key": "goal", "proposed_value":
          {"goal_type": "education", "title": "MSc AI in Germany", "commitment": "considering",
-          "details": {"motivation": "cost matters", "target_countries": ["Germany"]}}},
+          "details": {"motivation": "cost matters", "target_countries": ["Germany"]}},
+         "attribution": {"claim_owner": "student"}},
         {"candidate_type": "vault_fact", "key": "finance.budget", "proposed_value":
          {"amount": 12000, "currency": "EUR", "period": "per_year"}},
     ]}

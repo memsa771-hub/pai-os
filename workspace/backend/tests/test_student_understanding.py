@@ -3,7 +3,7 @@ from types import SimpleNamespace
 import uuid
 import asyncio
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from sqlalchemy import select
 
@@ -62,7 +62,7 @@ def test_mirror_and_confirmation_metadata_invalidate_only_changed_domain():
     assert "BA" in student_mirror(view)
     workspace = SimpleNamespace(settings={})
     save(workspace, status="mirror_review", view=view)
-    assert confirmed("Yes, that's accurate.")
+    assert confirmed({"mirror_confirmation": True})
     saved = save(workspace, status="confirmed", view=view)
     assert saved["version"] == 1 and saved["confirmed_at"]
     assert not changed_domains(view, metadata(workspace))
@@ -159,8 +159,8 @@ def test_same_turn_current_education_conflict_is_clarified():
     view = StudentUnderstandingBuilder().build("student", snapshot=_snapshot({
         "education": [_education("BS CS", "bachelor", academic_status="current")],
     }))
-    assert same_turn_education_conflict(view, "I already completed a PhD in BBA")
-    assert same_turn_education_conflict(view, "Actually, I already completed a PhD") is None
+    assert same_turn_education_conflict(view, {"canonical_level": "doctorate", "academic_status": "completed"})
+    assert same_turn_education_conflict(view, {"canonical_level": "doctorate", "academic_status": "completed", "correction": True}) is None
 
 
 def test_baseline_sufficiency_depends_on_situation():
@@ -189,6 +189,7 @@ def test_confirmed_baseline_unlocks_counseling_and_delegation():
     state = CounselingEvaluator().derive(
         message="Please research a shortlist", vault_context=view, journey=None,
         completion={"personalizedCounselingEligible": True},
+        turn_semantics={"requested_work": True},
     )
     policy = CounselingPolicy().decide(state)
     assert state.phase.value == "COUNSELING"
@@ -340,9 +341,12 @@ def test_confirmed_advice_roadmap_and_operator_permissions_are_distinct():
                   "details": {"motivation": "build products"}}],
     }), baseline={"status": "confirmed", "version": 1})
     def decision(message):
+        semantics = ({"requested_work": True} if "shortlist" in message else
+                     {"requested_roadmap": True} if "roadmap" in message else {})
         return policy.decide(evaluator.derive(
             message=message, vault_context=view, journey=None,
-            completion={"personalizedCounselingEligible": True}))
+            completion={"personalizedCounselingEligible": True},
+            turn_semantics=semantics))
     advice = decision("What do you think fits me?")
     assert advice.personalized_advice_allowed and not advice.roadmap_allowed
     assert not advice.operator_allowed
@@ -357,14 +361,13 @@ def test_same_turn_conflicts_use_current_history_but_allow_goals_and_corrections
     current_master = StudentUnderstandingBuilder().build("student", snapshot=_snapshot({
         "education": [_education("MSc", "master", academic_status="current")],
     }))
-    assert same_turn_education_conflict(current_master, "I'm currently in Bachelor's")
-    assert same_turn_education_conflict(current_master, "I want to do a PhD") is None
-    assert same_turn_education_conflict(current_master, "I completed my Bachelor's in 2022") is None
-    assert same_turn_education_conflict(current_master, "Actually I completed my Bachelor's") is None
+    assert same_turn_education_conflict(current_master, {"canonical_level": "bachelor", "academic_status": "current"})
+    assert same_turn_education_conflict(current_master, None) is None
+    assert same_turn_education_conflict(current_master, {"canonical_level": "bachelor", "academic_status": "completed"}) is None
+    assert same_turn_education_conflict(current_master, {"canonical_level": "bachelor", "academic_status": "current", "correction": True}) is None
     no_record = StudentUnderstandingBuilder().build("student", snapshot=_snapshot())
     assert same_turn_education_conflict(
-        no_record, "I'm currently in Bachelor's",
-        [{"role": "user", "content": "I'm currently studying for a Master's"}])
+        no_record, {"canonical_level": "bachelor", "academic_status": "current"}) is None
 
 
 def test_counselor_delta_does_not_directly_write_canonical_records():
@@ -388,8 +391,15 @@ def test_counselor_delta_does_not_directly_write_canonical_records():
                     },
                 })}
             with patch.object(runtime, "chat_completion_tools", model), \
+                 patch("app.counseling.turn_semantics.classify_turn", new_callable=AsyncMock) as classify, \
                  patch.object(config, "PAI_API_KEY", "test"), \
                  patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", False):
+                classify.return_value = {"mirror_request": False, "mirror_confirmation": False,
+                                         "profile_correction": False, "general_information": False,
+                                         "requested_work": False, "requested_roadmap": False,
+                                         "decision_intent": None, "topic_focus": None,
+                                         "context_intent": None, "discovery_statuses": [],
+                                         "explicit_commands": [], "education_claim": None}
                 await student.turn("I did BS CS")
             with student.factory() as db:
                 assert db.execute(select(EducationRecord)).scalars().all() == []
@@ -426,7 +436,17 @@ def test_mirror_confirmation_unlocks_advice_and_revalidates_only_changed_domain(
             async def model(**kwargs):
                 received.append(kwargs)
                 return {"role": "assistant", "content": "A useful direction is to build on your CS work."}
+            async def classify(message, **kwargs):
+                return {"mirror_request": message == "continue",
+                        "mirror_confirmation": message == "Yes, that's accurate.",
+                        "profile_correction": False, "general_information": False,
+                        "requested_work": message == "Please research a shortlist",
+                        "requested_roadmap": False, "decision_intent": None,
+                        "topic_focus": None, "context_intent": None,
+                        "discovery_statuses": [], "explicit_commands": [],
+                        "education_claim": None}
             with patch.object(runtime, "chat_completion_tools", model), \
+                 patch("app.counseling.turn_semantics.classify_turn", classify), \
                  patch.object(config, "PAI_API_KEY", "test"), \
                  patch.object(config, "PAI_MEMORY_CONTEXT_ENABLED", False):
                 await student.turn("continue")

@@ -115,6 +115,14 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
     from app.memory.student_snapshot import StudentSnapshotService
     from app.memory.foreground import escape_value
 
+    from .turn_semantics import classify_turn
+    from app.memory.field_definitions import VaultFieldDefinitionService
+    previous_assistant = next((item.get("content", "") for item in reversed(messages[:-1])
+                               if item.get("role") == "assistant"), "")
+    fact_keys = tuple(item.key for item in VaultFieldDefinitionService(db).list_definitions())
+    turn_semantics = await classify_turn(content or "", previous_assistant=previous_assistant,
+                                         fact_keys=fact_keys)
+
     snapshot = StudentSnapshotService(db).build(workspace_id)
     baseline = metadata(workspace)
     understanding = StudentUnderstandingBuilder(db).build(workspace_id, snapshot=snapshot,
@@ -139,7 +147,7 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
                                  "version": baseline.get("version", 0),
                                  "changed_domains": baseline.get("affected_domains", [])}
     same_turn_conflict = same_turn_education_conflict(
-        understanding, content or "", messages[:-1] if content else messages)
+        understanding, turn_semantics.get("education_claim"))
     # Clarification must not bypass the proposal/extraction path: another fact
     # in this same message may be a valid correction. The model sees the
     # conflict and Operator remains the only persistence authority.
@@ -148,29 +156,25 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
             same_turn_conflict.get("clarification_question") or same_turn_conflict.get("question")
             or "Which version of this detail should I use?")}
         understanding.setdefault("conflicts", []).append(same_turn_conflict)
-    if owner_turn and not attachments and can_confirm(db, workspace, baseline, understanding, source_event):
+    if owner_turn and not attachments and can_confirm(db, workspace, baseline, understanding,
+                                                       source_event, turn_semantics=turn_semantics):
         baseline = save(workspace, status="confirmed", view=understanding)
         db.commit()
         await _post_response(db, workspace_id, channel_target, agent_name,
                              "Thanks for confirming. I’ll use this as our starting point and keep any unknown or deferred details open.",
                              depth)
         return
-    correction_turn = any(marker in (content or "").casefold() for marker in (
-        "actually", "correct my", "correction", "update my", "change my", "forget my",
-        "remove my", "that's wrong", "that is wrong", "not accurate",
-    ))
+    correction_turn = turn_semantics["profile_correction"]
     if owner_turn and baseline.get("status") == "confirmed" and (same_turn_conflict or correction_turn):
         baseline = invalidate(workspace)
         db.commit()
         understanding["baseline"]["status"] = "mirror_review"
     baseline_confirmed = baseline.get("status") == "confirmed"
     enough_for_mirror = baseline_sufficient(understanding)
-    mirror_request = (content or "").strip().casefold() in {
-        "", "continue", "show my profile", "show me what you know", "what's next", "hi",
-    }
+    mirror_request = turn_semantics["mirror_request"]
     # Only content-free navigation/approval can take this shortcut. In
     # particular, stale metadata must never swallow same-turn corrections.
-    should_show_mirror = (mirror_request or confirmed(content or "")) and (
+    should_show_mirror = (mirror_request or confirmed(turn_semantics)) and (
         baseline.get("status") == "mirror_review" or enough_for_mirror)
     if (owner_turn and not baseline_confirmed and should_show_mirror and not attachments
             and not understanding.get("open_conflicts")):
@@ -239,6 +243,7 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
                         "missingRequirements": understanding["open_gaps"]},
             recent_conversation=messages,
             active_conflict=conflict_data,
+            turn_semantics=turn_semantics,
         )
         counseling_decision = CounselingPolicy().decide(state)
         if active_journeys:
@@ -301,8 +306,9 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
                 # not copied into the memory block — it is already in
                 # `messages`, and duplicating it would let stale context be
                 # mistaken for a restatement.
-                query=_student_context_query(messages, content),
+                query=_student_context_query(messages, content, turn_semantics=turn_semantics),
                 caller=pai.PAI_AGENT_NAME,
+                intent=turn_semantics.get("context_intent"),
             ),
         )
     else:
@@ -369,7 +375,9 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         "clarify before proposing that claim. The student sees only natural prose. "
         "Return a JSON object with keys response and counselor_state. counselor_state "
         "has phase, student_understanding_delta (facts, records, memories, conflicts, "
-        "unknowns arrays), next_move (type, focus), baseline_ready. Fact operations are "
+        "unknowns arrays), next_move (type, focus), baseline_ready, and "
+        "final_recommendation (true only if response makes a final personal choice; "
+        "false otherwise). Fact operations are "
         "upsert or retract; memory operations are upsert or forget; record operations "
         "are upsert only. Only propose retract/forget for an explicit student request. "
         "Unknowns use {focus, status, evidence:{quote}} with status UNKNOWN, DECLINED, "
@@ -383,7 +391,15 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
         "use qualification_name, institution_name, canonical_level, result.gpa and "
         "result.gpa_scale; for goals use goal_type, title and details.motivation; "
         "for work use organization and role. Never invent a missing value. Copy a short "
-        "exact student quote for each proposed item. Never claim you saved data. "
+        "exact student quote for each proposed item. For goals, personal interests, "
+        "student voice and outside influences, include attribution.claim_owner as "
+        "student, external, mixed or uncertain. For mixed own claims include an "
+        "exact attribution.student_clause_quote; for explicit influence alignment "
+        "include attribution.alignment_quote. For a correction include "
+        "attribution.correction=true and an exact attribution.correction_quote. "
+        "Understand any language or mixture "
+        "of languages and preserve the student's original quoted wording. Never "
+        "claim you saved data. "
         f"Baseline confirmed={str(baseline_confirmed).lower()}."
     )
     if counseling_decision is not None:
@@ -497,12 +513,16 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
     final_text, counselor_state = parse_turn(final_text)
     if counseling_decision is not None and counseling_decision.decision_sufficiency:
         from app.counseling.decision_sufficiency import guard_premature_verdict
+        from .turn_semantics import verifies_no_final_recommendation
+        sufficiency = counseling_decision.decision_sufficiency
+        verified_safe = (await verifies_no_final_recommendation(
+            final_text, sufficiency["decision_type"])
+            if not sufficiency["recommendation_ready"] else True)
         final_text = guard_premature_verdict(
-            final_text, counseling_decision.decision_sufficiency)
-    asks_for_fit = any(phrase in (content or "").casefold() for phrase in (
-        "recommend", "best university for me", "best career for me", "should i",
-        "am i a good fit", "my roadmap", "personalized plan",
-    ))
+            final_text, sufficiency,
+            final_recommendation=(counselor_state.get("final_recommendation") is True
+                                  or not verified_safe))
+    asks_for_fit = turn_semantics["decision_intent"] is not None or turn_semantics["requested_roadmap"]
     question_focus = None
     needs_personalized_gate = not baseline_confirmed and (
         asks_for_fit or counselor_state.get("next_move", {}).get("type") == "COUNSEL")
@@ -523,12 +543,11 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
     has_new_claims = any(delta.get(kind) for kind in ("facts", "records", "memories", "unknowns"))
     if same_turn_conflict:
         final_text = same_turn_conflict["clarification_question"]
-    from app.counseling.discovery import is_general_information_request
     structured_mirror_request = (
         counselor_state.get("next_move", {}).get("type") == "SHOW_MIRROR"
         and counseling_decision is not None and counseling_decision.move == "SHOW_MIRROR"
-        and not is_general_information_request(content or ""))
-    showing_mirror = (owner_turn and (mirror_request or confirmed(content or "")
+        and not turn_semantics["general_information"])
+    showing_mirror = (owner_turn and (mirror_request or confirmed(turn_semantics)
                                      or needs_personalized_gate or structured_mirror_request)
                       and not baseline_confirmed and enough_for_mirror
                       and not has_new_claims and not same_turn_conflict
@@ -552,6 +571,8 @@ async def _run_turn(db, workspace_id: str, event_data: dict, depth: int) -> None
                 db, workspace_id, counselor_state.get("student_understanding_delta") or {},
                 source_event_id=event_data.get("id"),
                 source_text=content or "",
+                semantic_statuses=turn_semantics.get("discovery_statuses"),
+                semantic_commands=turn_semantics.get("explicit_commands"),
             )
             db.commit()
         except Exception:
@@ -603,18 +624,9 @@ def _event_order_boundary(event_data: dict) -> Optional[int]:
         return None
 
 
-def _student_context_query(messages: list[dict], current: str) -> str:
-    """Keep short follow-ups grounded in the active journey, without an LLM call."""
-    from app.memory.student_context import classify_intent
-
-    if classify_intent(current) != "discovery":
-        return current
-    # "Germany", "about 12k" and "what next?" refer to the conversation.
-    # Use only a recent, relevant student turn, never an assistant's suggestion.
-    for message in reversed(messages[:-1]):
-        text = message.get("content") or ""
-        if message.get("role") == "user" and classify_intent(text) != "discovery":
-            return f"{text[:1500]}\nLatest student message: {current}"
+def _student_context_query(messages: list[dict], current: str,
+                           *, turn_semantics: dict | None = None) -> str:
+    """Use the owner message as retrieval evidence; semantic intent is separate."""
     return current
 
 

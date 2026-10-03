@@ -242,6 +242,7 @@ async def build_foreground_context(
     workspace_id: str,
     query: str,
     caller: str = "counselor",
+    intent: str | None = None,
 ) -> ForegroundContext:
     """Retrieve and render student context under a bounded timeout.
 
@@ -282,7 +283,8 @@ async def build_foreground_context(
         student, retrieval_mode = await asyncio.wait_for(
             # Reserve time for canonical PostgreSQL facts even if embeddings
             # or Qdrant are slow. A timeout must not erase the known profile.
-            _hybrid(workspace_id, query, caller), max(0.01, remaining() * 0.7)
+            (_hybrid(workspace_id, query, caller) if intent is None else
+             _hybrid(workspace_id, query, caller, intent)), max(0.01, remaining() * 0.7)
         )
         # Report what the retriever ACTUALLY did. Labelling a lexical fallback
         # as "hybrid" would make Mode 1 rollout telemetry claim a vector
@@ -326,7 +328,8 @@ async def build_foreground_context(
 
     try:
         student = await asyncio.wait_for(
-            run_bounded(_structured, workspace_id, query, caller), left
+            (run_bounded(_structured, workspace_id, query, caller) if intent is None else
+             run_bounded(_structured, workspace_id, query, caller, intent)), left
         )
         return _finish(student, "lexical_fallback")
     except ForegroundBusy as exc:
@@ -351,7 +354,7 @@ async def build_foreground_context(
     return context
 
 
-async def _hybrid(workspace_id: str, query: str, caller: str):
+async def _hybrid(workspace_id: str, query: str, caller: str, intent: str | None = None):
     """Hybrid retrieval, entirely off the main event loop.
 
     Runs on the bounded foreground pool rather than inline. The async context
@@ -369,10 +372,10 @@ async def _hybrid(workspace_id: str, query: str, caller: str):
     """
     from .foreground_executor import run_bounded
 
-    return await run_bounded(_hybrid_blocking, workspace_id, query, caller)
+    return await run_bounded(_hybrid_blocking, workspace_id, query, caller, intent)
 
 
-def _hybrid_blocking(workspace_id: str, query: str, caller: str):
+def _hybrid_blocking(workspace_id: str, query: str, caller: str, intent: str | None = None):
     """The synchronous body, executed on a foreground worker thread."""
     from app.database import new_session
     from app.memory.student_context import StudentContextBuilder
@@ -386,7 +389,7 @@ def _hybrid_blocking(workspace_id: str, query: str, caller: str):
                 # StudentContextBuilder is the authoritative journey-aware
                 # composition path. Its low-level memory service remains
                 # responsible for retrieval and capability checks.
-                student = await service.build_context_async(workspace_id, query, caller)
+                student = await service.build_context_async(workspace_id, query, caller, intent=intent)
                 # The retriever records whether it really ran hybrid or fell
                 # back; reading it here keeps rollout telemetry honest.
                 return student, getattr(service.memory, "last_retrieval_mode", None)
@@ -414,7 +417,7 @@ async def _close_foreground_index() -> None:
         logger.debug("memory context: foreground index cleanup failed", exc_info=True)
 
 
-def _structured(workspace_id: str, query: str, caller: str):
+def _structured(workspace_id: str, query: str, caller: str, intent: str | None = None):
     """Synchronous structured/lexical context — the always-available tier.
 
     Takes the CURRENT QUERY. Without it this built a generic "most important
@@ -430,6 +433,6 @@ def _structured(workspace_id: str, query: str, caller: str):
 
     db = new_session()
     try:
-        return StudentContextBuilder(db).build_context(workspace_id, query, caller)
+        return StudentContextBuilder(db).build_context(workspace_id, query, caller, intent=intent)
     finally:
         db.close()

@@ -5,13 +5,15 @@ from .readiness import ReadinessService
 from .student_records import StudentRecordService
 
 INTENT_RECORDS = {
-    "discovery": ("education", "goal", "exploration_experience"),
+    "discovery": ("education", "goal", "student_voice_statement",
+                  "external_influence", "exploration_experience"),
     "direction_discovery": ("education", "course", "goal", "project", "skill",
-                            "activity", "achievement", "exploration_experience"),
+                            "activity", "achievement", "student_voice_statement",
+                            "external_influence", "exploration_experience"),
     "academic_planning": ("education", "course", "test_attempt", "goal"),
     "study_abroad_matching": ("education", "test_attempt", "language_proficiency", "goal", "financial_sponsor"),
     "eligibility_analysis": ("education", "course", "test_attempt", "goal"),
-    "career_exploration": ("education", "work_experience", "project", "skill", "certification", "research", "activity", "achievement", "goal", "exploration_experience"),
+    "career_exploration": ("education", "work_experience", "project", "skill", "certification", "research", "activity", "achievement", "goal", "student_voice_statement", "external_influence", "exploration_experience"),
     "scholarship_planning": ("education", "test_attempt", "achievement", "financial_sponsor", "scholarship_application", "goal", "application", "document"),
     "application_preparation": ("education", "course", "test_attempt", "goal", "application", "document"),
     "application_execution": ("education", "test_attempt", "goal", "application", "document"),
@@ -34,18 +36,6 @@ INTENT_STAGE = {
     "document_review": "application",
 }
 
-INTENT_SIGNALS = (
-    ("direction_discovery", ("explore", "exploration", "discover", "direction")),
-    ("visa_preparation", ("visa", "passport", "embassy")),
-    ("scholarship_planning", ("scholarship", "funding", "financial aid")),
-    ("document_review", ("transcript", "cv", "document", "certificate", "sop")),
-    ("application_preparation", ("application", "apply", "deadline", "admission")),
-    ("eligibility_analysis", ("eligible", "eligibility", "prerequisite", "requirements")),
-    ("study_abroad_matching", ("country", "university", "study abroad", "masters abroad")),
-    ("career_exploration", ("career", "job", "internship", "profession", "skill")),
-    ("academic_planning", ("course", "subject", "degree", "study plan", "gpa")),
-    ("enrollment", ("enroll", "enrol", "offer letter")),
-)
 INTENT_SENSITIVE_FIELDS = {
     "visa_preparation": {"identity.nationality", "finance.funding_status", "finance.budget"},
     "scholarship_planning": {"identity.nationality", "finance.funding_status", "finance.scholarship_interest", "finance.budget"},
@@ -56,11 +46,8 @@ INTENT_SENSITIVE_FIELDS = {
 
 
 def classify_intent(query: str | None) -> str:
-    text = (query or "").casefold()
-    scored = [(sum(1 for signal in signals if signal in text), intent)
-              for intent, signals in INTENT_SIGNALS]
-    score, intent = max(scored, default=(0, "discovery"))
-    return intent if score else "discovery"
+    """Conservative fallback when no structured semantic intent was supplied."""
+    return "discovery"
 
 
 class StudentContextBuilder:

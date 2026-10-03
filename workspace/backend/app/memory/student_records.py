@@ -69,8 +69,7 @@ MAX_CORROBORATIONS = 10
 
 
 def _explicit_correction(evidence):
-    quote = str((evidence or {}).get("quote") or "").casefold()
-    return any(marker in quote for marker in ("actually", "correction", "correct that", "i changed", "now ", "instead"))
+    return (evidence or {}).get("semantic_correction") is True
 
 
 class StudentRecordService:
@@ -160,25 +159,20 @@ class StudentRecordService:
         before = self._values(kind, current) if current else None
         merged = validate_record(kind, _merge(before or {}, values))
         if kind in {"student_voice_statement", "external_influence"}:
-            from .voice_attribution import (alignment_supported, external_source_supported,
-                                             personal_direction_supported)
-            normalize = lambda text: " ".join(str(text or "").casefold().split())
+            from .voice_attribution import contained, validated_attribution
             quote = (evidence or {}).get("quote")
             if source_type not in {"conversation", "user_explicit"} or not isinstance(quote, str) or not quote.strip():
                 raise MemoryDataError("Student voice and influence require a student quote")
-            if kind == "student_voice_statement" and "statement" in values and normalize(values["statement"]) not in normalize(quote):
+            owner = validated_attribution((evidence or {}).get("attribution"), kind=kind,
+                quote=quote, message=quote, voice_type=merged.get("voice_type"))
+            if owner is None:
+                raise MemoryDataError("Student voice and influence require valid claim ownership")
+            if kind == "student_voice_statement" and "statement" in values and not contained(values["statement"], quote):
                 raise MemoryDataError("Student voice statement must be in the student quote")
-            if kind == "student_voice_statement" and merged["voice_type"] in {"direction", "interest", "preference"}:
-                direction = merged.get("direction") or merged["statement"]
-                if not personal_direction_supported(quote, quote, direction,
-                                                    interest=merged["voice_type"] == "interest"):
-                    raise MemoryDataError("Outside influence is not the student's own voice")
             if kind == "external_influence":
-                if not external_source_supported(quote, merged["source_label"], merged["suggested_direction"]):
-                    raise MemoryDataError("Influence requires a quoted outside source and direction")
-                if values.get("student_alignment") and not alignment_supported(quote, values["student_alignment"]):
-                    raise MemoryDataError("Student alignment requires explicit student evidence")
-                if values.get("student_response") and normalize(values["student_response"]) not in normalize(quote):
+                if values.get("student_alignment") and not contained(owner.get("alignment_quote"), quote):
+                    raise MemoryDataError("Student alignment requires an exact student quote")
+                if values.get("student_response") and not contained(values["student_response"], quote):
                     raise MemoryDataError("Student response must be in the student quote")
         if kind == "exploration_experience":
             if "student_reflection" in values:

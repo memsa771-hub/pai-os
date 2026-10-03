@@ -397,7 +397,9 @@ def _resolve_memory_context(workspace_id: str, context_refs: Optional[list], que
 
 def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
                                         *, source_event_id: str | None = None,
-                                        source_text: str = "") -> int:
+                                        source_text: str = "",
+                                        semantic_statuses: list[dict] | None = None,
+                                        semantic_commands: list[dict] | None = None) -> int:
     """Operator intake for Counselor proposals; reconciliation owns all canonical writes.
 
     Source trust is assigned here, never accepted from model output. Conflicts and
@@ -407,7 +409,8 @@ def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
     from app.memory.candidates import MemoryCandidateService
     from app.memory.extraction_context import build_turn_context
     from app.memory.extractor import _validate
-    from app.memory.explicit_commands import authorizes_fact, authorizes_memory_forget
+    from app.memory.explicit_commands import (authorizes_fact, authorizes_memory_forget,
+                                              validated_commands)
     from app.memory.field_definitions import VaultFieldDefinitionService
 
     if not isinstance(delta, dict) or delta.get("conflicts") or not source_event_id:
@@ -417,8 +420,10 @@ def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
     turn = build_turn_context(db, workspace_id, source_event_id)
     if turn is None or turn.is_empty():
         return 0
+    commands = validated_commands(semantic_commands, turn.user_text)
     from app.memory.discovery_intake import consume_discovery_statuses
-    consume_discovery_statuses(db, workspace_id, turn, delta.get("unknowns"))
+    consume_discovery_statuses(db, workspace_id, turn, delta.get("unknowns"),
+                               semantic_statuses=semantic_statuses)
     candidates = MemoryCandidateService(db)
     fields = VaultFieldDefinitionService(db)
     allowed_keys = {definition.key for definition in fields.list_definitions()}
@@ -440,6 +445,7 @@ def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
                 "key": item.get("key") if bucket == "facts" else item.get("type"),
                 "proposed_value": item.get("value") if bucket == "facts" else item.get("data"),
                 "content": item.get("content"), "entities": item.get("entities") or {},
+                "attribution": item.get("attribution"),
             }
             explicit = False
             if operation == "upsert":
@@ -450,7 +456,7 @@ def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
                     continue
                 explicit = (bucket == "facts" or (
                     bucket == "records" and validated.entities.get("record_id"))) and authorizes_fact(
-                    turn.user_text, "upsert", validated.key, proposed_value=validated.proposed_value)
+                    commands, "upsert", validated.key, proposed_value=validated.proposed_value)
                 candidate_args = {
                     "candidate_type": validated.candidate_type,
                     "key": validated.key, "proposed_value": validated.proposed_value,
@@ -466,9 +472,9 @@ def consume_student_understanding_delta(db, workspace_id: str, delta: dict,
                 key = item.get("key")
                 if bucket == "facts":
                     if not isinstance(key, str) or key not in allowed_keys or not authorizes_fact(
-                            turn.user_text, operation, key, turn.vault.get(key)):
+                            commands, operation, key, turn.vault.get(key)):
                         continue
-                elif not authorizes_memory_forget(turn.user_text, item.get("content")):
+                elif not authorizes_memory_forget(commands, item.get("content")):
                     continue
                 explicit = True
                 candidate_args = {

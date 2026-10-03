@@ -152,17 +152,11 @@ def _support_relationships(view: dict) -> tuple[list[dict], int]:
             continue
         for goal in view["goals"]["nodes"]:
             target = str((goal.get("details") or {}).get("field_of_study") or "").strip().casefold()
-            title = str(goal.get("title") or "").casefold()
-            related_cs = (field in {"computer science", "software engineering"} and
-                          (target in {"artificial intelligence", "ai", "machine learning",
-                                      "data science"} or bool(re.search(
-                                          r"\b(?:ai|artificial intelligence|machine learning|data science)\b",
-                                          title))))
-            if goal.get("id") and (target == field or related_cs):
+            if goal.get("id") and target and target == field:
                 relationships.append({"from": {"type": "education", "id": education["id"]},
                                       "to": {"type": "goal", "id": goal["id"]},
                                       "relation": "relevant_to",
-                                      "basis": "matching_stated_field" if target == field else "related_field_family"})
+                                      "basis": "matching_stated_field"})
     visible = {
         "project": {row.get("id") for row in view["projects"]["nodes"]},
         "work_experience": {row.get("id") for row in view["experience"]["nodes"]},
@@ -181,7 +175,10 @@ def _support_relationships(view: dict) -> tuple[list[dict], int]:
 
 
 def _domain_key(value: Any) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", str(value or "").casefold()).strip("_")
+    import unicodedata
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "_".join(part for part in "".join(
+        char if char.isalnum() else " " for char in text).split())
 
 
 def _live_goals(view: dict) -> list[dict]:
@@ -440,8 +437,6 @@ class StudentUnderstandingBuilder:
             gaps.append({"domain": "goals", "status": "UNKNOWN", "focus": "target_timing"})
         career_change = any(
             str(n.get("goal_type") or "").casefold() in {"career_transition", "career_change"}
-            or any(term in str(n.get("title") or "").casefold()
-                   for term in ("change career", "switch career", "career transition"))
             for n in goals)
         if career_change and not view["experience"]["nodes"]:
             gaps.append({"domain": "experience", "status": "UNKNOWN", "focus": "work_history"})
@@ -499,8 +494,6 @@ def baseline_sufficient(view: dict) -> bool:
     academic_goal = any(
         str(goal.get("goal_type") or "").casefold() in {
             "study_abroad", "masters_abroad", "academic", "admission"}
-        or any(term in str(goal.get("title") or "").casefold()
-               for term in ("master", "university", "admission", "degree"))
         for goal in goals)
     abroad = any(
         str(goal.get("goal_type") or "").casefold() in {"study_abroad", "masters_abroad"}
@@ -508,8 +501,6 @@ def baseline_sufficient(view: dict) -> bool:
         for goal in goals)
     career_change = any(
         str(goal.get("goal_type") or "").casefold() in {"career_transition", "career_change"}
-        or any(term in str(goal.get("title") or "").casefold()
-               for term in ("change career", "switch career", "career transition"))
         for goal in goals)
     if (academic_goal or early_student) and not (
             any(node.get("result") for node in education) or addressed("academic_performance")):
@@ -701,53 +692,25 @@ def student_mirror(view: dict, affected_domains: list[str] | None = None) -> str
         "Is this accurate, or would you like to change anything?")
 
 
-def same_turn_education_conflict(view: dict, message: str,
+def same_turn_education_conflict(view: dict, claim: dict | None,
                                  recent_conversation: list[dict] | None = None) -> dict | None:
-    """Clarify high-confidence incompatible current or completed education claims."""
-    text = message.casefold()
-    if any(marker in text for marker in (
-            "correction", "actually", "i changed", "i finished", "since then",
-            "to clarify", "i meant", "i was wrong")):
+    """Compare a semantic education claim with canonical current records."""
+    if not isinstance(claim, dict) or claim.get("correction") is True:
         return None
-    patterns = (("doctorate", r"\b(?:phd|doctorate)\b"),
-                ("master", r"\b(?:master'?s|msc|ms degree)\b"),
-                ("bachelor", r"\b(?:bachelor'?s|bs degree|undergraduate)\b"))
-    def levels(clause):
-        clause = re.split(r"\b(?:and|but|then|want|hope|plan|would|will)\b",
-                          clause, maxsplit=1)[0]
-        found = set()
-        for level, pattern in patterns:
-            if re.search(pattern, clause):
-                found.add(level)
-        return found
-    current_claims = re.findall(r"\b(?:i am currently|i'm currently|i am studying|i'm studying)\s+([^.;!?]+)", text)
-    completed_claims = re.findall(
-        r"\b(?:i already completed|i have completed|i completed|i graduated with)\s+([^.;!?]+)", text)
-    mentioned = set().union(*(levels(claim) for claim in current_claims)) if current_claims else set()
-    completed = set().union(*(levels(claim) for claim in completed_claims)) if completed_claims else set()
-    current = [n for n in view["education"]["nodes"] if n.get("academic_status") == "current"]
-    if not current:
-        for turn in reversed((recent_conversation or [])[-8:]):
-            if turn.get("role") != "user":
-                continue
-            prior = str(turn.get("content") or "").casefold()
-            prior_claims = re.findall(r"\b(?:i am currently|i'm currently|i am studying|i'm studying)\s+([^.;!?]+)", prior)
-            prior_levels = set().union(*(levels(claim) for claim in prior_claims)) if prior_claims else set()
-            if len(prior_levels) == 1:
-                current = [{"canonical_level": next(iter(prior_levels)),
-                            "qualification_name": next(iter(prior_levels)).title()}]
-                break
+    level = claim.get("canonical_level")
+    status = claim.get("academic_status")
+    if level not in EDUCATION_LEVELS or status not in {"current", "completed"}:
+        return None
+    current = [node for node in view["education"]["nodes"]
+               if node.get("academic_status") == "current"]
     if not current:
         return None
-    known_levels = {n.get("canonical_level") for n in current}
-    if len(mentioned) == 1 and not known_levels.intersection(mentioned):
-        level = next(iter(mentioned))
-    elif len(completed) == 1 and any(
+    known_levels = {node.get("canonical_level") for node in current}
+    incompatible = (status == "current" and level not in known_levels) or (
+        status == "completed" and any(
             EDUCATION_LEVELS.index(level) >= EDUCATION_LEVELS.index(known)
-            for level in completed for known in known_levels
-            if known in EDUCATION_LEVELS):
-        level = next(iter(completed))
-    else:
+            for known in known_levels if known in EDUCATION_LEVELS))
+    if not incompatible:
         return None
     known = current[0].get("qualification_name") or current[0].get("canonical_level")
     return {"summary": f"Current education on record is {known}; new claim says {level}.",

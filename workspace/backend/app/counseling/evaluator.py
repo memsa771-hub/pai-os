@@ -1,14 +1,15 @@
 """Deterministic counseling state derivation; the LLM executes, not chooses."""
 
 from app.counseling.state import CounselingMove, CounselingPhase, CounselingState
-from .discovery import SUPPRESSED_STATUSES, is_general_information_request
+from .discovery import SUPPRESSED_STATUSES
 
 
 class CounselingEvaluator:
     def derive(self, *, message: str, vault_context: dict | None,
                journey: dict | None, completion: dict | None,
                recent_conversation: list[dict] | None = None,
-               active_conflict: dict | None = None) -> CounselingState:
+               active_conflict: dict | None = None,
+               turn_semantics: dict | None = None) -> CounselingState:
         missing = (completion or {}).get("missingRequirements", (completion or {}).get("missingCritical", []))
         unknowns = tuple(
             str(item.get("key")) for item in missing
@@ -21,7 +22,8 @@ class CounselingEvaluator:
 
         understanding = vault_context or {}
         baseline = understanding.get("baseline") or {}
-        if is_general_information_request(message) and baseline.get("status") != "confirmed":
+        semantics = turn_semantics or {}
+        if semantics.get("general_information") and baseline.get("status") != "confirmed":
             return CounselingState(
                 CounselingPhase.DISCOVERING, "low", CounselingMove.REFLECT,
                 "answer the general question", False, False, "none", unknowns,
@@ -40,7 +42,7 @@ class CounselingEvaluator:
                     CounselingPhase.MIRROR_REVIEW, "low", CounselingMove.SHOW_MIRROR,
                     "student mirror", False, False, "none", unknowns, None, objective, 1,
                 )
-            gaps = self.relevant_gaps(understanding, message)
+            gaps = self.relevant_gaps(understanding, semantics.get("topic_focus"))
             focus = next((g.get("focus") or g.get("level") for g in gaps), "student context")
             documents = (understanding.get("documents") or {}).get("nodes") or []
             if documents and focus in {"current_level", "academic_performance", "upper_secondary"}:
@@ -63,7 +65,7 @@ class CounselingEvaluator:
             )
 
         if "baseline" in understanding and baseline.get("status") == "confirmed":
-            gaps = self.relevant_gaps(understanding, message)
+            gaps = self.relevant_gaps(understanding, semantics.get("topic_focus"))
             relevant_unknowns = tuple(g.get("focus", "context") for g in gaps)
             if active_conflict or understanding.get("open_conflicts"):
                 conflict = active_conflict or understanding["open_conflicts"][0]
@@ -72,22 +74,14 @@ class CounselingEvaluator:
                     conflict.get("summary") or conflict.get("question") or "conflicting claim",
                     False, False, "none", relevant_unknowns, conflict, objective, 1,
                 )
-            text = message.casefold()
-            from .decision_sufficiency import (DecisionSufficiencyEvaluator,
-                                                decision_type_for_message)
-            decision_type = decision_type_for_message(message, understanding)
+            from .decision_sufficiency import DecisionSufficiencyEvaluator, validated_decision_intent
+            intent = validated_decision_intent(semantics.get("decision_intent"))
+            decision_type = intent["type"] if intent else None
             sufficiency = (DecisionSufficiencyEvaluator().evaluate(
-                understanding, decision_type, message=message).to_dict()
+                understanding, decision_type, decision_intent=intent).to_dict()
                 if decision_type else None)
-            requested_work = any(phrase in text for phrase in (
-                "shortlist", "research", "compare programs", "review my cv",
-                "review my transcript", "apply to", "submit application",
-                "let's explore it", "explore this field", "explore possible directions",
-                "try an activity", "start an exploration",
-            ))
-            requested_roadmap = any(phrase in text for phrase in (
-                "roadmap", "step-by-step plan", "plan my path",
-            ))
+            requested_work = semantics.get("requested_work") is True
+            requested_roadmap = semantics.get("requested_roadmap") is True
             if requested_work and not blockers:
                 move = CounselingMove.DELEGATE
             elif sufficiency and not sufficiency["recommendation_ready"]:
@@ -156,22 +150,8 @@ class CounselingEvaluator:
         )
 
     @staticmethod
-    def relevant_gaps(understanding: dict, message: str) -> list[dict]:
+    def relevant_gaps(understanding: dict, focus: str | None = None) -> list[dict]:
         """Choose a relevant thread, not a required-field interview order."""
         gaps = [g for g in understanding.get("open_gaps", [])
                 if g.get("status") not in SUPPRESSED_STATUSES]
-        text = message.casefold()
-        related = (
-            ("academic_performance", ("grade", "gpa", "result", "marks", "transcript")),
-            ("budget", ("afford", "budget", "fund", "cost", "scholarship")),
-            ("strengths", ("good at", "strength", "skill", "project", "experience", "capable")),
-            ("interests", ("interest", "enjoy", "like doing", "curious")),
-            ("motivation", ("why", "meaning", "motivat", "matters", "purpose")),
-            ("practical_constraints", ("time", "family", "work hours", "relocat", "constraint")),
-            ("education_history", ("previous", "history", "before", "qualification")),
-            ("work_history", ("work", "job", "career change", "transition")),
-            ("target_location", ("country", "location", "destination", "where")),
-            ("target_timing", ("intake", "start", "when", "timing")),
-        )
-        preferred = next((focus for focus, terms in related if any(term in text for term in terms)), None)
-        return sorted(gaps, key=lambda gap: 0 if gap.get("focus") == preferred else 1)
+        return sorted(gaps, key=lambda gap: 0 if gap.get("focus") == focus else 1)
